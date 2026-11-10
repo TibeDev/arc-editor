@@ -701,13 +701,13 @@ async function prettierFormat(
 function makeTree(files: DiskFile[]): TreeNode[] {
   const root: TreeNode[] = [];
   const directories = new Map<string, TreeNode>();
-  for (const file of [...files].sort((a, b) =>
-    a.kind === b.kind
-      ? a.name.localeCompare(b.name)
-      : a.kind === 'directory'
-        ? -1
-        : 1,
-  )) {
+  const depthOf = (path: string) => path.split('/').length;
+  for (const file of [...files].sort((a, b) => {
+    const depth = depthOf(a.path) - depthOf(b.path);
+    if (depth !== 0) return depth;
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  })) {
     const parentPath = file.path.split('/').slice(0, -1).join('/');
     const parent = directories.get(parentPath);
     const node: TreeNode = {
