@@ -2,6 +2,7 @@ import {
   lazy,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -26,6 +27,7 @@ import {
   Compartment,
   EditorSelection,
   EditorState,
+  RangeSetBuilder,
   Transaction,
   type Extension,
 } from '@codemirror/state';
@@ -51,8 +53,8 @@ import {
 } from '@codemirror/autocomplete';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
-import { php } from '@codemirror/lang-php';
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
@@ -104,10 +106,7 @@ import {
   SiYaml,
 } from 'react-icons/si';
 import { appDataDir, join } from '@tauri-apps/api/path';
-import SettingsPanel from './SettingsPanel';
-import GithubPanel from './GithubPanel';
-import PluginPanel from './PluginPanel';
-import ThemeMaker from './ThemeMaker';
+import TitleBar from './TitleBar';
 import './pluginExtensions.css';
 import './panel-layout.css';
 import { forgetTerminalOutput } from './terminalOutput';
@@ -116,6 +115,8 @@ import {
   type PluginAppSnapshot,
   type PluginCommandDefinition,
   type PluginContextMenuItem,
+  type PluginEditorContext,
+  type PluginLanguageContribution,
   type PluginPanelContribution,
   type PluginStatusItem,
   type PluginToolbarAction,
@@ -132,8 +133,18 @@ import {
 } from './settings';
 
 const TerminalView = lazy(() => import('./TerminalView'));
+const SettingsPanel = lazy(() => import('./SettingsPanel'));
+const GithubPanel = lazy(() => import('./GithubPanel'));
+const PluginPanel = lazy(() => import('./PluginPanel'));
+const ThemeMaker = lazy(() => import('./ThemeMaker'));
 
 type DiskFile = { name: string; path: string; kind: 'file' | 'directory' };
+type FsEvent = {
+  root: string;
+  kind: 'created' | 'removed' | 'renamed' | 'modified';
+  paths: string[];
+  isDir?: boolean;
+};
 type OpenFile = {
   path: string;
   name: string;
@@ -300,49 +311,6 @@ function resizeLayout(
   };
 }
 
-const htmlTags = [
-  'a',
-  'article',
-  'aside',
-  'audio',
-  'blockquote',
-  'body',
-  'br',
-  'button',
-  'canvas',
-  'code',
-  'div',
-  'em',
-  'footer',
-  'form',
-  'h1',
-  'h2',
-  'h3',
-  'header',
-  'html',
-  'img',
-  'input',
-  'label',
-  'li',
-  'link',
-  'main',
-  'nav',
-  'ol',
-  'option',
-  'p',
-  'section',
-  'select',
-  'small',
-  'span',
-  'strong',
-  'style',
-  'table',
-  'textarea',
-  'title',
-  'ul',
-  'video',
-];
-
 function buildCodeHighlighting(theme: ThemeDefinition) {
   const c = theme.colors;
   return HighlightStyle.define([
@@ -374,21 +342,23 @@ function buildCodeHighlighting(theme: ThemeDefinition) {
 
 const externalContentUpdate = Annotation.define<boolean>();
 
+const indentGuideMark = Decoration.mark({ class: 'cm-indent-guide' });
+const leadingIndentation = /^[\t ]+/;
+
 function buildIndentGuides(view: EditorView, tabSize: number): DecorationSet {
-  const marker = Decoration.mark({ class: 'cm-indent-guide' });
-  const ranges: ReturnType<typeof marker.range>[] = [];
+  const builder = new RangeSetBuilder<Decoration>();
   for (const visible of view.visibleRanges) {
     let position = visible.from;
     while (position <= visible.to) {
       const line = view.state.doc.lineAt(position);
-      const indentation = /^[\t ]+/.exec(line.text)?.[0] ?? '';
+      const indentation = leadingIndentation.exec(line.text)?.[0] ?? '';
       if (indentation.length >= tabSize)
-        ranges.push(marker.range(line.from, line.from + indentation.length));
+        builder.add(line.from, line.from + indentation.length, indentGuideMark);
       if (line.to >= visible.to) break;
       position = line.to + 1;
     }
   }
-  return Decoration.set(ranges);
+  return builder.finish();
 }
 
 function indentationGuides(tabSize: number) {
@@ -411,37 +381,6 @@ function indentationGuides(tabSize: number) {
     },
     { decorations: (plugin) => plugin.decorations },
   );
-}
-
-function htmlTagCompletion(
-  context: CompletionContext,
-): CompletionResult | null {
-  const line = context.state.doc.lineAt(context.pos);
-  const beforeCursor = context.state.sliceDoc(line.from, context.pos);
-  const match = beforeCursor.match(/(?:^|[\s>])([a-z][\w-]*)$/i);
-  if (!match) return null;
-  const prefix = match[1];
-  const from = context.pos - prefix.length;
-  return {
-    from,
-    options: htmlTags.map((tag) => ({
-      label: tag,
-      type: 'keyword',
-      apply(
-        view: EditorView,
-        completion: { label: string },
-        start: number,
-        end: number,
-      ) {
-        const element = `<${completion.label}></${completion.label}>`;
-        view.dispatch({
-          changes: { from: start, to: end, insert: element },
-          selection: { anchor: start + completion.label.length + 2 },
-        });
-      },
-    })),
-    validFor: /^[a-z][\w-]*$/i,
-  };
 }
 
 const phpCompletions = [
@@ -628,6 +567,17 @@ function expandDocumentTemplate(view: EditorView, extension: string): boolean {
 const extensionOf = (name: string) =>
   name.split('.').pop()?.toLowerCase() ?? '';
 
+function contentFingerprint(value: string): string {
+  let hashA = 0x811c9dc5;
+  let hashB = 0x9e3779b9;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    hashA = Math.imul(hashA ^ code, 0x01000193);
+    hashB = Math.imul(hashB ^ code, 0x85ebca6b);
+  }
+  return `${value.length}:${(hashA >>> 0).toString(36)}:${(hashB >>> 0).toString(36)}`;
+}
+
 async function prettierFormat(
   name: string,
   content: string,
@@ -681,13 +631,13 @@ async function prettierFormat(
 function makeTree(files: DiskFile[]): TreeNode[] {
   const root: TreeNode[] = [];
   const directories = new Map<string, TreeNode>();
-  for (const file of [...files].sort((a, b) =>
-    a.kind === b.kind
-      ? a.name.localeCompare(b.name)
-      : a.kind === 'directory'
-        ? -1
-        : 1,
-  )) {
+  const depthOf = (path: string) => path.split('/').length;
+  for (const file of [...files].sort((a, b) => {
+    const depth = depthOf(a.path) - depthOf(b.path);
+    if (depth !== 0) return depth;
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  })) {
     const parentPath = file.path.split('/').slice(0, -1).join('/');
     const parent = directories.get(parentPath);
     const node: TreeNode = {
@@ -739,16 +689,38 @@ function FileIcon({ name }: { name: string }) {
   return <File size={14} className="file-icon" />;
 }
 
-function PluginToolbarIcon({ name }: { name?: string }) {
+function PluginToolbarIcon({ name, svg }: { name?: string; svg?: string }) {
+  if (svg)
+    return (
+      <span
+        className="plugin-svg-icon"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    );
   if (name === 'server') return <Server size={15} />;
   if (name === 'globe') return <Globe size={15} />;
   return <Puzzle size={15} />;
 }
 
 async function loadCodeLanguage(extension: string): Promise<Extension> {
+  const aliases: Record<string, string> = {
+    html: 'html',
+    css: 'css',
+    scss: 'scss',
+    javascript: 'js',
+    typescript: 'ts',
+    json: 'json',
+    jsonc: 'jsonc',
+    markdown: 'md',
+    php: 'php',
+  };
+  extension = aliases[extension] ?? extension;
   if (['html', 'htm', 'svg'].includes(extension))
     return (await import('@codemirror/lang-html')).html();
-  if (extension === 'php') return php();
+  if (extension === 'php') {
+    const { php, phpLanguage } = await import('@codemirror/lang-php');
+    return [php(), phpLanguage.data.of({ autocomplete: phpCompletion })];
+  }
   if (['css', 'scss'].includes(extension))
     return (await import('@codemirror/lang-css')).css();
   if (['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx'].includes(extension)) {
@@ -778,10 +750,18 @@ function EditorPane({
   onSelect,
   onTerminalTitleChange,
   workspace,
-  githubReloadToken,
+  diskConflict,
+  onConflictReload,
+  onConflictKeep,
   pluginPanel,
   pluginViews,
   editorViews,
+  pluginLanguages,
+  pluginLanguageOverrides,
+  pluginEditorExtensions,
+  pluginGrammarFor,
+  pluginGrammarVersion,
+  onSelectionChange,
   settings,
   theme,
 }: {
@@ -798,15 +778,25 @@ function EditorPane({
   onSelect: (id: GroupId, path: string) => void;
   onTerminalTitleChange: (id: string, title: string) => void;
   workspace: string;
-  githubReloadToken: number;
+  diskConflict?: boolean;
+  onConflictReload?: (path: string) => void;
+  onConflictKeep?: (path: string) => void;
   pluginPanel: ReactNode;
   pluginViews: PluginPanelContribution[];
-  editorViews: { current: Map<string, EditorView> };
+  editorViews: { current: Map<string, Map<GroupId, EditorView>> };
+  pluginLanguages: PluginLanguageContribution[];
+  pluginLanguageOverrides: Record<string, string>;
+  pluginEditorExtensions: Extension;
+  pluginGrammarFor: (languageId: string) => Extension | Promise<Extension> | undefined;
+  pluginGrammarVersion: number;
+  onSelectionChange?: (path: string) => void;
   settings: AppSettings;
   theme: ThemeDefinition;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
   const snapshot = useRef<{
     path: string;
     selection: EditorSelection;
@@ -838,6 +828,7 @@ function EditorPane({
           compartments.settings.of([]),
           compartments.theme.of([]),
           compartments.language.of([]),
+          pluginEditorExtensions,
           EditorView.updateListener.of((update) => {
             if (
               update.docChanged &&
@@ -847,6 +838,8 @@ function EditorPane({
             ) {
               onChange(file.path, update.state.doc.toString());
             }
+            if (update.selectionSet || update.docChanged || update.focusChanged)
+              onSelectionChangeRef.current?.(file.path);
           }),
           EditorView.domEventHandlers({
             focus: () => {
@@ -862,7 +855,9 @@ function EditorPane({
       }),
     });
     view.current = editor;
-    editorViews.current.set(file.path, editor);
+    const views = editorViews.current.get(file.path) ?? new Map<GroupId, EditorView>();
+    views.set(group.id, editor);
+    editorViews.current.set(file.path, views);
     if (snapshot.current?.path === file.path) {
       const previous = snapshot.current;
       requestAnimationFrame(() => {
@@ -880,17 +875,41 @@ function EditorPane({
         scrollLeft: editor.scrollDOM.scrollLeft,
       };
       editor.destroy();
-      if (editorViews.current.get(file.path) === editor)
-        editorViews.current.delete(file.path);
+      const views = editorViews.current.get(file.path);
+      if (views?.get(group.id) === editor) {
+        views.delete(group.id);
+        if (!views.size) editorViews.current.delete(file.path);
+      }
       if (view.current === editor) view.current = null;
     };
-  }, [editorViews, file?.path, group.id, onActivate, onChange]);
+  }, [editorViews, file?.path, group.id, onActivate, onChange, pluginEditorExtensions]);
 
   useEffect(() => {
     const editor = view.current;
     if (!file || !editor) return;
     let cancelled = false;
-    void loadCodeLanguage(extensionOf(file.name))
+    const extension = extensionOf(file.name);
+    const override = pluginLanguageOverrides[file.path];
+    const contribution =
+      pluginLanguages.find((entry) => entry.id === override) ??
+      pluginLanguages.find(
+        (entry) =>
+          (entry.extensions ?? []).some(
+            (value) => value.toLowerCase() === extension,
+          ) ||
+          (entry.filenames ?? []).some(
+            (value) => value.toLowerCase() === file.name.toLowerCase(),
+          ),
+      );
+    void (async () => {
+      const language = contribution
+        ? await Promise.resolve(contribution.load())
+        : await loadCodeLanguage(override ?? extension);
+      const grammarIds = [contribution?.id, contribution?.id.split(':').at(-1), override, extension].filter((value): value is string => Boolean(value));
+      const grammar = grammarIds.map((id) => pluginGrammarFor(id)).find(Boolean);
+      const resolvedGrammar = grammar ? await Promise.resolve(grammar) : undefined;
+      return resolvedGrammar ? [language, resolvedGrammar] : language;
+    })()
       .then((language) => {
         if (!cancelled && view.current === editor)
           editor.dispatch({
@@ -901,14 +920,12 @@ function EditorPane({
     return () => {
       cancelled = true;
     };
-  }, [compartments.language, file?.path]);
+  }, [compartments.language, file?.path, file?.name, pluginLanguageOverrides, pluginLanguages, pluginGrammarFor, pluginGrammarVersion]);
 
   useEffect(() => {
     const editor = view.current;
     if (!file || !editor) return;
     const extension = extensionOf(file.name);
-    const isHtml = ['html', 'htm'].includes(extension);
-    const isPhp = extension === 'php';
     const isCss = ['css', 'scss'].includes(extension);
     editor.dispatch({
       effects: compartments.settings.reconfigure([
@@ -936,17 +953,7 @@ function EditorPane({
           ? [indentationGuides(settings.tabSize)]
           : []),
         ...(settings.wordWrap ? [EditorView.lineWrapping] : []),
-        ...(settings.autocomplete
-          ? [
-              autocompletion(
-                isHtml
-                  ? { override: [htmlTagCompletion] }
-                  : isPhp
-                    ? { override: [phpCompletion] }
-                    : {},
-              ),
-            ]
-          : []),
+        ...(settings.autocomplete ? [autocompletion()] : []),
         EditorView.theme({
           '&': { height: '100%' },
           '.cm-scroller': {
@@ -1223,9 +1230,18 @@ function EditorPane({
         )}
         <div className="tab-spacer" />
       </div>
+      {file && diskConflict && (
+        <div className="disk-conflict">
+          <span>{file.name} changed on disk.</span>
+          <button onClick={() => onConflictReload?.(file.path)}>Reload</button>
+          <button onClick={() => onConflictKeep?.(file.path)}>Keep mine</button>
+        </div>
+      )}
       {file && <div className="editor-host" ref={host} />}
       {group.activePath === GITHUB_TAB_KEY && (
-        <GithubPanel workspace={workspace} reloadToken={githubReloadToken} />
+        <Suspense fallback={<div className="editor-empty" />}>
+          <GithubPanel workspace={workspace} />
+        </Suspense>
       )}
       {group.activePath === PLUGIN_TAB_KEY && pluginPanel}
       {pluginViewsByKey.has(group.activePath) && (
@@ -1279,29 +1295,61 @@ function SplitContainer({
   onResize: (id: string, ratio: number) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ start: number; size: number; ratio: number } | null>(
-    null,
-  );
+  const drag = useRef<{
+    start: number;
+    size: number;
+    ratio: number;
+    pending: number;
+  } | null>(null);
+  const frame = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+  }, []);
+  const applyRatio = (ratio: number) => {
+    const element = container.current;
+    if (!element) return;
+    const template = `${ratio}fr 5px ${1 - ratio}fr`;
+    if (node.direction === 'vertical')
+      element.style.gridTemplateColumns = template;
+    else element.style.gridTemplateRows = template;
+  };
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
     const bounds = container.current?.getBoundingClientRect();
     if (!bounds) return;
     event.preventDefault();
+    event.stopPropagation();
     drag.current = {
       start: node.direction === 'vertical' ? event.clientX : event.clientY,
       size: node.direction === 'vertical' ? bounds.width : bounds.height,
       ratio: node.ratio,
+      pending: node.ratio,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!drag.current) return;
+    const current = drag.current;
+    if (!current) return;
     const coordinate =
       node.direction === 'vertical' ? event.clientX : event.clientY;
-    const delta = (coordinate - drag.current.start) / drag.current.size;
-    onResize(
-      node.id,
-      Math.max(0.12, Math.min(0.88, drag.current.ratio + delta)),
-    );
+    const delta = (coordinate - current.start) / current.size;
+    current.pending = Math.max(0.12, Math.min(0.88, current.ratio + delta));
+    if (frame.current !== null) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      if (drag.current) applyRatio(drag.current.pending);
+    });
+  };
+  const finishResize = () => {
+    if (frame.current !== null) {
+      cancelAnimationFrame(frame.current);
+      frame.current = null;
+    }
+    const current = drag.current;
+    drag.current = null;
+    if (!current) return;
+    applyRatio(current.pending);
+    onResize(node.id, current.pending);
   };
   const template =
     node.direction === 'vertical'
@@ -1326,13 +1374,11 @@ function SplitContainer({
           node.direction === 'vertical' ? 'vertical' : 'horizontal'
         }
         onPointerDown={onPointerDown}
+        onMouseDown={(event) => event.stopPropagation()}
         onPointerMove={onPointerMove}
-        onPointerUp={() => {
-          drag.current = null;
-        }}
-        onPointerCancel={() => {
-          drag.current = null;
-        }}
+        onPointerUp={finishResize}
+        onPointerCancel={finishResize}
+        onLostPointerCapture={finishResize}
       >
         <span />
       </div>
@@ -1354,9 +1400,26 @@ function App() {
   const [groups, setGroups] = useState<EditorGroup[]>([
     { id: 'group-1', activePath: '', tabs: [] },
   ]);
-  const [githubReloadToken, setGithubReloadToken] = useState(0);
+  const [diskConflicts, setDiskConflicts] = useState<Set<string>>(new Set());
+  const watcherRoot = useRef('');
+  const activeWatchRoot = useRef('');
+  const watchGeneration = useRef(0);
+  const fsEventQueue = useRef<FsEvent[]>([]);
+  const fsApplyScheduled = useRef(false);
+  const lastDiskWrite = useRef(new Map<string, string>());
+  const allowedHiddenPaths = useRef(new Set<string>());
+  const settingsRef = useRef<AppSettings>(settings);
+  const openFilesRef = useRef<OpenFile[]>([]);
+  const groupsRef = useRef<EditorGroup[]>([]);
+  const processFsEventsRef = useRef<(events: FsEvent[]) => Promise<void>>(
+    async () => undefined,
+  );
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
-  const editorViews = useRef(new Map<string, EditorView>());
+  const editorViews = useRef(new Map<string, Map<GroupId, EditorView>>());
+  const lastActiveEditorPath = useRef('');
+  const [pluginLanguageOverrides, setPluginLanguageOverrides] = useState<
+    Record<string, string>
+  >({});
   const [layout, setLayout] = useState<LayoutNode>({
     type: 'group',
     groupId: 'group-1',
@@ -1396,6 +1459,7 @@ function App() {
   const selectionAnchor = useRef('');
   const trashCounter = useRef(0);
   const scanGeneration = useRef(0);
+  const scannedTree = useRef('');
   const treeScrollRef = useRef<HTMLDivElement>(null);
   const groupCounter = useRef(1);
   const splitCounter = useRef(0);
@@ -1438,6 +1502,19 @@ function App() {
 
   useEffect(() => {
     if (!isTauri()) return;
+    void (async () => {
+      try {
+        const trashRoot = await join(await appDataDir(), 'undo-trash');
+        if (await exists(trashRoot))
+          await remove(trashRoot, { recursive: true });
+      } catch {
+        // Best effort: a stale trash folder must not block startup.
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
     const enabled = settings.editorGlassEnabled && settings.nativeBackgroundBlurEnabled;
     void invoke('set_native_background_blur', { enabled }).catch((error) => {
       if (enabled) {
@@ -1446,6 +1523,15 @@ function App() {
       setMessage(`Could not ${enabled ? 'enable' : 'disable'} desktop blur: ${String(error)}`);
     });
   }, [settings.editorGlassEnabled, settings.nativeBackgroundBlurEnabled]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    void getCurrentWindow()
+      .setDecorations(!settings.titleBarEnabled)
+      .catch((error) =>
+        setMessage(`Could not update window decorations: ${String(error)}`),
+      );
+  }, [settings.titleBarEnabled]);
 
   const runPluginAction = async (action: PluginToolbarAction) => {
     try {
@@ -1740,6 +1826,331 @@ function App() {
     return newGroupId;
   };
 
+  // ---- Live file tree updates (backend watcher) ----
+
+  const processFsEvents = async (events: FsEvent[]) => {
+    if (!watcherRoot.current) return;
+    const root = watcherRoot.current;
+    const showHidden = settingsRef.current.showHiddenFiles;
+    const hidden = (relativePath: string) =>
+      !showHidden && relativePath.split('/').some((part) => part.startsWith('.'));
+    const relative = (absolutePath: string) =>
+      absolutePath.startsWith(`${root}/`)
+        ? absolutePath.slice(root.length + 1)
+        : absolutePath === root
+          ? ''
+          : '';
+    const removals: string[] = [];
+    const created: DiskFile[] = [];
+    const renames = new Map<string, string>();
+    const modified: string[] = [];
+    let rootGone = false;
+
+    for (const event of events) {
+      if (event.root !== root) continue;
+      if (event.kind === 'modified') {
+        const relativePath = relative(event.paths[0]);
+        if (relativePath) modified.push(relativePath);
+        continue;
+      }
+      if (event.kind === 'removed') {
+        const relativePath = relative(event.paths[0]);
+        removals.push(relativePath);
+        if (!relativePath) rootGone = true;
+        continue;
+      }
+      if (event.kind === 'created') {
+        const relativePath = relative(event.paths[0]);
+        if (relativePath && !hidden(relativePath)) {
+          created.push({
+            name: relativePath.split('/').at(-1) ?? relativePath,
+            path: relativePath,
+            kind: event.isDir ? 'directory' : 'file',
+          });
+        }
+        continue;
+      }
+      if (event.kind === 'renamed') {
+        const from = relative(event.paths[0]);
+        const to = relative(event.paths[1] ?? '');
+        if (!to) continue;
+        renames.set(from, to);
+        removals.push(from);
+        if (!hidden(to)) {
+          created.push({
+            name: to.split('/').at(-1) ?? to,
+            path: to,
+            kind: event.isDir ? 'directory' : 'file',
+          });
+        }
+      }
+    }
+
+    if (rootGone) {
+      setFiles([]);
+    } else if (removals.length > 0 || created.length > 0) {
+      setFiles((current) => {
+        const next = current.filter(
+          (file) =>
+            !removals.some(
+              (relativePath) =>
+                relativePath &&
+                (file.path === relativePath ||
+                  file.path.startsWith(`${relativePath}/`)),
+            ),
+        );
+        const added: DiskFile[] = [];
+        const seen = new Set(next.map((file) => file.path));
+        for (const entry of created) {
+          if (seen.has(entry.path)) continue;
+          added.push(entry);
+          seen.add(entry.path);
+        }
+        return added.length ? [...next, ...added] : next;
+      });
+    }
+
+    const doomed = new Set<string>();
+    for (const relativePath of removals) {
+      if (!relativePath) continue;
+      for (const file of openFilesRef.current) {
+        if (
+          (file.path === relativePath ||
+            file.path.startsWith(`${relativePath}/`)) &&
+          !file.dirty &&
+          ![...renames.keys()].some(
+            (from) =>
+              file.path === from || file.path.startsWith(`${from}/`),
+          )
+        ) {
+          doomed.add(file.path);
+        }
+      }
+    }
+    if (doomed.size) {
+      for (const path of doomed) {
+        fileContents.current.delete(path);
+        lastDiskWrite.current.delete(path);
+      }
+      setOpenFiles((current) =>
+        current.filter((file) => !doomed.has(file.path)),
+      );
+      normalizeGroups(
+        groupsRef.current.map((group) => {
+          const tabs = group.tabs.filter((tab) => !doomed.has(tab));
+          return {
+            ...group,
+            tabs,
+            activePath: doomed.has(group.activePath)
+              ? (tabs.at(-1) ?? '')
+              : group.activePath,
+          };
+        }),
+      );
+    }
+    if (renames.size > 0) {
+      const remap = (path: string) => {
+        let next = path;
+        for (const [from, to] of renames) {
+          if (next === from) next = to;
+          else if (from && next.startsWith(`${from}/`))
+            next = `${to}${next.slice(from.length)}`;
+        }
+        return next;
+      };
+      const touches = (path: string) =>
+        [...renames.keys()].some(
+          (from) => path === from || path.startsWith(`${from}/`),
+        );
+      if (openFilesRef.current.some((file) => touches(file.path))) {
+        fileContents.current = new Map(
+          [...fileContents.current].map(([path, content]) => [
+            remap(path),
+            content,
+          ]),
+        );
+        lastDiskWrite.current = new Map(
+          [...lastDiskWrite.current].map(([path, content]) => [
+            remap(path),
+            content,
+          ]),
+        );
+        setOpenFiles((current) =>
+          current.map((file) => {
+            const next = remap(file.path);
+            return next === file.path
+              ? file
+              : {
+                  ...file,
+                  path: next,
+                  name: next.split('/').pop() ?? file.name,
+                };
+          }),
+        );
+        setGroups((current) =>
+          current.map((group) => ({
+            ...group,
+            tabs: group.tabs.map(remap),
+            activePath: group.activePath ? remap(group.activePath) : '',
+          })),
+        );
+        setDiskConflicts((current) => new Set([...current].map(remap)));
+        setExpanded((current) => new Set([...current].map(remap)));
+      }
+    }
+
+    // Tree selection: renamed folders re-point; deleted folders fall back to
+    // the workspace root so new files/folders land somewhere that exists.
+    if (removals.length > 0 || renames.size > 0) {
+      const remapSelection = (path: string) => {
+        let next = path;
+        for (const [from, to] of renames) {
+          if (next === from) next = to;
+          else if (from && next.startsWith(`${from}/`))
+            next = `${to}${next.slice(from.length)}`;
+        }
+        for (const removedRel of removals) {
+          if (
+            removedRel &&
+            (next === removedRel || next.startsWith(`${removedRel}/`))
+          )
+            return '';
+        }
+        return next;
+      };
+      if (selectedPath) setSelectedPath(remapSelection(selectedPath));
+      if (selectedDirectory) setSelectedDirectory(remapSelection(selectedDirectory));
+      if (selectedPaths.size)
+        setSelectedPaths((current) => {
+          const next = new Set<string>();
+          for (const path of current) {
+            const remapped = remapSelection(path);
+            if (remapped) next.add(remapped);
+          }
+          return next;
+        });
+      selectionAnchor.current = remapSelection(selectionAnchor.current);
+    }
+
+    for (const relativePath of modified) {
+      const open = openFilesRef.current.find(
+        (file) => file.path === relativePath,
+      );
+      if (!open) continue;
+      try {
+        const content = await readTextFile(`${root}/${relativePath}`);
+        const lastWritten = lastDiskWrite.current.get(relativePath);
+        if (
+          lastWritten !== undefined &&
+          lastWritten === contentFingerprint(content)
+        )
+          continue;
+        if (open.dirty) {
+          setDiskConflicts((current) =>
+            current.has(relativePath)
+              ? current
+              : new Set(current).add(relativePath),
+          );
+          continue;
+        }
+        fileContents.current.set(relativePath, content);
+        setOpenFiles((current) =>
+          current.map((file) =>
+            file.path === relativePath
+              ? { ...file, revision: file.revision + 1, dirty: false }
+              : file,
+          ),
+        );
+      } catch {
+        // The file vanished; the follow-up remove event closes the tab.
+      }
+    }
+  };
+  useEffect(() => {
+    processFsEventsRef.current = processFsEvents;
+  });
+
+  useEffect(() => {
+    settingsRef.current = settings;
+    openFilesRef.current = openFiles;
+    groupsRef.current = groups;
+  });
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const unlistenAll = Promise.all([
+      listen<FsEvent[]>('fs-changed', (event) => {
+        for (const change of event.payload) fsEventQueue.current.push(change);
+        if (fsApplyScheduled.current) return;
+        fsApplyScheduled.current = true;
+        const flush = () => {
+          fsApplyScheduled.current = false;
+          const events = fsEventQueue.current;
+          fsEventQueue.current = [];
+          if (!events.length) return;
+          if (!watcherRoot.current) {
+            // Watcher handle not wired yet (watch_project pending): retry.
+            fsEventQueue.current =
+              events.length > 500 ? events.slice(-500) : events;
+            fsApplyScheduled.current = true;
+            window.setTimeout(flush, 120);
+            return;
+          }
+          void processFsEventsRef.current(events);
+        };
+        window.requestAnimationFrame(flush);
+      }),
+      listen<string>('fs-watcher-error', (event) => {
+        setMessage(event.payload);
+      }),
+    ]);
+    return () => {
+      void unlistenAll.then((unlisten) => unlisten.forEach((fn) => fn()));
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const generation = ++watchGeneration.current;
+    let cancelled = false;
+    const unwatchPath = async (path: string) => {
+      try {
+        await invoke('unwatch_project', { root: path });
+      } catch {
+        // best effort
+      }
+    };
+    void (async () => {
+      const previous = activeWatchRoot.current;
+      if (previous) await unwatchPath(previous);
+      if (!workspace) {
+        watcherRoot.current = '';
+        activeWatchRoot.current = '';
+        return;
+      }
+      try {
+        const watched = await invoke<string>('watch_project', {
+          root: workspace,
+        });
+        if (cancelled || generation !== watchGeneration.current) {
+          // A newer run owns the watcher (watch_project replaces the backend
+          // watcher outright); never unwatch from a stale run.
+          return;
+        }
+        watcherRoot.current = watched;
+        activeWatchRoot.current = watched;
+      } catch (error) {
+        if (cancelled) return;
+        watcherRoot.current = '';
+        activeWatchRoot.current = '';
+        setMessage(`Live file updates unavailable: ${String(error)}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace]);
+
   const updateTerminalTitle = useCallback((id: string, title: string) => {
     setTerminals((current) =>
       current.map((terminal) =>
@@ -1781,13 +2192,10 @@ function App() {
     return id;
   };
 
-  const openGithubPanel = (reloadOnIcon = false) => {
+  const openGithubPanel = () => {
     if (!workspace) {
       setMessage('Open a folder first.');
       return;
-    }
-    if (reloadOnIcon && !groups.some((group) => group.tabs.includes(GITHUB_TAB_KEY))) {
-      setGithubReloadToken((token) => token + 1);
     }
     setGroups((current) =>
       current.map((group) =>
@@ -1841,6 +2249,10 @@ function App() {
         'build',
         '.next',
         'target',
+        '__pycache__',
+        '.venv',
+        'venv',
+        '.cache',
       ]);
       const pending = [{ folder: rootPath, prefix: '' }];
       let pendingIndex = 0;
@@ -1855,6 +2267,7 @@ function App() {
           batch.map(({ folder }) => readDir(folder)),
         );
         if (generation !== scanGeneration.current) return;
+        const hiddenGrants: { path: string; directory: boolean }[] = [];
         for (
           let folderIndex = 0;
           folderIndex < batch.length;
@@ -1873,11 +2286,14 @@ function App() {
             )
               continue;
             if (entry.name.startsWith('.')) {
-              await invoke('workspace_allow_hidden_path', {
-                root: rootPath,
-                path: `${folder.folder}/${entry.name}`,
-                directory: entry.isDirectory,
-              });
+              const hiddenPath = `${folder.folder}/${entry.name}`;
+              const hiddenKey = `${rootPath}:${hiddenPath}`;
+              if (!allowedHiddenPaths.current.has(hiddenKey)) {
+                hiddenGrants.push({
+                  path: hiddenPath,
+                  directory: entry.isDirectory,
+                });
+              }
             }
             const relative = folder.prefix
               ? `${folder.prefix}/${entry.name}`
@@ -1901,8 +2317,21 @@ function App() {
             }
           }
         }
+        if (hiddenGrants.length && generation === scanGeneration.current) {
+          await invoke('workspace_allow_hidden_paths', {
+            root: rootPath,
+            paths: hiddenGrants,
+          });
+          if (generation !== scanGeneration.current) return;
+          for (const grant of hiddenGrants) {
+            allowedHiddenPaths.current.add(`${rootPath}:${grant.path}`);
+          }
+        }
       }
-      if (generation === scanGeneration.current) setFiles(collected);
+      if (generation === scanGeneration.current) {
+        scannedTree.current = `${rootPath}\u0000${settings.showHiddenFiles}`;
+        setFiles(collected);
+      }
     },
     [settings.showHiddenFiles],
   );
@@ -1920,8 +2349,31 @@ function App() {
   }, [viewerOpen, workspace]);
 
   useEffect(() => {
-    if (workspace) void refreshWorkspace(workspace);
+    // Fallback when the backend watcher is unavailable (watch reached its
+    // limit, unsupported mount): refresh the tree when the window regains
+    // focus so external edits are still picked up eventually.
+    if (!isTauri() || !workspace) return;
+    const rescan = () => {
+      if (document.visibilityState !== 'visible') return;
+      // With the backend watcher healthy the tree stays live; rescan only
+      // serves as the fallback for watch failure / unsupported mounts.
+      if (watcherRoot.current) return;
+      void refreshWorkspace(workspace);
+    };
+    window.addEventListener('focus', rescan);
+    document.addEventListener('visibilitychange', rescan);
+    return () => {
+      window.removeEventListener('focus', rescan);
+      document.removeEventListener('visibilitychange', rescan);
+    };
   }, [refreshWorkspace, workspace]);
+
+  useEffect(() => {
+    if (!workspace) return;
+    if (scannedTree.current === `${workspace}\u0000${settings.showHiddenFiles}`)
+      return;
+    void refreshWorkspace(workspace);
+  }, [refreshWorkspace, settings.showHiddenFiles, workspace]);
 
   const parentDirectory = (path: string) =>
     path.split('/').slice(0, -1).join('/');
@@ -2188,6 +2640,15 @@ function App() {
       setWorkspace(selected);
       setOpenFiles([]);
       fileContents.current.clear();
+      lastDiskWrite.current.clear();
+      allowedHiddenPaths.current.clear();
+      setDiskConflicts(new Set());
+      for (const batch of undoStack)
+        for (const entry of batch.entries)
+          void remove(entry.trashedPath, {
+            recursive: entry.entry.kind === 'directory',
+          }).catch(() => undefined);
+      setUndoStack([]);
       setGroups([{ id: 'group-1', activePath: '', tabs: [] }]);
       setLayout({ type: 'group', groupId: 'group-1' });
       setActiveGroupId('group-1');
@@ -2276,10 +2737,14 @@ function App() {
       const currentContent = fileContents.current.get(path) ?? '';
       let content: string;
       try {
+        const willSaveContent = await pluginRuntime.applyWillSave(
+          path,
+          currentContent,
+        );
         content = settings.prettierOnSave
-          ? ((await prettierFormat(file.name, currentContent)) ??
-            currentContent)
-          : currentContent;
+          ? ((await prettierFormat(file.name, willSaveContent)) ??
+            willSaveContent)
+          : willSaveContent;
       } catch (error) {
         setMessage(`Prettier failed; file not saved: ${String(error)}`);
         return false;
@@ -2287,6 +2752,13 @@ function App() {
       try {
         await writeTextFile(`${workspace}/${file.path}`, content);
         fileContents.current.set(path, content);
+        lastDiskWrite.current.set(path, contentFingerprint(content));
+        setDiskConflicts((current) => {
+          if (!current.has(path)) return current;
+          const next = new Set(current);
+          next.delete(path);
+          return next;
+        });
         setOpenFiles((current) =>
           current.map((entry) =>
             entry.path === path
@@ -2342,7 +2814,13 @@ function App() {
       if (!file) return;
       const content = fileContents.current.get(path) ?? '';
       try {
-        const formatted = await prettierFormat(file.name, content);
+        const pluginFormatted = await pluginRuntime.formatWithPlugins(
+          path,
+          file.name,
+          content,
+        );
+        const formatted =
+          pluginFormatted ?? (await prettierFormat(file.name, content));
         if (formatted === null) {
           setMessage(
             `Prettier does not support .${extensionOf(file.name) || 'txt'} files.`,
@@ -2362,6 +2840,43 @@ function App() {
     },
     [openFiles, updateFile],
   );
+
+  const reloadFromDisk = useCallback(
+    async (path: string) => {
+      if (!workspace) return;
+      setDiskConflicts((current) => {
+        if (!current.has(path)) return current;
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+      const file = openFilesRef.current.find((entry) => entry.path === path);
+      if (!file) return;
+      try {
+        const content = await readTextFile(`${workspace}/${path}`);
+        fileContents.current.set(path, content);
+        setOpenFiles((current) =>
+          current.map((entry) =>
+            entry.path === path
+              ? { ...entry, revision: entry.revision + 1, dirty: false }
+              : entry,
+          ),
+        );
+      } catch (error) {
+        setMessage(`Could not reload ${file.name}: ${String(error)}`);
+      }
+    },
+    [workspace],
+  );
+
+  const keepBuffer = useCallback((path: string) => {
+    setDiskConflicts((current) => {
+      if (!current.has(path)) return current;
+      const next = new Set(current);
+      next.delete(path);
+      return next;
+    });
+  }, []);
 
   const closeTab = useCallback(
     async (groupId: GroupId, path: string) => {
@@ -2396,6 +2911,13 @@ function App() {
       }
       if (!otherGroupsStillUseFile && !terminal) {
         fileContents.current.delete(path);
+        lastDiskWrite.current.delete(path);
+        setDiskConflicts((current) => {
+          if (!current.has(path)) return current;
+          const next = new Set(current);
+          next.delete(path);
+          return next;
+        });
         setOpenFiles((current) =>
           current.filter((entry) => entry.path !== path),
         );
@@ -2713,7 +3235,10 @@ function App() {
       );
     setUndoStack((current) => [...current, { workspace, entries: batch }]);
     for (const path of fileContents.current.keys())
-      if (affected(path)) fileContents.current.delete(path);
+      if (affected(path)) {
+        fileContents.current.delete(path);
+        lastDiskWrite.current.delete(path);
+      }
     setOpenFiles((current) => current.filter((file) => !affected(file.path)));
     const nextGroups = groups.map((group) => {
       const tabs = group.tabs.filter((path) => !affected(path));
@@ -2855,7 +3380,23 @@ function App() {
         setCommandPaletteOpen(false);
         return;
       }
+      const hadMenu = Boolean(contextMenu);
       setContextMenu(null);
+      if (hadMenu) return;
+      const inViewer =
+        !settingsOpen &&
+        !themeMakerOpen &&
+        Boolean(target.closest('.file-viewer')) &&
+        !target.matches("input, textarea, [contenteditable='true']");
+      if (inViewer && !renamingPath && !newItemKind) {
+        // Escape deselects (VS Code behavior): selection falls back to root.
+        if (selectedPath || selectedPaths.size) {
+          setSelectedPath('');
+          setSelectedPaths(new Set());
+          setSelectedDirectory('');
+          selectionAnchor.current = '';
+        }
+      }
       return;
     }
     if (event.key === 'F2' && selectedPath) {
@@ -2882,6 +3423,21 @@ function App() {
       setCommandPaletteOpen(true);
       setCommandQuery('');
       return;
+    }
+    const pluginBinding = pluginRuntime.keybindings.find(
+      (binding) =>
+        pluginRuntime.conditionMatches(binding.pluginId, binding.condition) &&
+        matchesPluginShortcut(event, binding.shortcut),
+    );
+    if (pluginBinding) {
+      const command = pluginRuntime.commands.find(
+        (candidate) => candidate.id === pluginBinding.commandId,
+      );
+      if (command) {
+        event.preventDefault();
+        void runPaletteCommand(command);
+        return;
+      }
     }
     const pluginCommand = pluginRuntime.commands.find(
       (command) =>
@@ -3091,16 +3647,18 @@ function App() {
     void moveEntries(paths, destination);
   };
 
+  const deferredFilter = useDeferredValue(filter);
+  const normalizedFilter = deferredFilter.trim().toLowerCase();
   const filteredFiles = useMemo(
     () =>
-      filter.trim()
+      normalizedFilter
         ? files.filter(
             (file) =>
               file.kind === 'file' &&
-              file.path.toLowerCase().includes(filter.toLowerCase()),
+              file.path.toLowerCase().includes(normalizedFilter),
           )
         : [],
-    [files, filter],
+    [files, normalizedFilter],
   );
 
   const currentSelection = () =>
@@ -3112,7 +3670,7 @@ function App() {
 
   const selectTreeEntry = (event: ReactMouseEvent, entry: DiskFile) => {
     if (event.shiftKey) {
-      const visible = filter.trim() ? filteredFiles : visibleTreeEntries;
+      const visible = deferredFilter.trim() ? filteredFiles : visibleTreeEntries;
       const anchor = selectionAnchor.current || selectedPath;
       const from = visible.findIndex((item) => item.path === anchor);
       const to = visible.findIndex((item) => item.path === entry.path);
@@ -3370,15 +3928,21 @@ function App() {
       : undefined;
   };
 
+  const editorViewForPath = (path: string) => {
+    const views = editorViews.current.get(path);
+    if (!views) return null;
+    return views.get(activeGroupId) ?? views.values().next().value ?? null;
+  };
+
   const getPluginEditor = (path?: string) =>
-    editorViews.current.get(path ?? activeEditorPath() ?? '') ?? null;
+    editorViewForPath(path ?? activeEditorPath() ?? '');
 
   const getPluginEditorSnapshot = (path?: string) => {
     const activePath = path ?? activeEditorPath();
     if (!activePath) return null;
     const file = openFiles.find((entry) => entry.path === activePath);
     if (!file) return null;
-    const editor = editorViews.current.get(activePath);
+    const editor = editorViewForPath(activePath);
     const selection = editor?.state.selection.main;
     return {
       path: activePath,
@@ -3386,6 +3950,57 @@ function App() {
       text: fileContents.current.get(activePath) ?? '',
       dirty: file.dirty,
       selection: { from: selection?.from ?? 0, to: selection?.to ?? 0 },
+    };
+  };
+
+  const getPluginEditorContext = (path?: string): PluginEditorContext | null => {
+    const snapshot = getPluginEditorSnapshot(path);
+    if (!snapshot) return null;
+    const editor = editorViewForPath(snapshot.path);
+    const line = editor
+      ? editor.state.doc.lineAt(editor.state.selection.main.head)
+      : null;
+    const visibleRanges = editor
+      ? editor.visibleRanges.map((range) => ({
+          from: range.from,
+          to: range.to,
+        }))
+      : [];
+    const languageId =
+      pluginLanguageOverrides[snapshot.path] ??
+      pluginRuntime.languages.find(
+        (language) =>
+          (language.extensions ?? []).some(
+            (value) => value.toLowerCase() === extensionOf(snapshot.name),
+          ) ||
+          (language.filenames ?? []).some(
+            (value) => value.toLowerCase() === snapshot.name.toLowerCase(),
+          ),
+      )?.id ??
+      extensionOf(snapshot.name);
+    return {
+      path: snapshot.path,
+      uri: `file://${snapshot.path.split('/').map(encodeURIComponent).join('/')}`,
+      name: snapshot.name,
+      language: languageId,
+      version: editor?.state.doc.length ?? snapshot.text.length,
+      cursor: {
+        line: line?.number ?? 1,
+        column: line
+          ? (editor?.state.selection.main.head ?? line.from) - line.from + 1
+          : 1,
+        offset: editor?.state.selection.main.head ?? snapshot.selection.from,
+      },
+      selection: snapshot.selection,
+      selections: editor
+        ? editor.state.selection.ranges.map((range) => ({
+            from: range.from,
+            to: range.to,
+          }))
+        : [snapshot.selection],
+      dirty: snapshot.dirty,
+      focused: editor?.hasFocus ?? false,
+      visibleRanges,
     };
   };
 
@@ -3455,9 +4070,54 @@ function App() {
       getPluginEditor(path ? normalizePluginPath(path) : undefined),
     getEditorSnapshot: (path) =>
       getPluginEditorSnapshot(path ? normalizePluginPath(path) : undefined),
+    getEditorContext: (path) =>
+      getPluginEditorContext(path ? normalizePluginPath(path) : undefined),
+    getLastActiveContext: () =>
+      getPluginEditorContext(lastActiveEditorPath.current || undefined),
+    setEditorLanguage: (path, languageId) => {
+      const relativePath = normalizePluginPath(path);
+      setPluginLanguageOverrides((current) => ({
+        ...current,
+        [relativePath]: languageId,
+      }));
+    },
+    closePluginPanel: (id) => {
+      const key = `${PLUGIN_VIEW_PREFIX}${id}`;
+      const group = groups.find((entry) => entry.tabs.includes(key));
+      if (group) void closeTab(group.id, key);
+    },
+    getWorkspaceFolders: () =>
+      workspace
+        ? [
+            {
+              path: workspace,
+              name: workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace,
+              index: 0,
+            },
+          ]
+        : [],
+    isWorkspaceTrusted: () => Boolean(workspace),
+    getGitStatus: () =>
+      workspace
+        ? invoke('github_status', { root: workspace })
+        : Promise.resolve(null),
+    getGitBranch: async () => {
+      const status = (await (workspace
+        ? invoke('github_status', { root: workspace })
+        : Promise.resolve(null))) as { branch?: string | null } | null;
+      return status?.branch ? { name: status.branch } : null;
+    },
+    getGitDiff: (path, staged) =>
+      workspace
+        ? invoke<string>('github_diff', {
+            root: workspace,
+            path: path ?? null,
+            staged: staged ?? false,
+          })
+        : Promise.resolve(''),
     setEditorText: (path, text) => {
       const relativePath = normalizePluginPath(path);
-      const editor = editorViews.current.get(relativePath);
+      const editor = editorViewForPath(relativePath);
       if (editor)
         editor.dispatch({
           changes: { from: 0, to: editor.state.doc.length, insert: text },
@@ -3483,9 +4143,39 @@ function App() {
   useEffect(() => {
     pluginRuntime.emitEvent('workspace:changed', { path: workspace });
   }, [pluginRuntime.emitEvent, workspace]);
+  const previousOpenPaths = useRef(new Set<string>());
   useEffect(() => {
+    const next = new Set(openFiles.map((file) => file.path));
+    for (const path of next) {
+      if (previousOpenPaths.current.has(path)) continue;
+      const file = openFiles.find((entry) => entry.path === path);
+      pluginRuntime.emitEvent('document:opened', {
+        path,
+        name: file?.name ?? path,
+      });
+    }
+    for (const path of previousOpenPaths.current) {
+      if (next.has(path)) continue;
+      pluginRuntime.emitEvent('document:closed', { path });
+    }
+    previousOpenPaths.current = next;
+  }, [openFiles, pluginRuntime.emitEvent]);
+  useEffect(() => {
+    const path = activeEditorPath();
+    if (path) lastActiveEditorPath.current = path;
+    const context = getPluginEditorContext();
     pluginRuntime.emitEvent('editor:active', getPluginEditorSnapshot());
+    pluginRuntime.emitEvent('editor:active-changed', context);
   }, [pluginRuntime.emitEvent, activeGroupId, groups, openFiles]);
+  useEffect(() => {
+    pluginRuntime.emitEvent('editor:context-changed', getPluginEditorContext());
+  }, [
+    pluginRuntime.emitEvent,
+    activeGroupId,
+    groups,
+    openFiles,
+    pluginLanguageOverrides,
+  ]);
   useEffect(() => {
     pluginRuntime.emitEvent('settings:changed', {
       settings,
@@ -3493,7 +4183,7 @@ function App() {
     });
   }, [pluginRuntime.emitEvent, settings, activeTheme]);
 
-  const appCommands: PluginCommandDefinition[] = [
+  const appCommands: PluginCommandDefinition[] = commandPaletteOpen ? [
     { id: 'open-folder', title: 'Open Folder', run: () => openWorkspace() },
     { id: 'new-file', title: 'New File', run: () => startCreating('file') },
     {
@@ -3536,11 +4226,46 @@ function App() {
       title: 'Toggle File Viewer',
       run: () => setViewerOpen((visible) => !visible),
     },
-  ];
+    {
+      id: 'plugin-go-to-definition',
+      title: 'Go to Definition',
+      run: () => pluginRuntime.languageCommands.goToDefinition(),
+    },
+    {
+      id: 'plugin-find-references',
+      title: 'Find References',
+      run: () => pluginRuntime.languageCommands.findReferences(),
+    },
+    {
+      id: 'plugin-rename-symbol',
+      title: 'Rename Symbol',
+      run: () => pluginRuntime.languageCommands.renameSymbol(),
+    },
+    {
+      id: 'plugin-document-symbols',
+      title: 'Go to Document Symbol',
+      run: () => pluginRuntime.languageCommands.documentSymbols(),
+    },
+    {
+      id: 'plugin-workspace-symbols',
+      title: 'Go to Workspace Symbol',
+      run: () => pluginRuntime.languageCommands.workspaceSymbols(),
+    },
+    {
+      id: 'plugin-code-actions',
+      title: 'Show Code Actions',
+      run: () => pluginRuntime.languageCommands.codeActions(),
+    },
+    {
+      id: 'plugin-signature-help',
+      title: 'Show Signature Help',
+      run: () => pluginRuntime.languageCommands.signatureHelp(),
+    },
+  ] : [];
   const commandItems: (PluginCommandDefinition & {
     pluginId: string;
     pluginName: string;
-  })[] = [
+  })[] = commandPaletteOpen ? [
     ...appCommands.map((command) => ({
       ...command,
       pluginId: 'arc',
@@ -3559,7 +4284,7 @@ function App() {
     `${command.title} ${command.description ?? ''} ${command.pluginName}`
       .toLowerCase()
       .includes(commandQuery.toLowerCase()),
-  );
+  ) : [];
   const runPaletteCommand = async (
     command: PluginCommandDefinition & { pluginId: string; pluginName: string },
   ) => {
@@ -3610,21 +4335,35 @@ function App() {
         onSelect={setActiveTab}
         onTerminalTitleChange={updateTerminalTitle}
         workspace={workspace}
-        githubReloadToken={githubReloadToken}
+        diskConflict={diskConflicts.has(group.activePath)}
+        onConflictReload={reloadFromDisk}
+        onConflictKeep={keepBuffer}
         pluginViews={pluginRuntime.panels}
         editorViews={editorViews}
+        pluginLanguages={pluginRuntime.languages}
+        pluginLanguageOverrides={pluginLanguageOverrides}
+        pluginEditorExtensions={pluginRuntime.editorExtensions}
+        pluginGrammarFor={pluginRuntime.getGrammar}
+        pluginGrammarVersion={pluginRuntime.grammarVersion}
+        onSelectionChange={(path) => {
+          const context = getPluginEditorContext(path);
+          pluginRuntime.emitEvent('editor:selection-changed', context);
+          pluginRuntime.emitEvent('editor:context-changed', context);
+        }}
         pluginPanel={
-          <PluginPanel
-            plugins={pluginRuntime.plugins}
-            pluginDirectory={pluginRuntime.pluginDirectory}
-            availableBuiltins={pluginRuntime.availableBuiltins}
-            panels={pluginRuntime.panels}
-            onInstallPlugin={pluginRuntime.installFromFolder}
-            onInstallBuiltin={pluginRuntime.installBuiltin}
-            onTogglePlugin={pluginRuntime.setEnabled}
-            onUninstallPlugin={pluginRuntime.uninstall}
-            onOpenPanel={openPluginView}
-          />
+          <Suspense fallback={<div className="editor-empty" />}>
+            <PluginPanel
+              plugins={pluginRuntime.plugins}
+              pluginDirectory={pluginRuntime.pluginDirectory}
+              availableBuiltins={pluginRuntime.availableBuiltins}
+              panels={pluginRuntime.panels}
+              onInstallPlugin={pluginRuntime.installFromFolder}
+              onInstallBuiltin={pluginRuntime.installBuiltin}
+              onTogglePlugin={pluginRuntime.setEnabled}
+              onUninstallPlugin={pluginRuntime.uninstall}
+              onOpenPanel={openPluginView}
+            />
+          </Suspense>
         }
         settings={settings}
         theme={activeTheme}
@@ -3634,36 +4373,41 @@ function App() {
 
   if (themeMakerOpen)
     return (
-      <ThemeMaker
-        initialTheme={activeTheme}
-        themes={themes}
-        settings={settings}
-        onBack={() => {
-          setThemeMakerOpen(false);
-          setSettingsOpen(true);
-        }}
-        onSave={(theme) =>
-          void persistTheme(theme, customThemeIds.has(theme.id))
-        }
-        onCreate={(theme, name) => void createTheme(theme, name)}
-        onOpenFolder={(theme) => void openThemeFolder(theme)}
-        errorMessage={
-          message.startsWith('Could not') || message.startsWith('A theme named')
-            ? message
-            : ''
-        }
-      />
+      <Suspense fallback={null}>
+        <ThemeMaker
+          initialTheme={activeTheme}
+          themes={themes}
+          settings={settings}
+          onBack={() => {
+            setThemeMakerOpen(false);
+            setSettingsOpen(true);
+          }}
+          onSave={(theme) =>
+            void persistTheme(theme, customThemeIds.has(theme.id))
+          }
+          onCreate={(theme, name) => void createTheme(theme, name)}
+          onOpenFolder={(theme) => void openThemeFolder(theme)}
+          errorMessage={
+            message.startsWith('Could not') ||
+            message.startsWith('A theme named')
+              ? message
+              : ''
+          }
+        />
+      </Suspense>
     );
 
   return (
     <main
-      className={`app-shell ${settings.appTheme === 'macos' ? 'app-theme-macos' : ''} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''}`}
+      className={`app-shell ${settings.appTheme === 'macos' ? 'app-theme-macos' : ''} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'}`}
       style={settings.interfaceFontFamily ? { fontFamily: settings.interfaceFontFamily } : undefined}
       onClick={() => {
         if (contextMenu) setContextMenu(null);
       }}
     >
       <style>{dynamicThemeCss}</style>
+      {settings.titleBarEnabled && <TitleBar />}
+      <div className="app-body">
       {!workspace &&
       terminals.length === 0 &&
       !groups.some((group) => group.tabs.includes(PLUGIN_TAB_KEY)) ? (
@@ -3799,15 +4543,36 @@ function App() {
               }}
             >
               <div className="viewer-heading">
-                <button
-                  className="workspace-header"
-                  title="Open another folder"
-                  onClick={() => void openWorkspace()}
-                >
-                  <FolderOpen size={14} />
-                  <span>{workspace.split(/[\\/]/).filter(Boolean).pop()}</span>
-                  <ChevronDown size={12} />
-                </button>
+                <div className="viewer-actions">
+                  <button
+                    className="tool-button"
+                    title="Settings (Ctrl+,)"
+                    onClick={() => setSettingsOpen(true)}
+                  >
+                    <SettingsIcon size={14} />
+                  </button>
+                  <button
+                    className="tool-button"
+                    title="Open plugins"
+                    onClick={openPluginPanel}
+                  >
+                    <Puzzle size={14} />
+                  </button>
+                  <button
+                    className="tool-button"
+                    title="Open GitHub"
+                    onClick={() => openGithubPanel()}
+                  >
+                    <Github size={14} />
+                  </button>
+                  <button
+                    className="tool-button"
+                    title="New terminal (Ctrl+T)"
+                    onClick={() => openTerminal()}
+                  >
+                    <TerminalIcon size={14} />
+                  </button>
+                </div>
                 <div className="viewer-actions">
                   <button
                     className="tool-button"
@@ -3818,6 +4583,13 @@ function App() {
                     }}
                   >
                     <Search size={14} />
+                  </button>
+                  <button
+                    className="tool-button"
+                    title="Open another folder"
+                    onClick={() => void openWorkspace()}
+                  >
+                    <FolderOpen size={14} />
                   </button>
                   <button
                     className="tool-button"
@@ -3888,6 +4660,16 @@ function App() {
                     return;
                   handleTreeDrop(event, '');
                 }}
+                onClick={(event) => {
+                  // Empty space below the last row selects the workspace
+                  // root (VS Code behavior): new files land at the root.
+                  if ((event.target as HTMLElement).closest('.tree-row, input'))
+                    return;
+                  setSelectedPaths(new Set());
+                  setSelectedPath('');
+                  setSelectedDirectory('');
+                  selectionAnchor.current = '';
+                }}
               >
                 {newItemKind && (
                   <div className="tree-create-row">
@@ -3918,7 +4700,7 @@ function App() {
                     />
                   </div>
                 )}
-                {filter.trim() ? (
+                {deferredFilter.trim() ? (
                   filteredFiles.length ? (
                     renderSearchResults()
                   ) : (
@@ -3931,38 +4713,6 @@ function App() {
                 )}
               </div>
               <div className="file-viewer-footer">
-                <button
-                  className="settings-launch"
-                  aria-label="Open settings (Ctrl+,)"
-                  title="Settings (Ctrl+,)"
-                  onClick={() => setSettingsOpen(true)}
-                >
-                  <SettingsIcon size={15} />
-                </button>
-                <button
-                  className="settings-launch"
-                  aria-label="Open plugins"
-                  title="Open plugins"
-                  onClick={openPluginPanel}
-                >
-                  <Puzzle size={15} />
-                </button>
-                <button
-                  className="settings-launch"
-                  aria-label="Open GitHub"
-                  title="Open GitHub"
-                  onClick={() => openGithubPanel(true)}
-                >
-                  <Github size={15} />
-                </button>
-                <button
-                  className="settings-launch"
-                  aria-label="New terminal (Ctrl+T)"
-                  title="New terminal (Ctrl+T)"
-                  onClick={() => openTerminal()}
-                >
-                  <TerminalIcon size={15} />
-                </button>
                 {pluginRuntime.actions.map((action) => (
                   <button
                     key={action.id}
@@ -3971,9 +4721,24 @@ function App() {
                     title={action.title ?? action.label}
                     onClick={() => void runPluginAction(action)}
                   >
-                    <PluginToolbarIcon name={action.icon} />
+                    <PluginToolbarIcon
+                      name={action.icon}
+                      svg={
+                        action.icon
+                          ? pluginRuntime.icons[
+                              `${action.pluginId}:${action.icon}`
+                            ]
+                          : undefined
+                      }
+                    />
                   </button>
                 ))}
+                <span
+                  className="file-viewer-project"
+                  title={workspace.split(/[\\/]/).filter(Boolean).pop()}
+                >
+                  {workspace.split(/[\\/]/).filter(Boolean).pop()}
+                </span>
               </div>
             </aside>
           )}
@@ -4206,18 +4971,23 @@ function App() {
         </>
       )}
       {settingsOpen && (
-        <SettingsPanel
-          settings={settings}
-          themes={themes}
-          customThemeIds={customThemeIds}
-          onChange={updateSettings}
-          onClose={() => setSettingsOpen(false)}
-          onOpenThemeMaker={() => {
-            setSettingsOpen(false);
-            setThemeMakerOpen(true);
-          }}
-          onDeleteTheme={(id) => void deleteTheme(id)}
-        />
+        <Suspense fallback={null}>
+          <SettingsPanel
+            settings={settings}
+            themes={themes}
+            customThemeIds={customThemeIds}
+            onChange={updateSettings}
+            onClose={() => setSettingsOpen(false)}
+            onOpenThemeMaker={() => {
+              setSettingsOpen(false);
+              setThemeMakerOpen(true);
+            }}
+            onDeleteTheme={(id) => void deleteTheme(id)}
+            pluginConfigurations={pluginRuntime.configurations}
+            getPluginConfigValue={pluginRuntime.getConfiguration}
+            onUpdatePluginConfig={pluginRuntime.updateConfiguration}
+          />
+        </Suspense>
       )}
       {commandPaletteOpen && (
         <div
@@ -4266,6 +5036,7 @@ function App() {
           </section>
         </div>
       )}
+      </div>
     </main>
   );
 }

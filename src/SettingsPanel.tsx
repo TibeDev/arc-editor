@@ -1,6 +1,7 @@
 import { RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "./settings";
+import type { PluginConfigurationContribution, PluginConfigurationProperty } from "./pluginRuntime";
 import ThemeColorPicker from "./ThemeColorPicker";
 import "./SettingsPanel.css";
 
@@ -10,6 +11,7 @@ const settingsCategories = [
   { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes." },
   { id: "terminal", label: "Terminal", description: "Cursor and scrollback behavior." },
   { id: "files", label: "Files", description: "Workspace browsing preferences." },
+  { id: "plugins", label: "Plugins", description: "Settings contributed by installed plugins." },
 ] as const;
 
 type SettingsCategory = typeof settingsCategories[number]["id"];
@@ -126,6 +128,51 @@ function FontFamilySetting({ label, value, options, fallback, onChange }: {
   </>;
 }
 
+function PluginConfigField({ id, label, property, value, onChange }: {
+  id: string;
+  label: string;
+  property: PluginConfigurationProperty;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const [draft, setDraft] = useState(() => typeof value === "object" && value !== null ? JSON.stringify(value, null, 2) : String(value ?? ""));
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (property.type !== "object" && property.type !== "array") return;
+    setDraft(typeof value === "object" && value !== null ? JSON.stringify(value, null, 2) : String(value ?? ""));
+  }, [property.type, value]);
+  if (property.enum?.length) {
+    const selected = property.enum.find((option) => option === value) ?? value;
+    return <label className="setting-field"><span>{label}</span><select value={String(selected ?? "")} onChange={(event) => {
+      const option = property.enum?.find((entry) => String(entry) === event.target.value);
+      onChange(option);
+    }}>
+      {property.enum.map((option) => <option key={String(option)} value={String(option)}>{String(option)}</option>)}
+    </select>{property.description && <small>{property.description}</small>}</label>;
+  }
+  if (property.type === "boolean") {
+    return <label className="setting-toggle"><span><strong>{label}</strong>{property.description && <small>{property.description}</small>}</span><input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} /></label>;
+  }
+  if (property.type === "number" || property.type === "integer") {
+    return <label className="setting-field"><span>{label}</span><input type="number" value={typeof value === "number" ? value : 0} min={property.minimum} max={property.maximum} onChange={(event) => {
+      const parsed = Number(event.target.value);
+      onChange(Number.isFinite(parsed) ? (property.type === "integer" ? Math.trunc(parsed) : parsed) : 0);
+    }} />{property.description && <small>{property.description}</small>}</label>;
+  }
+  if (property.type === "object" || property.type === "array") {
+    return <label className="setting-field"><span>{label}</span><textarea id={id} value={draft} spellCheck={false} onChange={(event) => {
+      setDraft(event.target.value);
+      try {
+        onChange(JSON.parse(event.target.value));
+        setError("");
+      } catch {
+        setError("Enter valid JSON.");
+      }
+    }} />{property.description && <small>{property.description}</small>}{error && <small className="setting-error">{error}</small>}</label>;
+  }
+  return <label className="setting-field"><span>{label}</span><input id={id} type="text" value={typeof value === "string" ? value : value === undefined || value === null ? "" : String(value)} onChange={(event) => onChange(event.target.value)} />{property.description && <small>{property.description}</small>}</label>;
+}
+
 export default function SettingsPanel({
   settings,
   themes,
@@ -134,6 +181,9 @@ export default function SettingsPanel({
   onOpenThemeMaker,
   customThemeIds,
   onDeleteTheme,
+  pluginConfigurations,
+  getPluginConfigValue,
+  onUpdatePluginConfig,
 }: {
   settings: AppSettings;
   themes: ThemeDefinition[];
@@ -142,6 +192,9 @@ export default function SettingsPanel({
   onOpenThemeMaker: () => void;
   customThemeIds: Set<string>;
   onDeleteTheme: (id: string) => void;
+  pluginConfigurations?: PluginConfigurationContribution[];
+  getPluginConfigValue?: (pluginId: string, key: string, fallback?: unknown) => unknown;
+  onUpdatePluginConfig?: (pluginId: string, key: string, value: unknown, scope?: "global" | "workspace") => void;
 }) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("editor");
   const [themeSearch, setThemeSearch] = useState("");
@@ -220,6 +273,7 @@ export default function SettingsPanel({
                   <option value="macos">Modern</option>
                 </select></label>
                 <div className="setting-note">App style and editor color theme are independent.</div>
+                {toggle("titleBarEnabled", "Custom title bar", "Use Arc's title bar. Turn off to use the system window frame.")}
               </section>
               <section className="settings-section"><h3>Editor colors</h3>
                 <label className="theme-search"><Search size={13} /><input value={themeSearch} onChange={(event) => setThemeSearch(event.target.value)} placeholder="Search color themes" /></label>
@@ -247,7 +301,6 @@ export default function SettingsPanel({
                   {transparency("glassFloatingTransparency", "Menus and popovers")}
                   {transparency("glassSettingsTransparency", "Settings panel")}
                   {transparency("glassControlsTransparency", "Inputs and controls")}
-                  <label className="setting-field"><span>In-app blur <b>{settings.editorGlassBlur}px</b></span><input type="range" min="0" max="40" step="1" value={settings.editorGlassBlur} onChange={(event) => onChange({ editorGlassBlur: Number(event.target.value) })} /></label>
                 </>}
               </section>
             </>}
@@ -265,7 +318,23 @@ export default function SettingsPanel({
             </section>}
             {activeCategory === "files" && <section className="settings-section"><h3>File viewer</h3>
               {toggle("showHiddenFiles", "Show hidden files", "Include dotfiles and hidden folders in workspace tree.")}
+              {toggle("restoreTerminals", "Reopen terminals", "Recreate previous terminal tabs when reopening a folder (commands are re-run).")}
             </section>}
+            {activeCategory === "plugins" && <>
+              {(!pluginConfigurations || pluginConfigurations.length === 0) && <section className="settings-section"><h3>Plugin settings</h3><p>No installed plugin contributes settings.</p></section>}
+              {pluginConfigurations?.map((contribution) => <section className="settings-section" key={contribution.id}>
+                <h3>{contribution.title}</h3>
+                <p>{contribution.pluginName}</p>
+                {Object.entries(contribution.properties).map(([key, property]) => <PluginConfigField
+                  key={key}
+                  id={`${contribution.id}-${key}`}
+                  label={key}
+                  property={property}
+                  value={getPluginConfigValue?.(contribution.pluginId, key, property.default) ?? property.default}
+                  onChange={(value) => onUpdatePluginConfig?.(contribution.pluginId, key, value, property.scope)}
+                />)}
+              </section>)}
+            </>}
           </div>
         </section>
       </div>

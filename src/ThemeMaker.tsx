@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from "react";
 import { ArrowLeft, FolderOpen, Plus, Save } from "lucide-react";
-import { themeColorWithOpacity, THEME_COLOR_GROUPS, type AppSettings, type ThemeColors, type ThemeDefinition } from "./settings";
+import TitleBar from "./TitleBar";
+import { GLASS_BLUR, themeColorWithOpacity, THEME_COLOR_GROUPS, type AppSettings, type ThemeColors, type ThemeDefinition } from "./settings";
 import ThemeColorPicker from "./ThemeColorPicker";
 
 const sample = [
@@ -51,11 +52,11 @@ export default function ThemeMaker({
     onCreate(theme, name);
   };
 
-  return <main className={`theme-maker-page ${settings.appTheme === "macos" ? "app-theme-macos" : ""} ${settings.editorGlassEnabled ? "editor-glass-enabled" : ""} ${colorPickerOpen ? "color-picker-open" : ""}`} style={{
+  return <main className={`theme-maker-page ${settings.appTheme === "macos" ? "app-theme-macos" : ""} ${settings.editorGlassEnabled ? "editor-glass-enabled" : ""} ${colorPickerOpen ? "color-picker-open" : ""} ${settings.titleBarEnabled ? "" : "titlebar-off"}`} style={{
     background: glassFill(theme.colors.background, settings.glassAppTransparency),
     color: theme.colors.text,
     fontFamily: settings.interfaceFontFamily || undefined,
-    "--editor-glass-blur": `${settings.editorGlassBlur}px`,
+    "--editor-glass-blur": `${GLASS_BLUR}px`,
     "--glass-app-transparency": `${settings.editorGlassEnabled ? settings.glassAppTransparency : 0}%`,
     "--glass-sidebar-transparency": `${settings.editorGlassEnabled ? settings.glassSidebarTransparency : 0}%`,
     "--glass-controls-transparency": `${settings.editorGlassEnabled ? settings.glassControlsTransparency : 0}%`,
@@ -71,6 +72,8 @@ export default function ThemeMaker({
     "--theme-hover": theme.colors.hover,
     "--theme-selected": theme.colors.selected,
   } as CSSProperties}>
+    {settings.titleBarEnabled && <TitleBar />}
+    <div className="theme-maker-body">
     <header className="theme-maker-header" style={{ background: glassFill(theme.colors.sidebar, settings.glassSidebarTransparency), borderColor: theme.colors.border }}>
       <button className="theme-back" onClick={onBack}><ArrowLeft size={15} /> Settings</button>
       <div className="theme-maker-title"><strong>Theme Maker</strong><span>Live editor preview</span></div>
@@ -120,6 +123,7 @@ export default function ThemeMaker({
           </div>
         </div>
       </section>
+    </div>
     </div>
   </main>;
 }

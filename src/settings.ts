@@ -9,6 +9,7 @@ export type AppSettings = {
   autocomplete: boolean;
   autoIndent: boolean;
   showHiddenFiles: boolean;
+  restoreTerminals: boolean;
   sidebarWidth: number;
   terminalFontFamily: string;
   terminalFontSize: number;
@@ -27,10 +28,10 @@ export type AppSettings = {
   zoomLevel: number;
   selectedTheme: string;
   appTheme: "classic" | "macos";
+  titleBarEnabled: boolean;
   editorGlassEnabled: boolean;
   nativeBackgroundBlurEnabled: boolean;
   editorGlassTransparency: number;
-  editorGlassBlur: number;
   glassAppTransparency: number;
   glassSidebarTransparency: number;
   glassTabsTransparency: number;
@@ -41,6 +42,8 @@ export type AppSettings = {
 };
 
 export const APP_SETTINGS_VERSION = 1;
+
+export const GLASS_BLUR = 18;
 
 export type ThemeColors = {
   background: string;
@@ -87,6 +90,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autocomplete: true,
   autoIndent: true,
   showHiddenFiles: false,
+  restoreTerminals: true,
   sidebarWidth: 244,
   terminalFontFamily: "'JetBrains Mono', monospace",
   terminalFontSize: 12,
@@ -105,10 +109,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   zoomLevel: 1,
   selectedTheme: "midnight",
   appTheme: "classic",
+  titleBarEnabled: true,
   editorGlassEnabled: true,
   nativeBackgroundBlurEnabled: true,
   editorGlassTransparency: 28,
-  editorGlassBlur: 18,
   glassAppTransparency: 20,
   glassSidebarTransparency: 20,
   glassTabsTransparency: 14,
@@ -251,14 +255,13 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
   const c = theme.colors;
   const transparency = (value: number) => settings.editorGlassEnabled ? Math.max(0, Math.min(100, value)) : 0;
   const glass = (color: string, value: number) => themeColorWithOpacity(color, 1 - transparency(value) / 100);
-  const glassBlur = Math.max(0, Math.min(40, settings.editorGlassBlur));
   const appBackground = glass(c.background, settings.glassAppTransparency);
   const sidebarBackground = glass(c.sidebar, settings.glassSidebarTransparency);
   const editorBackground = glass(c.editor, settings.editorGlassTransparency);
   const terminalBackground = glass(c.editor, settings.glassTerminalTransparency);
   const tabsBackground = glass(c.raised, settings.glassTabsTransparency);
   const floatingBackground = glass(c.raised, settings.glassFloatingTransparency);
-  const settingsBackground = glass(c.raised, settings.glassSettingsTransparency);
+  const settingsBackground = glass(c.background, settings.glassSettingsTransparency);
   const controlsBackground = glass(c.raised, settings.glassControlsTransparency);
   const overlayAlpha = settings.editorGlassEnabled
     ? 0.5 * (1 - transparency(settings.glassFloatingTransparency) / 100)
@@ -267,7 +270,7 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
     ? 0.18 * (1 - transparency(settings.glassFloatingTransparency) / 100)
     : 0.18;
   return `
-    .app-shell { --settings-muted:${c.muted}; --settings-text:${c.text}; --settings-raised:${c.raised}; --settings-border:${c.border}; --settings-accent:${c.function}; --settings-track:${c.hover}; --editor-glass-blur:${glassBlur}px; --glass-app-transparency:${transparency(settings.glassAppTransparency)}%; --glass-sidebar-transparency:${transparency(settings.glassSidebarTransparency)}%; --glass-tabs-transparency:${transparency(settings.glassTabsTransparency)}%; --glass-terminal-transparency:${transparency(settings.glassTerminalTransparency)}%; --glass-floating-transparency:${transparency(settings.glassFloatingTransparency)}%; --glass-settings-transparency:${transparency(settings.glassSettingsTransparency)}%; --glass-controls-transparency:${transparency(settings.glassControlsTransparency)}%; --glass-overlay-alpha:${overlayAlpha}; --glass-macos-overlay-alpha:${macOverlayAlpha}; background:${appBackground}; color:${c.text}; }
+    .app-shell { --settings-muted:${c.muted}; --settings-text:${c.text}; --settings-raised:${c.raised}; --settings-border:${c.border}; --settings-accent:${c.function}; --settings-track:${c.hover}; --editor-glass-blur:${GLASS_BLUR}px; --glass-app-transparency:${transparency(settings.glassAppTransparency)}%; --glass-sidebar-transparency:${transparency(settings.glassSidebarTransparency)}%; --glass-tabs-transparency:${transparency(settings.glassTabsTransparency)}%; --glass-terminal-transparency:${transparency(settings.glassTerminalTransparency)}%; --glass-floating-transparency:${transparency(settings.glassFloatingTransparency)}%; --glass-settings-transparency:${transparency(settings.glassSettingsTransparency)}%; --glass-controls-transparency:${transparency(settings.glassControlsTransparency)}%; --glass-overlay-alpha:${overlayAlpha}; --glass-macos-overlay-alpha:${macOverlayAlpha}; background:${appBackground}; color:${c.text}; }
     .settings-backdrop,.modal-backdrop { background:rgba(0,0,0,${overlayAlpha}); }
     .file-viewer { background:${sidebarBackground}; border-color:${c.border}; }
     .terminal-stack,.terminal-host,.terminal-view { background:${terminalBackground}; }

@@ -42,8 +42,22 @@ type GithubStatus = {
 const githubStatusCache = new Map<string, GithubStatus>();
 const githubLoadedWorkspaces = new Set<string>();
 const githubFailedWorkspaces = new Set<string>();
-const githubReloadTokens = new Map<string, number>();
-const githubPendingLoads = new Map<string, { token: number; promise: Promise<void> }>();
+const githubPendingLoads = new Map<string, Promise<void>>();
+const githubWorkspaceOrder: string[] = [];
+const GITHUB_WORKSPACE_CACHE_LIMIT = 6;
+
+function touchGithubWorkspace(workspace: string) {
+  const index = githubWorkspaceOrder.indexOf(workspace);
+  if (index >= 0) githubWorkspaceOrder.splice(index, 1);
+  githubWorkspaceOrder.push(workspace);
+  while (githubWorkspaceOrder.length > GITHUB_WORKSPACE_CACHE_LIMIT) {
+    const oldest = githubWorkspaceOrder.shift();
+    if (oldest === undefined) break;
+    githubStatusCache.delete(oldest);
+    githubLoadedWorkspaces.delete(oldest);
+    githubFailedWorkspaces.delete(oldest);
+  }
+}
 
 type SetupPlatform = "windows" | "linux" | "macos";
 type LinuxDistro = "debian" | "fedora" | "arch" | "opensuse" | "alpine" | "other";
@@ -71,9 +85,9 @@ function SetupRequirement({ name, command, url, onOpen }: {
   </div>;
 }
 
-export default function GithubPanel({ workspace, reloadToken }: { workspace: string; reloadToken: number }) {
+export default function GithubPanel({ workspace }: { workspace: string }) {
   const [status, setStatus] = useState<GithubStatus | null>(() => githubStatusCache.get(workspace) ?? null);
-  const [loading, setLoading] = useState(() => !githubLoadedWorkspaces.has(workspace));
+  const [loading, setLoading] = useState(() => !githubLoadedWorkspaces.has(workspace) && !githubFailedWorkspaces.has(workspace));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [connectionFailed, setConnectionFailed] = useState(() => githubFailedWorkspaces.has(workspace));
@@ -91,43 +105,47 @@ export default function GithubPanel({ workspace, reloadToken }: { workspace: str
   const [linuxDistro, setLinuxDistro] = useState<LinuxDistro>("debian");
   const authSession = useRef<{ id: string; unsubscribe: () => void; enterSent: boolean } | null>(null);
   const authOutput = useRef("");
+  const requestRef = useRef(0);
 
   const refresh = useCallback(async (fetchRemote = false): Promise<GithubStatus | null> => {
+    const requestId = ++requestRef.current;
+    const isCurrent = () => requestRef.current === requestId;
     if (!isTauri()) {
-      if (githubReloadTokens.get(workspace) === reloadToken) {
-        githubLoadedWorkspaces.add(workspace);
-        githubFailedWorkspaces.add(workspace);
-        setConnectionFailed(true);
-        setLoading(false);
-      }
+      githubLoadedWorkspaces.add(workspace);
+      githubFailedWorkspaces.add(workspace);
+      setConnectionFailed(true);
+      setLoading(false);
       return null;
     }
     setError("");
     try {
       let next = await invoke<GithubStatus>("github_status", { root: workspace });
-      if (githubReloadTokens.get(workspace) === reloadToken) {
-        githubStatusCache.set(workspace, next);
-        githubLoadedWorkspaces.add(workspace);
-        githubFailedWorkspaces.delete(workspace);
-        setConnectionFailed(false);
-        setStatus(next);
-        setGitName((value) => value || next.userName);
-        setGitEmail((value) => value || next.userEmail);
-      }
-      if (githubReloadTokens.get(workspace) !== reloadToken) return next;
+      if (!isCurrent()) return next;
+      githubStatusCache.set(workspace, next);
+      githubLoadedWorkspaces.add(workspace);
+      githubFailedWorkspaces.delete(workspace);
+      setConnectionFailed(false);
+      setStatus(next);
+      setLoading(false);
+      setGitName((value) => value || next.userName);
+      setGitEmail((value) => value || next.userEmail);
       if (fetchRemote && next.isGithubRepo && next.authenticated) {
-        await invoke("github_fetch", { root: workspace });
-        next = await invoke<GithubStatus>("github_status", { root: workspace });
-        if (githubReloadTokens.get(workspace) === reloadToken) {
+        try {
+          await invoke("github_fetch", { root: workspace });
+          next = await invoke<GithubStatus>("github_status", { root: workspace });
+          if (!isCurrent()) return next;
           githubStatusCache.set(workspace, next);
           setStatus(next);
           setGitName((value) => value || next.userName);
           setGitEmail((value) => value || next.userEmail);
+        } catch (cause) {
+          if (isCurrent()) setError(`Could not fetch from GitHub: ${String(cause)}`);
+          return null;
         }
       }
       return next;
     } catch (cause) {
-      if (githubReloadTokens.get(workspace) === reloadToken) {
+      if (isCurrent()) {
         githubLoadedWorkspaces.add(workspace);
         githubFailedWorkspaces.add(workspace);
         setError(String(cause));
@@ -135,9 +153,9 @@ export default function GithubPanel({ workspace, reloadToken }: { workspace: str
       }
       return null;
     } finally {
-      if (githubReloadTokens.get(workspace) === reloadToken) setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [reloadToken, workspace]);
+  }, [workspace]);
 
   const finishAuth = useCallback(async (id: string) => {
     const session = authSession.current;
@@ -243,34 +261,36 @@ export default function GithubPanel({ workspace, reloadToken }: { workspace: str
   }, [refresh]);
 
   useEffect(() => {
+    touchGithubWorkspace(workspace);
     setRepoName(workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? "my-project");
+    const cached = githubStatusCache.get(workspace) ?? null;
+    const loaded = githubLoadedWorkspaces.has(workspace);
+    const failed = githubFailedWorkspaces.has(workspace);
     const pending = githubPendingLoads.get(workspace);
-    if (pending?.token === reloadToken) {
-      setLoading(true);
+    if (cached || loaded || failed) {
+      setStatus(cached);
+      setConnectionFailed(failed);
+      setLoading(false);
+    }
+    if (pending) {
+      setLoading(!cached && !loaded && !failed);
       const restoreCachedStatus = () => {
         setStatus(githubStatusCache.get(workspace) ?? null);
         setConnectionFailed(githubFailedWorkspaces.has(workspace));
         setLoading(false);
       };
-      void pending.promise.then(restoreCachedStatus, restoreCachedStatus);
+      void pending.then(restoreCachedStatus, restoreCachedStatus);
       return;
     }
-    if (githubLoadedWorkspaces.has(workspace) && githubReloadTokens.get(workspace) === reloadToken) {
-      setStatus(githubStatusCache.get(workspace) ?? null);
-      setConnectionFailed(githubFailedWorkspaces.has(workspace));
-      setLoading(false);
-      return;
-    }
-    githubReloadTokens.set(workspace, reloadToken);
-    setLoading(true);
-    const request = { token: reloadToken, promise: checkForUpdates() };
+    setLoading(!cached && !loaded && !failed);
+    const request = refresh(false).then(() => undefined);
     githubPendingLoads.set(workspace, request);
-    void request.promise.then(() => {
+    void request.then(() => {
       if (githubPendingLoads.get(workspace) === request) githubPendingLoads.delete(workspace);
     }, () => {
       if (githubPendingLoads.get(workspace) === request) githubPendingLoads.delete(workspace);
     });
-  }, [checkForUpdates, reloadToken, workspace]);
+  }, [refresh, workspace]);
 
   const perform = async (action: () => Promise<unknown>, success?: string) => {
     setBusy(true);

@@ -1,14 +1,25 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { BookOpen, Download, FolderOpen, Plug, Puzzle, Trash2, X } from "lucide-react";
 import { join } from "@tauri-apps/api/path";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import pluginApiMarkdown from "../PLUGIN_API.md?raw";
 import type { InstalledPlugin, PluginPanelContribution } from "./pluginRuntime";
+import "./GithubPanel.css";
 import "./PluginPanel.css";
 import "./PluginPanel.folder.css";
 import "./PluginPanel.docs.css";
+
+const PluginDocs = lazy(async () => {
+  const [{ default: ReactMarkdown }, { default: remarkGfm }] = await Promise.all([
+    import("react-markdown"),
+    import("remark-gfm"),
+  ]);
+  return {
+    default: () => (
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{pluginApiMarkdown}</ReactMarkdown>
+    ),
+  };
+});
 
 export default function PluginPanel({
   plugins,
@@ -111,7 +122,7 @@ export default function PluginPanel({
     {error && <div className="github-feedback error">{error}</div>}
 
     {showDocs ? <main className="plugin-docs-content">
-      <article className="plugin-docs-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{pluginApiMarkdown}</ReactMarkdown></article>
+      <article className="plugin-docs-markdown"><Suspense fallback={null}><PluginDocs /></Suspense></article>
     </main> : <section className="plugin-content">
       <div className="plugin-section-heading"><h2>Installed plugins</h2><span>{plugins.length}</span></div>
       <div className="plugin-installed-list">
