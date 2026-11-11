@@ -7,6 +7,7 @@ type BufferedOutput = { chunks: BufferedChunk[]; size: number };
 
 const bufferLimit = 2 * 1024 * 1024;
 const chunkLimit = 8000;
+const replayBatchLimit = 256 * 1024;
 const subscribers = new Map<string, Set<Subscriber>>();
 const outputHistory = new Map<string, BufferedOutput>();
 const historyOrder: BufferedChunk[] = [];
@@ -72,8 +73,17 @@ export function subscribeTerminalOutput(id: string, callback: (data: string) => 
   subscribers.set(id, sessionSubscribers);
   void ensureListener().then(() => {
     if (!sessionSubscribers.has(subscriber)) return;
-    for (const chunk of outputHistory.get(id)?.chunks ?? []) callback(chunk.data);
-    subscriber.active = true;
+    let batch = "";
+    for (const chunk of outputHistory.get(id)?.chunks ?? []) {
+      if (!sessionSubscribers.has(subscriber)) return;
+      batch += chunk.data;
+      if (batch.length >= replayBatchLimit) {
+        callback(batch);
+        batch = "";
+      }
+    }
+    if (batch) callback(batch);
+    if (sessionSubscribers.has(subscriber)) subscriber.active = true;
   }).catch((error) => callback(`\r\nTerminal output listener failed: ${String(error)}\r\n`));
 
   return () => {

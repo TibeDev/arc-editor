@@ -26,6 +26,7 @@ import {
   Compartment,
   EditorSelection,
   EditorState,
+  RangeSetBuilder,
   Transaction,
   type Extension,
 } from '@codemirror/state';
@@ -340,21 +341,23 @@ function buildCodeHighlighting(theme: ThemeDefinition) {
 
 const externalContentUpdate = Annotation.define<boolean>();
 
+const indentGuideMark = Decoration.mark({ class: 'cm-indent-guide' });
+const leadingIndentation = /^[\t ]+/;
+
 function buildIndentGuides(view: EditorView, tabSize: number): DecorationSet {
-  const marker = Decoration.mark({ class: 'cm-indent-guide' });
-  const ranges: ReturnType<typeof marker.range>[] = [];
+  const builder = new RangeSetBuilder<Decoration>();
   for (const visible of view.visibleRanges) {
     let position = visible.from;
     while (position <= visible.to) {
       const line = view.state.doc.lineAt(position);
-      const indentation = /^[\t ]+/.exec(line.text)?.[0] ?? '';
+      const indentation = leadingIndentation.exec(line.text)?.[0] ?? '';
       if (indentation.length >= tabSize)
-        ranges.push(marker.range(line.from, line.from + indentation.length));
+        builder.add(line.from, line.from + indentation.length, indentGuideMark);
       if (line.to >= visible.to) break;
       position = line.to + 1;
     }
   }
-  return Decoration.set(ranges);
+  return builder.finish();
 }
 
 function indentationGuides(tabSize: number) {
@@ -781,7 +784,7 @@ function EditorPane({
   onConflictKeep?: (path: string) => void;
   pluginPanel: ReactNode;
   pluginViews: PluginPanelContribution[];
-  editorViews: { current: Map<string, EditorView> };
+  editorViews: { current: Map<string, Map<GroupId, EditorView>> };
   pluginLanguages: PluginLanguageContribution[];
   pluginLanguageOverrides: Record<string, string>;
   pluginEditorExtensions: Extension;
@@ -853,7 +856,9 @@ function EditorPane({
       }),
     });
     view.current = editor;
-    editorViews.current.set(file.path, editor);
+    const views = editorViews.current.get(file.path) ?? new Map<GroupId, EditorView>();
+    views.set(group.id, editor);
+    editorViews.current.set(file.path, views);
     if (snapshot.current?.path === file.path) {
       const previous = snapshot.current;
       requestAnimationFrame(() => {
@@ -871,8 +876,11 @@ function EditorPane({
         scrollLeft: editor.scrollDOM.scrollLeft,
       };
       editor.destroy();
-      if (editorViews.current.get(file.path) === editor)
-        editorViews.current.delete(file.path);
+      const views = editorViews.current.get(file.path);
+      if (views?.get(group.id) === editor) {
+        views.delete(group.id);
+        if (!views.size) editorViews.current.delete(file.path);
+      }
       if (view.current === editor) view.current = null;
     };
   }, [editorViews, file?.path, group.id, onActivate, onChange, pluginEditorExtensions]);
@@ -1409,7 +1417,7 @@ function App() {
     async () => undefined,
   );
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
-  const editorViews = useRef(new Map<string, EditorView>());
+  const editorViews = useRef(new Map<string, Map<GroupId, EditorView>>());
   const lastActiveEditorPath = useRef('');
   const [pluginLanguageOverrides, setPluginLanguageOverrides] = useState<
     Record<string, string>
@@ -1453,6 +1461,7 @@ function App() {
   const selectionAnchor = useRef('');
   const trashCounter = useRef(0);
   const scanGeneration = useRef(0);
+  const scannedTree = useRef('');
   const treeScrollRef = useRef<HTMLDivElement>(null);
   const groupCounter = useRef(1);
   const splitCounter = useRef(0);
@@ -2072,8 +2081,8 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return;
     const unlistenAll = Promise.all([
-      listen<FsEvent>('fs-changed', (event) => {
-        fsEventQueue.current.push(event.payload);
+      listen<FsEvent[]>('fs-changed', (event) => {
+        for (const change of event.payload) fsEventQueue.current.push(change);
         if (fsApplyScheduled.current) return;
         fsApplyScheduled.current = true;
         const flush = () => {
@@ -2315,7 +2324,10 @@ function App() {
           }
         }
       }
-      if (generation === scanGeneration.current) setFiles(collected);
+      if (generation === scanGeneration.current) {
+        scannedTree.current = `${rootPath}\u0000${settings.showHiddenFiles}`;
+        setFiles(collected);
+      }
     },
     [settings.showHiddenFiles],
   );
@@ -2353,8 +2365,11 @@ function App() {
   }, [refreshWorkspace, workspace]);
 
   useEffect(() => {
-    if (workspace) void refreshWorkspace(workspace);
-  }, [refreshWorkspace, workspace]);
+    if (!workspace) return;
+    if (scannedTree.current === `${workspace}\u0000${settings.showHiddenFiles}`)
+      return;
+    void refreshWorkspace(workspace);
+  }, [refreshWorkspace, settings.showHiddenFiles, workspace]);
 
   const parentDirectory = (path: string) =>
     path.split('/').slice(0, -1).join('/');
@@ -3907,15 +3922,21 @@ function App() {
       : undefined;
   };
 
+  const editorViewForPath = (path: string) => {
+    const views = editorViews.current.get(path);
+    if (!views) return null;
+    return views.get(activeGroupId) ?? views.values().next().value ?? null;
+  };
+
   const getPluginEditor = (path?: string) =>
-    editorViews.current.get(path ?? activeEditorPath() ?? '') ?? null;
+    editorViewForPath(path ?? activeEditorPath() ?? '');
 
   const getPluginEditorSnapshot = (path?: string) => {
     const activePath = path ?? activeEditorPath();
     if (!activePath) return null;
     const file = openFiles.find((entry) => entry.path === activePath);
     if (!file) return null;
-    const editor = editorViews.current.get(activePath);
+    const editor = editorViewForPath(activePath);
     const selection = editor?.state.selection.main;
     return {
       path: activePath,
@@ -3929,7 +3950,7 @@ function App() {
   const getPluginEditorContext = (path?: string): PluginEditorContext | null => {
     const snapshot = getPluginEditorSnapshot(path);
     if (!snapshot) return null;
-    const editor = editorViews.current.get(snapshot.path);
+    const editor = editorViewForPath(snapshot.path);
     const line = editor
       ? editor.state.doc.lineAt(editor.state.selection.main.head)
       : null;
@@ -4090,7 +4111,7 @@ function App() {
         : Promise.resolve(''),
     setEditorText: (path, text) => {
       const relativePath = normalizePluginPath(path);
-      const editor = editorViews.current.get(relativePath);
+      const editor = editorViewForPath(relativePath);
       if (editor)
         editor.dispatch({
           changes: { from: 0, to: editor.state.doc.length, insert: text },
@@ -4320,14 +4341,9 @@ function App() {
         pluginGrammarFor={pluginRuntime.getGrammar}
         pluginGrammarVersion={pluginRuntime.grammarVersion}
         onSelectionChange={(path) => {
-          pluginRuntime.emitEvent(
-            'editor:selection-changed',
-            getPluginEditorContext(path),
-          );
-          pluginRuntime.emitEvent(
-            'editor:context-changed',
-            getPluginEditorContext(path),
-          );
+          const context = getPluginEditorContext(path);
+          pluginRuntime.emitEvent('editor:selection-changed', context);
+          pluginRuntime.emitEvent('editor:context-changed', context);
         }}
         pluginPanel={
           <Suspense fallback={<div className="editor-empty" />}>

@@ -604,19 +604,48 @@ fn stream_process_output(
     stream: &'static str,
     mut reader: Box<dyn Read + Send>,
 ) {
-    let mut buffer = [0_u8; 16 * 1024];
+    let (sender, receiver) = sync_channel::<Vec<u8>>(4);
+    std::thread::spawn(move || {
+        let mut buffer = [0_u8; 16 * 1024];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(length) => {
+                    if sender.send(buffer[..length].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    let mut pending: Vec<u8> = Vec::with_capacity(32 * 1024);
+    let emit = |pending: &mut Vec<u8>| {
+        if pending.is_empty() {
+            return;
+        }
+        let _ = app.emit(
+            "plugin-process-output",
+            PluginProcessOutput {
+                id: id.clone(),
+                stream: stream.to_string(),
+                data: String::from_utf8_lossy(pending).into_owned(),
+            },
+        );
+        pending.clear();
+    };
     loop {
-        match reader.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
-            Ok(length) => {
-                let _ = app.emit(
-                    "plugin-process-output",
-                    PluginProcessOutput {
-                        id: id.clone(),
-                        stream: stream.to_string(),
-                        data: String::from_utf8_lossy(&buffer[..length]).into_owned(),
-                    },
-                );
+        match receiver.recv_timeout(Duration::from_millis(8)) {
+            Ok(chunk) => {
+                pending.extend_from_slice(&chunk);
+                if pending.len() >= 32 * 1024 {
+                    emit(&mut pending);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => emit(&mut pending),
+            Err(RecvTimeoutError::Disconnected) => {
+                emit(&mut pending);
+                break;
             }
         }
     }
@@ -2201,7 +2230,28 @@ fn handle_local_request(
         }
     }
 
-    let Ok(mut body) = fs::read(&path) else {
+    let content_type = mime_type(&path);
+    if content_type == "text/html; charset=utf-8" {
+        let Ok(body) = fs::read(&path) else {
+            respond_live_request(
+                &mut stream,
+                "404 Not Found",
+                "text/plain",
+                b"Not found",
+                is_head,
+            );
+            return;
+        };
+        respond_live_request(
+            &mut stream,
+            "200 OK",
+            content_type,
+            &inject_live_reload(body),
+            is_head,
+        );
+        return;
+    }
+    let Ok(mut file) = fs::File::open(&path) else {
         respond_live_request(
             &mut stream,
             "404 Not Found",
@@ -2211,11 +2261,22 @@ fn handle_local_request(
         );
         return;
     };
-    let content_type = mime_type(&path);
-    if content_type == "text/html; charset=utf-8" {
-        body = inject_live_reload(body);
+    let length = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+    if write_live_response_header(&mut stream, "200 OK", content_type, length) && !is_head {
+        let _ = std::io::copy(&mut file, &mut stream);
     }
-    respond_live_request(&mut stream, "200 OK", content_type, &body, is_head);
+}
+
+fn write_live_response_header(
+    stream: &mut TcpStream,
+    status: &str,
+    content_type: &str,
+    content_length: u64,
+) -> bool {
+    let header = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {content_length}\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(header.as_bytes()).is_ok()
 }
 
 fn respond_live_request(
@@ -2225,11 +2286,7 @@ fn respond_live_request(
     body: &[u8],
     is_head: bool,
 ) {
-    let header = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    if stream.write_all(header.as_bytes()).is_ok() && !is_head {
+    if write_live_response_header(stream, status, content_type, body.len() as u64) && !is_head {
         let _ = stream.write_all(body);
     }
 }
@@ -2790,8 +2847,8 @@ fn watch_project(
                             mapped.push(event);
                         }
                     }
-                    for event in mapped {
-                        app_handle.emit("fs-changed", event).ok();
+                    if !mapped.is_empty() {
+                        app_handle.emit("fs-changed", mapped).ok();
                     }
                     if !removed.is_empty() || !created_dirs.is_empty() {
                         let mut guard = match inner_state.lock() {
@@ -2837,7 +2894,8 @@ fn watch_project(
                                 );
                             }
                             if !stalled {
-                                for catch_up in list_catch_up_events(&filter, &thread_root, &path) {
+                                let catch_up = list_catch_up_events(&filter, &thread_root, &path);
+                                if !catch_up.is_empty() {
                                     app_handle.emit("fs-changed", catch_up).ok();
                                 }
                             }
@@ -3005,6 +3063,9 @@ mod tests {
             .unwrap()
             .to_string();
         fs::write(root.join("style.css"), "body { color: red; }").unwrap();
+        let css = request(server.port, "/style.css");
+        assert!(css.starts_with("HTTP/1.1 200 OK"));
+        assert!(css.ends_with("body { color: red; }"));
         thread::sleep(Duration::from_millis(900));
         let after = request(server.port, "/__arc_live_reload")
             .split("\r\n\r\n")

@@ -21,7 +21,7 @@ import * as codeMirrorHighlight from "@lezer/highlight";
 import type { AppSettings, ThemeDefinition } from "./settings";
 
 const builtinManifestSources = import.meta.glob<string>("../plugins/*/plugin.json", { eager: true, query: "?raw", import: "default" });
-const builtinPluginSources = import.meta.glob<string>("../plugins/*/main.js", { eager: true, query: "?raw", import: "default" });
+const builtinPluginSourceLoaders = import.meta.glob<string>("../plugins/*/main.js", { query: "?raw", import: "default" });
 
 const disabledStorageKey = "arc.plugins.disabled";
 const builtinsSeededKey = "arc.plugins.builtinsSeeded";
@@ -34,7 +34,7 @@ export type PluginManifest = {
   main: "main.js";
 };
 
-export type InstalledPlugin = PluginManifest & { enabled: boolean; source: string; builtin: boolean };
+export type InstalledPlugin = PluginManifest & { enabled: boolean; source?: string; builtin: boolean };
 
 export type PluginActionDefinition = {
   id: string;
@@ -233,6 +233,7 @@ export type PluginOutputChannel = {
   dispose: () => void;
   readonly id: string;
 };
+const pluginOutputBufferLimit = 100_000;
 export type PluginProcessHandle = {
   id: string;
   write: (data: string | Uint8Array) => Promise<void>;
@@ -723,10 +724,17 @@ function parseManifest(value: unknown, allowBuiltin = false): PluginManifest {
 
 const builtinPackages = Object.entries(builtinManifestSources).map(([manifestPath, manifestJson]) => {
   const sourcePath = manifestPath.replace(/plugin\.json$/, "main.js");
-  const source = builtinPluginSources[sourcePath];
-  if (typeof source !== "string") throw new Error(`Built-in plugin is missing main.js: ${manifestPath}`);
-  return { manifest: parseManifest(JSON.parse(manifestJson), true), source };
+  if (typeof builtinPluginSourceLoaders[sourcePath] !== "function") {
+    throw new Error(`Built-in plugin is missing main.js: ${manifestPath}`);
+  }
+  return { manifest: parseManifest(JSON.parse(manifestJson), true), sourcePath };
 });
+
+async function loadBuiltinSource(sourcePath: string): Promise<string> {
+  const loader = builtinPluginSourceLoaders[sourcePath];
+  if (!loader) throw new Error(`Built-in plugin is missing main.js: ${sourcePath}`);
+  return loader();
+}
 
 export function usePluginRuntime(
   workspace: string,
@@ -745,6 +753,7 @@ export function usePluginRuntime(
   const [keybindings, setKeybindings] = useState<PluginKeybinding[]>([]);
   const [iconRegistry, setIconRegistry] = useState<Record<string, string>>({});
   const [pluginDirectory, setPluginDirectory] = useState("");
+  const pluginDirectoryRef = useRef("");
   const hostActionsRef = useRef(hostActions);
   hostActionsRef.current = hostActions;
   pluginHostActions = hostActions;
@@ -762,6 +771,7 @@ export function usePluginRuntime(
   const commandRef = useRef(new Map<string, PluginCommand>());
   commandRef.current = new Map(commands.map((command) => [command.id, command]));
   const pluginsChangedListeners = useRef(new Set<() => void>());
+  const toggleTokens = useRef(new Map<string, number>());
   const configurationListeners = useRef(new Map<string, Set<(event: { key: string; value: unknown }) => void>>());
 
   const emitEvent = useCallback((event: string, payload?: unknown) => {
@@ -780,11 +790,27 @@ export function usePluginRuntime(
       try {
         const root = await join(await appDataDir(), "plugins");
         await mkdir(root, { recursive: true });
+        pluginDirectoryRef.current = root;
         if (!cancelled) setPluginDirectory(root);
         const seedBuiltins = localStorage.getItem(builtinsSeededKey) !== "true";
         for (const builtin of builtinPackages) {
           const folder = await join(root, builtin.manifest.id);
-          if (seedBuiltins || await exists(folder)) await writePluginFiles(folder, builtin.manifest, builtin.source);
+          let needsWrite = seedBuiltins;
+          if (!needsWrite) {
+            try {
+              const installed = JSON.parse(
+                await readTextFile(await join(folder, "plugin.json")),
+              ) as { version?: unknown };
+              needsWrite =
+                installed?.version !== builtin.manifest.version ||
+                !(await exists(await join(folder, "main.js")));
+            } catch {
+              needsWrite = true;
+            }
+          }
+          if (needsWrite) {
+            await writePluginFiles(folder, builtin.manifest, await loadBuiltinSource(builtin.sourcePath));
+          }
         }
         if (seedBuiltins) localStorage.setItem(builtinsSeededKey, "true");
         const disabled = readDisabledIds();
@@ -800,8 +826,9 @@ export function usePluginRuntime(
             const id = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>).id : undefined;
             const isBuiltin = builtinPackages.some((builtin) => builtin.manifest.id === id);
             const manifest = parseManifest(parsed, isBuiltin);
-            const source = await readTextFile(sourcePath);
-            loaded.push({ ...manifest, source, enabled: !disabled.has(manifest.id), builtin: isBuiltin });
+            const enabled = !disabled.has(manifest.id);
+            const source = enabled ? await readTextFile(sourcePath) : undefined;
+            loaded.push({ ...manifest, enabled, builtin: isBuiltin, ...(source === undefined ? {} : { source }) });
           } catch (error) {
             notify(`Could not load plugin in ${entry.name}: ${String(error)}`);
           }
@@ -849,9 +876,14 @@ export function usePluginRuntime(
 
     for (const plugin of desired.values()) {
       if (activeModules.current.has(plugin.id)) continue;
-      const url = URL.createObjectURL(new Blob([plugin.source], { type: "text/javascript" }));
+      const source = plugin.source;
+      if (source === undefined) {
+        notify(`Could not activate ${plugin.name}: plugin source is not loaded.`);
+        continue;
+      }
+      const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
       const active: ActivePlugin = {
-        source: plugin.source,
+        source,
         url,
         active: true,
         disposables: [],
@@ -1006,6 +1038,12 @@ export function usePluginRuntime(
             }
           };
           pluginCommandRunner = runCommand;
+          activeLanguageBase = () => {
+            const context = hostActionsRef.current.getEditorContext();
+            return context
+              ? { path: context.path, language: context.language }
+              : null;
+          };
           activeLanguageContext = () => {
             const context = hostActionsRef.current.getEditorContext();
             if (!context) return null;
@@ -1020,7 +1058,11 @@ export function usePluginRuntime(
           const outputChannels = new Map<string, PluginOutputChannel>();
           const makeOutputChannel = (name: string): PluginOutputChannel => {
             let buffer = "";
+            let truncated = false;
+            let publishTimer: number | null = null;
             const panelId = `${plugin.id}:output-${slugify(name)}`;
+            const displayBuffer = () =>
+              truncated ? `… earlier output truncated …\n${buffer}` : buffer;
             const publish = () => setPanels((current) => [
               ...current.filter((entry) => entry.id !== panelId),
               {
@@ -1031,20 +1073,44 @@ export function usePluginRuntime(
                 mount: (container: HTMLElement) => {
                   const pre = document.createElement("pre");
                   pre.className = "arc-plugin-output";
-                  pre.textContent = buffer;
+                  pre.textContent = displayBuffer();
                   container.replaceChildren(pre);
                   return () => container.replaceChildren();
                 },
               },
             ]);
+            const appendOutput = (text: string) => {
+              buffer = `${buffer}${text}`;
+              if (buffer.length > pluginOutputBufferLimit) {
+                buffer = buffer.slice(-pluginOutputBufferLimit);
+                truncated = true;
+              }
+              if (publishTimer !== null) return;
+              publishTimer = window.setTimeout(() => {
+                publishTimer = null;
+                publish();
+              }, 16);
+            };
             const channel: PluginOutputChannel = {
               id: panelId,
-              append: (text) => { buffer += text; publish(); },
-              appendLine: (text) => { buffer += `${text}\n`; publish(); },
+              append: appendOutput,
+              appendLine: (text) => appendOutput(`${text}\n`),
               show: () => hostActionsRef.current.openPluginPanel(panelId),
-              clear: () => { buffer = ""; publish(); },
+              clear: () => {
+                buffer = "";
+                truncated = false;
+                if (publishTimer !== null) {
+                  window.clearTimeout(publishTimer);
+                  publishTimer = null;
+                }
+                publish();
+              },
               dispose: () => {
                 outputChannels.delete(name);
+                if (publishTimer !== null) {
+                  window.clearTimeout(publishTimer);
+                  publishTimer = null;
+                }
                 setPanels((current) => current.filter((entry) => entry.id !== panelId));
               },
             };
@@ -1162,13 +1228,15 @@ export function usePluginRuntime(
               watch: (pattern, handler, options) => {
                 let disposed = false;
                 let unlisten: (() => void) | null = null;
-                void listen<{ root: string; kind: string; paths: string[] }>("fs-changed", (event) => {
+                void listen<{ root: string; kind: string; paths: string[] }[]>("fs-changed", (event) => {
                   if (disposed) return;
                   const root = hostActionsRef.current.getAppState().workspace;
-                  for (const absolute of event.payload.paths) {
-                    const relative = absolute.startsWith(root) ? absolute.slice(root.length).replace(/^[\\/]+/, "").replace(/\\/g, "/") : absolute.replace(/\\/g, "/");
-                    if (!matchGlob(relative, pattern) || (options?.ignore ?? []).some((ignore) => matchGlob(relative, ignore))) continue;
-                    handler({ kind: event.payload.kind, path: relative });
+                  for (const change of event.payload) {
+                    for (const absolute of change.paths) {
+                      const relative = absolute.startsWith(root) ? absolute.slice(root.length).replace(/^[\\/]+/, "").replace(/\\/g, "/") : absolute.replace(/\\/g, "/");
+                      if (!matchGlob(relative, pattern) || (options?.ignore ?? []).some((ignore) => matchGlob(relative, ignore))) continue;
+                      handler({ kind: change.kind, path: relative });
+                    }
                   }
                 }).then((stop) => {
                   unlisten = stop;
@@ -2454,20 +2522,37 @@ export function usePluginRuntime(
     const root = await join(await appDataDir(), "plugins");
     const folder = await join(root, id);
     if (await exists(folder)) return;
-    await writePluginFiles(folder, builtin.manifest, builtin.source);
+    const source = await loadBuiltinSource(builtin.sourcePath);
+    await writePluginFiles(folder, builtin.manifest, source);
     const disabled = readDisabledIds();
     disabled.delete(id);
     localStorage.setItem(disabledStorageKey, JSON.stringify([...disabled]));
-    setPlugins((current) => [...current, { ...builtin.manifest, source: builtin.source, enabled: true, builtin: true }]);
+    setPlugins((current) => [...current, { ...builtin.manifest, source, enabled: true, builtin: true }]);
   }, []);
 
-  const setEnabled = useCallback((id: string, enabled: boolean) => {
-    setPlugins((current) => current.map((plugin) => plugin.id === id ? { ...plugin, enabled } : plugin));
+  const setEnabled = useCallback(async (id: string, enabled: boolean) => {
+    const token = (toggleTokens.current.get(id) ?? 0) + 1;
+    toggleTokens.current.set(id, token);
+    const plugin = pluginsRef.current.find((entry) => entry.id === id);
+    if (!plugin) return;
+    let source = plugin.source;
+    if (enabled && source === undefined) {
+      try {
+        source = await readTextFile(await join(pluginDirectoryRef.current, plugin.id, plugin.main));
+      } catch (error) {
+        notify(`Could not load plugin ${plugin.name}: ${String(error)}`);
+        return;
+      }
+      if (toggleTokens.current.get(id) !== token) return;
+    }
     const disabled = readDisabledIds();
     if (enabled) disabled.delete(id);
     else disabled.add(id);
     localStorage.setItem(disabledStorageKey, JSON.stringify([...disabled]));
-  }, []);
+    setPlugins((current) => current.map((entry) => entry.id === id
+      ? { ...entry, enabled, source: enabled ? source : undefined }
+      : entry));
+  }, [notify]);
 
   const uninstall = useCallback(async (id: string) => {
     const folder = await join(await appDataDir(), "plugins", id);
@@ -2682,9 +2767,12 @@ type PluginLanguageContext = {
   word: string;
 };
 
+type PluginLanguageBase = { path: string; language: string };
+
+let activeLanguageBase: () => PluginLanguageBase | null = () => null;
 let activeLanguageContext: () => PluginLanguageContext | null = () => null;
 
-function pluginProviders(kind: PluginLanguageProviderKind, context: PluginLanguageContext): unknown[] {
+function pluginProviders(kind: PluginLanguageProviderKind, context: PluginLanguageBase): unknown[] {
   return pluginLanguageProviders
     .filter((entry) => entry.kind === kind && selectorMatches(entry.selector, context.language, "file", context.path))
     .map((entry) => entry.provider);
@@ -3049,10 +3137,13 @@ function pluginViewPlugin(kind: "codeLens" | "inlayHints" | "semanticTokens") {
     }
     destroy() { this.generation += 1; }
     private refresh(view: EditorView) {
+      if (!pluginLanguageProviders.length) { this.decorations = Decoration.none; return; }
+      const base = activeLanguageBase();
+      if (!base) { this.decorations = Decoration.none; return; }
+      const providers = pluginProviders(kind, base) as PluginRangeProvider[];
+      if (!providers.length) { this.decorations = Decoration.none; return; }
       const context = activeLanguageContext();
       if (!context) { this.decorations = Decoration.none; return; }
-      const providers = pluginProviders(kind, context) as PluginRangeProvider[];
-      if (!providers.length) { this.decorations = Decoration.none; return; }
       const generation = ++this.generation;
       const offset = view.state.selection.main.head;
       void Promise.all(providers.map(async (provider) => {
@@ -3069,10 +3160,13 @@ function pluginViewPlugin(kind: "codeLens" | "inlayHints" | "semanticTokens") {
 }
 
 const pluginCompletionSource = async (context: CompletionContext): Promise<CompletionResult | null> => {
+  if (!pluginLanguageProviders.length) return null;
+  const base = activeLanguageBase();
+  if (!base) return null;
+  const providers = pluginProviders("completion", base) as PluginCompletionProvider[];
+  if (!providers.length) return null;
   const languageContext = activeLanguageContext();
   if (!languageContext) return null;
-  const providers = pluginProviders("completion", languageContext) as PluginCompletionProvider[];
-  if (!providers.length) return null;
   const word = context.matchBefore(/[\w$-]*/);
   if (!word || (word.from === word.to && !context.explicit)) return null;
   const options: Completion[] = [];
@@ -3111,10 +3205,13 @@ function renderPluginHover(dom: HTMLElement, value: unknown): boolean {
 }
 
 const pluginHoverExtension = hoverTooltip((view, position) => {
+  if (!pluginLanguageProviders.length) return null;
+  const base = activeLanguageBase();
+  if (!base) return null;
+  const providers = pluginProviders("hover", base) as PluginHoverProvider[];
+  if (!providers.length) return null;
   const languageContext = activeLanguageContext();
   if (!languageContext) return null;
-  const providers = pluginProviders("hover", languageContext) as PluginHoverProvider[];
-  if (!providers.length) return null;
   const end = view.state.doc.lineAt(position).to;
   const makeTooltip = (value: unknown) => {
     const dom = document.createElement("div");
@@ -3146,9 +3243,13 @@ const pluginHoverExtension = hoverTooltip((view, position) => {
 });
 
 const pluginFoldingExtension = foldService.of((state, lineStart, lineEnd) => {
+  if (!pluginLanguageProviders.length) return null;
+  const base = activeLanguageBase();
+  if (!base) return null;
+  const providers = pluginProviders("folding", base) as PluginFoldingProvider[];
+  if (!providers.length) return null;
   const languageContext = activeLanguageContext();
   if (!languageContext) return null;
-  const providers = pluginProviders("folding", languageContext) as PluginFoldingProvider[];
   const line = state.doc.lineAt(lineStart);
   for (const provider of providers) {
     try {
@@ -3760,7 +3861,21 @@ type PluginProcessSink = {
   pendingError: string[];
 };
 const pluginProcessSinks = new Map<string, PluginProcessSink>();
+const pluginPendingOutputLimit = 256 * 1024;
+const pluginProcessSinkGraceMs = 30_000;
 let pluginProcessBusStarted = false;
+
+function pushPendingChunk(list: string[], chunk: string) {
+  list.push(chunk);
+  let total = 0;
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    total += list[index].length;
+    if (total > pluginPendingOutputLimit) {
+      list.splice(0, index + 1);
+      break;
+    }
+  }
+}
 
 function pluginProcessSink(id: string): PluginProcessSink {
   const existing = pluginProcessSinks.get(id);
@@ -3779,6 +3894,21 @@ function pluginProcessSink(id: string): PluginProcessSink {
   return sink;
 }
 
+function schedulePluginProcessSinkCleanup(id: string) {
+  window.setTimeout(() => {
+    const sink = pluginProcessSinks.get(id);
+    if (!sink) return;
+    if (
+      sink.stdout.size ||
+      sink.stderr.size ||
+      sink.exit.size ||
+      sink.error.size
+    )
+      return;
+    pluginProcessSinks.delete(id);
+  }, pluginProcessSinkGraceMs);
+}
+
 function ensurePluginProcessBus() {
   if (pluginProcessBusStarted) return;
   pluginProcessBusStarted = true;
@@ -3787,23 +3917,22 @@ function ensurePluginProcessBus() {
     const sink = pluginProcessSink(event.payload.id);
     const listeners = event.payload.stream === "stderr" ? sink.stderr : sink.stdout;
     if (listeners.size) listeners.forEach((listener) => listener(event.payload.data));
-    else if (event.payload.stream === "stderr") sink.pendingStderr.push(event.payload.data);
-    else sink.pendingStdout.push(event.payload.data);
+    else if (event.payload.stream === "stderr") pushPendingChunk(sink.pendingStderr, event.payload.data);
+    else pushPendingChunk(sink.pendingStdout, event.payload.data);
   }).catch(fail);
   void listen<{ id: string; code: number | null; signal: string | null }>("plugin-process-exit", (event) => {
     const sink = pluginProcessSink(event.payload.id);
     const exit = { code: event.payload.code, signal: event.payload.signal };
     if (sink.exit.size) sink.exit.forEach((listener) => listener(exit));
-    else sink.pendingExit.push(exit);
+    else sink.pendingExit = [exit];
+    schedulePluginProcessSinkCleanup(event.payload.id);
   }).catch(fail);
   void listen<{ id: string; error: string }>("plugin-process-error", (event) => {
     const sink = pluginProcessSink(event.payload.id);
     if (sink.error.size) sink.error.forEach((listener) => listener(event.payload.error));
-    else sink.pendingError.push(event.payload.error);
+    else sink.pendingError = [event.payload.error];
   }).catch(fail);
 }
-
-void ensurePluginProcessBus();
 
 async function spawnPluginProcess(
   invokeCommand: (command: string, args?: Record<string, unknown>) => Promise<unknown>,
@@ -3880,14 +4009,26 @@ async function spawnPluginPty(
   const stdoutListeners = new Set<(chunk: string) => void>();
   const exitListeners = new Set<(event: { code: number | null; signal: string | null }) => void>();
   const unlisteners: (() => void)[] = [];
+  let closed = false;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    unlisteners.forEach((stop) => stop());
+    unlisteners.length = 0;
+  };
+  const track = (stop: () => void) => {
+    if (closed) stop();
+    else unlisteners.push(stop);
+  };
   void listen<{ id: string; data: string }>("terminal-output", (event) => {
-    if (event.payload.id !== id) return;
+    if (closed || event.payload.id !== id) return;
     stdoutListeners.forEach((listener) => listener(event.payload.data));
-  }).then((stop) => unlisteners.push(stop));
+  }).then(track);
   void listen<{ id: string; code: number | null }>("terminal-exit", (event) => {
-    if (event.payload.id !== id) return;
+    if (closed || event.payload.id !== id) return;
     exitListeners.forEach((listener) => listener({ code: event.payload.code, signal: null }));
-  }).then((stop) => unlisteners.push(stop));
+    cleanup();
+  }).then(track);
   return {
     id,
     write: async (data) => {
@@ -3900,7 +4041,7 @@ async function spawnPluginPty(
     onExit: (handler) => { exitListeners.add(handler); return () => exitListeners.delete(handler); },
     onError: () => () => undefined,
     stop: async () => {
-      try { await invokeCommand("terminal_close", { id }); } finally { unlisteners.forEach((stop) => stop()); }
+      try { await invokeCommand("terminal_close", { id }); } finally { cleanup(); }
     },
   };
 }
@@ -3917,18 +4058,30 @@ async function connectPluginSocket(
   const errorListeners = new Set<(error: string) => void>();
   const closeListeners = new Set<() => void>();
   const unlisteners: (() => void)[] = [];
-  unlisteners.push(await listen<{ id: string; data: number[] }>("plugin-socket-data", (event) => {
-    if (event.payload.id !== id) return;
+  let closed = false;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    unlisteners.forEach((stop) => stop());
+    unlisteners.length = 0;
+  };
+  const track = (stop: () => void) => {
+    if (closed) stop();
+    else unlisteners.push(stop);
+  };
+  track(await listen<{ id: string; data: number[] }>("plugin-socket-data", (event) => {
+    if (closed || event.payload.id !== id) return;
     const bytes = new Uint8Array(event.payload.data);
     dataListeners.forEach((listener) => listener(bytes));
   }));
-  unlisteners.push(await listen<{ id: string; error: string }>("plugin-socket-error", (event) => {
-    if (event.payload.id !== id) return;
+  track(await listen<{ id: string; error: string }>("plugin-socket-error", (event) => {
+    if (closed || event.payload.id !== id) return;
     errorListeners.forEach((listener) => listener(event.payload.error));
   }));
-  unlisteners.push(await listen<{ id: string }>("plugin-socket-close", (event) => {
-    if (event.payload.id !== id) return;
+  track(await listen<{ id: string }>("plugin-socket-close", (event) => {
+    if (closed || event.payload.id !== id) return;
     closeListeners.forEach((listener) => listener());
+    cleanup();
   }));
   return {
     write: async (bytes) => { await invokeCommand("plugin_socket_write", { id, data: [...bytes] }); },
@@ -3936,7 +4089,7 @@ async function connectPluginSocket(
     onError: (handler) => { errorListeners.add(handler); return () => errorListeners.delete(handler); },
     onClose: (handler) => { closeListeners.add(handler); return () => closeListeners.delete(handler); },
     close: async () => {
-      try { await invokeCommand("plugin_socket_close", { id }); } finally { unlisteners.forEach((stop) => stop()); }
+      try { await invokeCommand("plugin_socket_close", { id }); } finally { cleanup(); }
     },
   };
 }
