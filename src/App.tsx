@@ -2,6 +2,7 @@ import {
   lazy,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -2272,6 +2273,7 @@ function App() {
           batch.map(({ folder }) => readDir(folder)),
         );
         if (generation !== scanGeneration.current) return;
+        const hiddenGrants: { path: string; directory: boolean }[] = [];
         for (
           let folderIndex = 0;
           folderIndex < batch.length;
@@ -2293,12 +2295,10 @@ function App() {
               const hiddenPath = `${folder.folder}/${entry.name}`;
               const hiddenKey = `${rootPath}:${hiddenPath}`;
               if (!allowedHiddenPaths.current.has(hiddenKey)) {
-                await invoke('workspace_allow_hidden_path', {
-                  root: rootPath,
+                hiddenGrants.push({
                   path: hiddenPath,
                   directory: entry.isDirectory,
                 });
-                allowedHiddenPaths.current.add(hiddenKey);
               }
             }
             const relative = folder.prefix
@@ -2321,6 +2321,16 @@ function App() {
                 kind: 'file',
               });
             }
+          }
+        }
+        if (hiddenGrants.length && generation === scanGeneration.current) {
+          await invoke('workspace_allow_hidden_paths', {
+            root: rootPath,
+            paths: hiddenGrants,
+          });
+          if (generation !== scanGeneration.current) return;
+          for (const grant of hiddenGrants) {
+            allowedHiddenPaths.current.add(`${rootPath}:${grant.path}`);
           }
         }
       }
@@ -3643,16 +3653,18 @@ function App() {
     void moveEntries(paths, destination);
   };
 
+  const deferredFilter = useDeferredValue(filter);
+  const normalizedFilter = deferredFilter.trim().toLowerCase();
   const filteredFiles = useMemo(
     () =>
-      filter.trim()
+      normalizedFilter
         ? files.filter(
             (file) =>
               file.kind === 'file' &&
-              file.path.toLowerCase().includes(filter.toLowerCase()),
+              file.path.toLowerCase().includes(normalizedFilter),
           )
         : [],
-    [files, filter],
+    [files, normalizedFilter],
   );
 
   const currentSelection = () =>
@@ -3664,7 +3676,7 @@ function App() {
 
   const selectTreeEntry = (event: ReactMouseEvent, entry: DiskFile) => {
     if (event.shiftKey) {
-      const visible = filter.trim() ? filteredFiles : visibleTreeEntries;
+      const visible = deferredFilter.trim() ? filteredFiles : visibleTreeEntries;
       const anchor = selectionAnchor.current || selectedPath;
       const from = visible.findIndex((item) => item.path === anchor);
       const to = visible.findIndex((item) => item.path === entry.path);
@@ -4177,7 +4189,7 @@ function App() {
     });
   }, [pluginRuntime.emitEvent, settings, activeTheme]);
 
-  const appCommands: PluginCommandDefinition[] = [
+  const appCommands: PluginCommandDefinition[] = commandPaletteOpen ? [
     { id: 'open-folder', title: 'Open Folder', run: () => openWorkspace() },
     { id: 'new-file', title: 'New File', run: () => startCreating('file') },
     {
@@ -4255,11 +4267,11 @@ function App() {
       title: 'Show Signature Help',
       run: () => pluginRuntime.languageCommands.signatureHelp(),
     },
-  ];
+  ] : [];
   const commandItems: (PluginCommandDefinition & {
     pluginId: string;
     pluginName: string;
-  })[] = [
+  })[] = commandPaletteOpen ? [
     ...appCommands.map((command) => ({
       ...command,
       pluginId: 'arc',
@@ -4278,7 +4290,7 @@ function App() {
     `${command.title} ${command.description ?? ''} ${command.pluginName}`
       .toLowerCase()
       .includes(commandQuery.toLowerCase()),
-  );
+  ) : [];
   const runPaletteCommand = async (
     command: PluginCommandDefinition & { pluginId: string; pluginName: string },
   ) => {
@@ -4695,7 +4707,7 @@ function App() {
                     />
                   </div>
                 )}
-                {filter.trim() ? (
+                {deferredFilter.trim() ? (
                   filteredFiles.length ? (
                     renderSearchResults()
                   ) : (

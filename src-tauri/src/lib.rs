@@ -521,33 +521,44 @@ fn workspace_grant_access(app: tauri::AppHandle, root: String) -> Result<(), Str
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
-fn workspace_allow_hidden_path(
-    app: tauri::AppHandle,
-    root: String,
+#[derive(serde::Deserialize)]
+struct HiddenPathGrant {
     path: String,
     directory: bool,
+}
+
+#[tauri::command]
+fn workspace_allow_hidden_paths(
+    app: tauri::AppHandle,
+    root: String,
+    paths: Vec<HiddenPathGrant>,
 ) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
     let root = PathBuf::from(root)
         .canonicalize()
         .map_err(|error| format!("Could not access workspace: {error}"))?;
-    let path = PathBuf::from(path)
-        .canonicalize()
-        .map_err(|error| format!("Could not access hidden path: {error}"))?;
-    if !path.starts_with(&root) {
-        return Err("Hidden path is outside the workspace.".to_string());
-    }
     let scope = app.fs_scope();
-    if scope.is_allowed(&path) {
-        return Ok(());
+    for entry in paths {
+        let path = PathBuf::from(entry.path)
+            .canonicalize()
+            .map_err(|error| format!("Could not access hidden path: {error}"))?;
+        if !path.starts_with(&root) {
+            return Err("Hidden path is outside the workspace.".to_string());
+        }
+        if scope.is_allowed(&path) {
+            continue;
+        }
+        if entry.directory {
+            scope
+                .allow_directory(path, true)
+                .map_err(|error| error.to_string())?;
+        } else {
+            scope.allow_file(path).map_err(|error| error.to_string())?;
+        }
     }
-    if directory {
-        scope
-            .allow_directory(path, true)
-            .map_err(|error| error.to_string())
-    } else {
-        scope.allow_file(path).map_err(|error| error.to_string())
-    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -733,43 +744,47 @@ fn plugin_process_spawn(
     }
     let app_exit = app.clone();
     let exit_id = id.clone();
-    std::thread::spawn(move || loop {
-        let status = {
-            let Ok(mut child) = process.child.lock() else {
-                break;
-            };
-            match child.try_wait() {
-                Ok(Some(status)) => Some(status),
-                Ok(None) => None,
-                Err(ref error) => {
-                    let _ = app_exit.emit(
-                        "plugin-process-error",
-                        PluginProcessErrorEvent {
-                            id: exit_id.clone(),
-                            error: error.to_string(),
-                        },
-                    );
+    std::thread::spawn(move || {
+        let mut interval = Duration::from_millis(50);
+        loop {
+            let status = {
+                let Ok(mut child) = process.child.lock() else {
                     break;
+                };
+                match child.try_wait() {
+                    Ok(Some(status)) => Some(status),
+                    Ok(None) => None,
+                    Err(ref error) => {
+                        let _ = app_exit.emit(
+                            "plugin-process-error",
+                            PluginProcessErrorEvent {
+                                id: exit_id.clone(),
+                                error: error.to_string(),
+                            },
+                        );
+                        break;
+                    }
                 }
-            }
-        };
-        if let Some(status) = status {
-            let _ = app_exit.emit(
-                "plugin-process-exit",
-                PluginProcessExit {
-                    id: exit_id.clone(),
-                    code: status.code(),
-                    signal: process_exit_signal(&status),
-                },
-            );
-            if let Some(state) = app_exit.try_state::<PluginProcessState>() {
-                if let Ok(mut processes) = state.0.lock() {
-                    processes.remove(&exit_id);
+            };
+            if let Some(status) = status {
+                let _ = app_exit.emit(
+                    "plugin-process-exit",
+                    PluginProcessExit {
+                        id: exit_id.clone(),
+                        code: status.code(),
+                        signal: process_exit_signal(&status),
+                    },
+                );
+                if let Some(state) = app_exit.try_state::<PluginProcessState>() {
+                    if let Ok(mut processes) = state.0.lock() {
+                        processes.remove(&exit_id);
+                    }
                 }
+                break;
             }
-            break;
+            std::thread::sleep(interval);
+            interval = (interval * 2).min(Duration::from_millis(500));
         }
-        std::thread::sleep(Duration::from_millis(50));
     });
     Ok(id)
 }
@@ -3085,7 +3100,7 @@ pub fn run() {
             workspace_pick,
             workspace_access_allowed,
             workspace_grant_access,
-            workspace_allow_hidden_path,
+            workspace_allow_hidden_paths,
             watch_project,
             unwatch_project,
             plugin_process_is_running,

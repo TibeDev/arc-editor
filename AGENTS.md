@@ -47,7 +47,7 @@ dist/                    Build output (gitignored)
 All Tauri commands, registered in `run()` via `generate_handler!`:
 
 - **Terminal**: `terminal_spawn`, `terminal_write`, `terminal_resize`, `terminal_close` — portable-pty sessions, output streamed via `terminal-output` event
-- **Workspace access gating**: `workspace_pick`, `workspace_access_allowed`, `workspace_grant_access`, `workspace_allow_hidden_path`
+- **Workspace access gating**: `workspace_pick`, `workspace_access_allowed`, `workspace_grant_access`, `workspace_allow_hidden_paths`
 - **GitHub**: `github_status`, `github_configure_identity`, `github_stage`, `github_commit`, `github_fetch`, `github_pull`, `github_push`, `github_switch_branch`, `github_create_branch`, `github_create_repo` — shell out to `git` and `gh` CLIs (external dependencies; panel shows setup instructions when missing)
 - **Plugin support**: `plugin_local_server_start`/`stop` (embedded HTTP server with live-reload injection, path-traversal protection), `plugin_process_is_running` (Linux-only)
 - **Window**: `set_native_background_blur` (window-vibrancy; Linux build pins a git rev, see `Cargo.toml`)

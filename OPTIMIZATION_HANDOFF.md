@@ -5,7 +5,7 @@ Repository: `/home/tibevdb/Documents/Apps/vdb-ide`
 Branch: `ram-usage-optimizing`
 Base commit: `5be7a17` ("Fixed project structure in editor")
 Optimization commit: `97732eb` ("First couple of optimizations") contains Groups 1–6 and the first three Rust groups.
-Status: Groups 7–8 and the GitHub panel fix are implemented in the working tree; **not committed**.
+Status: Groups 7–8 and the GitHub panel fix are committed in `879a94d`. Groups 9–12 are implemented in the working tree; **not committed**.
 
 This document is the continuation handoff for the memory/performance optimization work. It records what was done, why, what remains, and how to continue safely.
 
@@ -61,7 +61,8 @@ Confirmed by `git status`:
 
 - Modified in the working tree:
   - `OPTIMIZATION_HANDOFF.md`
-  - `src/GithubPanel.tsx`
+  - `AGENTS.md`
+  - `src/App.tsx`
   - `src-tauri/src/lib.rs`
 - Committed in `97732eb`:
   - `src/App.tsx`
@@ -78,16 +79,16 @@ Do not restore the deleted documentation files without checking with the user.
 
 Confirmed:
 
-- `npm run build` → exit 0 (frontend typecheck gate: `tsc -b && vite build`). Re-verified after the GitHub panel fix.
+- `npm run build` → exit 0 (frontend typecheck gate: `tsc -b && vite build`). Re-verified after the GitHub panel fix, Groups 9–11, and Group 12.
 - Manual dev check: GitHub panel opens and shows repository status; automatic fetch no longer blocks first paint. The reported crash was not reproduced.
-- `cargo test` in `src-tauri/` → 5 tests passed, 0 failed. The local-server test asserts non-HTML asset streaming; `bounds_concurrent_server_connections` covers the connection cap.
+- `cargo test` in `src-tauri/` → 5 tests passed, 0 failed. Re-run after Group 9. The local-server test asserts non-HTML asset streaming; `bounds_concurrent_server_connections` covers the connection cap.
   - `tests::bounds_concurrent_server_connections`
   - `tests::local_server_encodes_file_urls`
   - `tests::parses_git_status_and_github_remote_urls`
   - `tests::watcher_maps_events_and_filters_ignore_paths`
   - `tests::local_server_serves_files_blocks_traversal_and_reloads`
 - `cargo fmt` was run; formatting is clean.
-- One pre-existing Rust test warning remains: unused test import `DataChange` at `src-tauri/src/lib.rs` around line 3037. It is unrelated to this work.
+- One pre-existing Rust test warning remains: unused test import `DataChange` at `src-tauri/src/lib.rs` around line 3248. It is unrelated to this work.
 
 Not performed:
 
@@ -251,6 +252,49 @@ Not performed:
     - Watcher limits or registration failure fall back to the previous 700 ms polling loop, so live reload remains correct on very large trees.
     - Local-server ignore names are shared with the signature (`LOCAL_SERVER_IGNORED_NAMES`) so watcher and signature cover the same tree.
     - Removed the `last_request` gating; it is no longer needed.
+
+#### Group 9 — Background polling and scan IPC
+
+20. **`RS-05` (exit polling part): back off plugin process exit checks**
+    - `src-tauri/src/lib.rs`, `plugin_process_spawn`.
+    - The exit monitor now doubles its poll interval from 50 ms up to a 500 ms cap instead of polling every 50 ms for the whole process lifetime.
+    - `plugin_process_stop` still kills and reaps the child directly, so stop latency is unchanged and the monitor's cached `try_wait` result still emits the exit event.
+    - Effect: an idle long-running plugin process drops from about 20 wakeups per second to about 2.
+
+21. **`FS-02`: batch hidden-path permission grants**
+    - `src/App.tsx`, `refreshWorkspace`.
+    - Hidden paths discovered in one scan batch are collected and granted with a single `workspace_allow_hidden_paths` invoke instead of one serialized round trip per entry.
+    - Grants are flushed before the next batch reads any newly discovered hidden directory, so scan permission behavior is unchanged.
+    - `src-tauri/src/lib.rs` replaces `workspace_allow_hidden_path` with `workspace_allow_hidden_paths`, which validates every path with the same canonicalize, workspace-containment, and per-path scope checks and skips paths already allowed.
+    - Effect: a hidden-heavy first scan no longer performs one IPC round trip per hidden entry.
+    - Compatibility note: the old single-path command name is gone. It had one frontend caller.
+
+#### Group 10 — Deferred search filtering
+
+22. **`FS-03`: defer file-tree search filtering**
+    - `src/App.tsx`.
+    - The search input keeps `filter` as urgent state; `filteredFiles` and the results/tree switch use `useDeferredValue(filter)`.
+    - The query is lowercased once per deferred value, not once per entry.
+    - Virtualization is unchanged. Results can lag the input by a render while React prioritizes typing.
+    - Effect: typing in a large tree no longer blocks the input on the full file scan.
+
+#### Group 11 — Provider lookup index
+
+23. **`PL-08`: index language providers by kind**
+    - `src/pluginRuntime.ts`.
+    - `pluginLanguageProviders` is now a `Map<kind, entry[]>`. Registration, dispose, per-plugin deactivation, formatting lookup, and all provider lookups use the index.
+    - The selection/viewport guards now test only the relevant kind, so a completion-only plugin no longer makes code-lens, inlay-hint, and semantic-token view plugins scan the provider list on every refresh.
+    - Selector matching and provider ordering within a kind are unchanged. A `NO_PROVIDERS` constant avoids allocating an empty array per lookup.
+    - Effect: provider lookup cost is O(providers of one kind), and kind-specific guards short-circuit before `activeLanguageBase()`.
+
+#### Group 12 — Command palette derived state
+
+24. **`RE-02`: skip command construction while the palette is closed**
+    - `src/App.tsx`.
+    - `appCommands` and `commandItems` are built only when `commandPaletteOpen` is true; otherwise they are empty arrays.
+    - Both values are used only by the palette and its input handler, so closed-state behavior is unchanged.
+    - Effect: ordinary App renders no longer allocate the command definitions, plugin command list, or palette filter result.
+    - Tradeoff: opening the palette now builds the list during that render; the work moves from every render to the render that needs it.
 
 ---
 
@@ -507,8 +551,8 @@ Not changed, but noted:
 
 ### 7.1 Measurement gap
 
-- No runtime measurement exists for any optimization.
-- The ~500 MB figure is user-reported and unattributed.
+- Aggregate RSS was measured on 2026-11-11 (Section 12). No JS heap, CPU, or long-task profile exists.
+- The ~500 MB figure is user-reported; measured aggregate RSS is roughly consistent with it.
 - Do not claim specific MB savings without measurement.
 
 ### 7.2 Behavior/regression risks introduced
@@ -521,14 +565,15 @@ Not changed, but noted:
 - **`FS-01` scan-key tracking** depends on `showHiddenFiles` being part of the key; other scan-affecting inputs do not currently exist.
 - **`PL-03` version-based repair** will not detect a modified but same-version built-in `main.js`. Release process bumps versions.
 - **Rust process output batching** uses `String::from_utf8_lossy` on accumulated bytes. A multi-byte UTF-8 character split at an emit boundary can be replaced with the lossy character. The old per-read code had the same class of issue at read boundaries; batching reduces but does not eliminate it. A future fix is a streaming UTF-8 decoder or byte payloads.
+- **Plugin process exit detection** can lag by up to 500 ms after a natural exit. Explicit `plugin_process_stop` still reaps the child directly, so stop latency is unchanged.
+- **Hidden-path grant batching** aborts the remaining grants in the batch if one path fails validation, matching the previous first-failure behavior of the per-path command.
+- **Deferred search filtering** can show results one render behind the input while typing. The tree visibly uses the deferred query so the input and results stay consistent.
 
 ### 7.3 Known unbounded or inefficient paths still present
 
 - Per-keystroke full document materialization (`doc.toString()` → `fileContents` → `editor:changed`).
 - No total open-document memory budget.
 - Editor undo history lost on tab switch; no per-path `EditorState` cache.
-- Plugin process exit monitor polls every 50 ms per process.
-- `pluginProviders` still filters a flat array on each call.
 - All enabled plugins activate at startup.
 
 ### 7.4 Correctness risks not addressed
@@ -623,11 +668,16 @@ Approximate current line numbers after formatting:
 - `src/pluginRuntime.ts:1202`-ish — plugin `fs-changed` array handling.
 - `src/pluginRuntime.ts:2737` — `PluginLanguageBase` and `activeLanguageBase`.
 - `src/pluginRuntime.ts:3106`, `3129`, `3174`, `3212` — provider guards in ViewPlugins/completion/hover/folding.
+- `src/pluginRuntime.ts:2673`-ish — kind-indexed language provider registry; lookup near `2800`.
 - `src/pluginRuntime.ts:3829`-ish — process pending buffer cap.
 - `src/pluginRuntime.ts:3862` — process sink cleanup.
 - `src/pluginRuntime.ts:3980`, `4029` — PTY/socket cleanup helpers.
 - `src/terminalOutput.ts:10`, `80` — replay batch limit and replay loop.
 - `src-tauri/src/lib.rs:601` — `stream_process_output` batching.
+- `src-tauri/src/lib.rs:531` — `workspace_allow_hidden_paths` batch grant.
+- `src-tauri/src/lib.rs:748` — backing-off plugin process exit monitor.
+- `src/App.tsx:2275`, `2325` — scan-batch hidden-path grant collection and flush.
+- `src/App.tsx:3656`-ish — deferred file-tree search filter.
 - `src-tauri/src/lib.rs:2731` — `watch_project`; batched emits near line 2819 and catch-up near 2866.
 - `src-tauri/src/lib.rs:795` — `plugin_process_stop` (unchanged; relevant to exit polling limitation).
 
@@ -644,14 +694,15 @@ Approximate current line numbers after formatting:
    ```
 2. Manually verify:
    - Open a workspace; tree appears once, no flicker.
-   - Toggle hidden files; tree rescans.
+   - Toggle hidden files; tree rescans, including a hidden-heavy tree.
+   - Spawn a long-running plugin process; it still emits its exit event promptly after exit.
    - Open/close tabs; save; external edits; formatting.
    - Scroll/select in a large file; no visual regressions.
    - Enable/disable plugins; plugin output panel; plugin language features.
    - Spawn/exit a plugin PTY and socket; no blocked cleanup.
    - Switch between terminals with large output; order preserved.
    - Copy a large folder tree; tree updates correctly.
-3. Groups 1–6 are committed in `97732eb`. Groups 7–8 and the GitHub panel fix remain in the working tree; commit them only if the user asks.
+3. Groups 1–6 are committed in `97732eb`. Groups 7–8 and the GitHub panel fix are committed in `879a94d`. Groups 9–12 remain in the working tree; commit them only if the user asks.
 4. Do not commit the pre-existing deleted markdown files unless the user confirms.
 
 ### 10.2 Second: establish the baseline comparison
@@ -701,7 +752,7 @@ Objective checks available without full profiling:
 
 ### 10.3 Third: choose the next optimization group only after profiling
 
-Recommended order based on research and current state:
+Group 9 completed the remaining confirmed background-cost items that needed no profiling (`RS-05` exit polling, `FS-02` hidden-path IPC). Group 10 covered deferred search filtering. Group 11 indexed language providers by kind. Group 12 skipped command-palette construction while closed. Recommended order for the remaining work, based on research and current state:
 
 1. **`CM-01` + `FD-01`** — the largest confirmed per-keystroke allocation.
    - Requires making the active CodeMirror `Text` canonical while the view is alive.
@@ -762,8 +813,14 @@ Recommended order based on research and current state:
 - Embedded HTTP servers cap concurrent connections at 64 and return 503 beyond that.
 - Local-server live reload uses watcher events instead of fixed-interval tree polling, with polling fallback.
 - Duplicate paths opened in different split groups are tracked per group; plugin lookups prefer the active group.
-- No runtime profiling or measurement was performed.
-- No commit was made.
+- Plugin process exit polling backs off from 50 ms to 500 ms instead of polling at 50 ms for the process lifetime.
+- Hidden-path grants are batched per workspace scan batch under `workspace_allow_hidden_paths`; each path still passes canonicalize, containment, and per-path scope checks.
+- File-tree search filtering uses `useDeferredValue`, so the input is not blocked by the full file scan.
+- Language providers are indexed by kind; kind-specific lookups no longer scan other kinds.
+- Command definitions and palette filtering are built only while the palette is open.
+- Aggregate native RSS was measured for idle, 10 files, 30 files, one large file, terminals, and one split on baseline vs current. No material RAM difference was observed.
+- No JS heap, CPU, or long-task profiling was performed.
+- No commit was made for Groups 9–12.
 
 ### User-reported, not independently verified
 
@@ -775,7 +832,7 @@ Recommended order based on research and current state:
 - The provider guard materially reduces scroll/selection CPU in large files.
 - Batching watcher IPC and plugin process output materially reduces CPU/IPC overhead.
 - Terminal replay batching improves perceived responsiveness.
-- The implemented changes reduce RAM measurably.
+- The implemented changes reduce RAM measurably. (Measured aggregate RSS shows no material difference; treat as unsupported for the measured scenarios.)
 - File-content duplication contributes meaningfully to the ~500 MB.
 - Caching `EditorState` is worth its retained memory.
 - Memoizing React panes is worth the comparison cost.
@@ -783,7 +840,41 @@ Recommended order based on research and current state:
 
 ---
 
-## 12. Quick-start context for a new conversation
+## 12. Baseline measurement (2026-11-11)
+
+Method:
+
+- Baseline binary built from `5be7a17` in a `git worktree` at `/tmp/arc-baseline`.
+- Current binary built from this working tree (Groups 1–12) with `npm run tauri build -- --no-bundle`.
+- Same machine, same app data, same settings, same workspace (the Arc repository), one app at a time.
+- Aggregate RSS = sum of `arc` plus `WebKit*` process RSS (`ps -eo rss,comm`). This double-counts shared pages.
+- A temporary plugin opened files and terminals in both builds; it was removed after measurement.
+- The built-in `api-tester` plugin was active in both runs and ran its suite. Its output behavior differs between baseline (unbounded) and current (capped), but its suite is small relative to total RSS.
+- Large file was 4.5 MiB / 100,000 lines. Split was created with `Ctrl+\`.
+
+Results (aggregate RSS, MB):
+
+| Scenario | Baseline `5be7a17` | Current (Groups 1–12) | Delta |
+| --- | ---: | ---: | ---: |
+| Idle / workspace restored | 571.4 | 569.6 | -1.8 |
+| 10 files | 625.3 | 633.6 | +8.3 |
+| 30 files | 675.9 | 669.4 | -6.5 |
+| One large file | 673.7 | 665.7 | -8.0 |
+| 3 terminals | 672.7 | 671.8 | -0.9 |
+| One split | 669.0 | 662.6 | -6.4 |
+
+Process breakdown when idle (current): WebKitWebProcess ~276 MB, main `arc` process ~210 MB, WebKitNetworkProcess ~97 MB.
+
+Interpretation:
+
+- All deltas are within roughly ±1.5% and are consistent with run-to-run noise. The implemented Groups 1–12 do not materially reduce aggregate RSS in these scenarios.
+- Open files cost roughly 50–60 MB for 10–30 typical source files in both builds; a 4.5 MiB file did not add measurable RSS beyond that.
+- Most RSS is the WebKit/WebView baseline plus the Rust/wry host, not `fileContents` or editor strings.
+- `CM-01`/`FD-01` are therefore justified by typing CPU/GC and latency, not by retained RSS. They still need a CPU/long-task baseline before claiming improvement.
+
+Not measured: JS heap, PSS/smem, CPU time, long tasks, frame drops, startup time.
+
+## 13. Quick-start context for a new conversation
 
 If starting fresh, read in this order:
 
@@ -794,4 +885,4 @@ If starting fresh, read in this order:
 5. `git diff` — exact current changes.
 6. `src/App.tsx`, `src/pluginRuntime.ts`, `src/terminalOutput.ts`, `src/GithubPanel.tsx`, `src-tauri/src/lib.rs` — implementation areas.
 
-Immediate next action: decide on committing Groups 7–8 plus the GitHub panel fix; establish the old-vs-new baseline; then select the next group based on measured evidence. Do not begin `CM-01`/`FD-01` without a performance baseline and an explicit plugin-event compatibility decision.
+Immediate next action: verify and commit Groups 9–12 if approved. The old-vs-new aggregate RSS baseline exists (Section 12); it shows no material RAM difference. Next, decide whether to pursue `CM-01` for typing CPU/latency and capture a CPU/long-task baseline for it, or stop memory work because the remaining RSS is the WebView/native floor. Do not begin `CM-01`/`FD-01` without an explicit plugin-event compatibility decision.

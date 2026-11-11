@@ -871,7 +871,7 @@ export function usePluginRuntime(
       setConfigurations((current) => current.filter((configuration) => configuration.pluginId !== id));
       pluginContextValues.delete(id);
       setKeybindings((current) => current.filter((binding) => binding.pluginId !== id));
-      pluginLanguageProviders.splice(0, pluginLanguageProviders.length, ...pluginLanguageProviders.filter((provider) => provider.pluginId !== id));
+      removePluginLanguageProvidersForPlugin(id);
     }
 
     for (const plugin of desired.values()) {
@@ -965,11 +965,8 @@ export function usePluginRuntime(
           const registerProvider = (kind: PluginLanguageProviderKind) => (selector: PluginLanguageSelector, provider: unknown) => {
             if (!active.active || activeModules.current.get(plugin.id) !== active) return () => undefined;
             const entry: PluginLanguageProviderEntry = { kind, selector, provider, pluginId: plugin.id };
-            pluginLanguageProviders.push(entry);
-            const dispose = () => {
-              const index = pluginLanguageProviders.indexOf(entry);
-              if (index >= 0) pluginLanguageProviders.splice(index, 1);
-            };
+            addPluginLanguageProvider(entry);
+            const dispose = () => removePluginLanguageProvider(entry);
             active.disposables.push(dispose);
             return dispose;
           };
@@ -2467,7 +2464,7 @@ export function usePluginRuntime(
       (entry.filenames ?? []).some((value) => value.toLowerCase() === name.toLowerCase()),
     );
     const language = languageContribution?.id ?? extension;
-    const providers = pluginLanguageProviders.filter((entry) => entry.kind === "formatting" && selectorMatches(entry.selector, language, "file", path));
+    const providers = languageProvidersForKind("formatting").filter((entry) => selectorMatches(entry.selector, language, "file", path));
     for (const entry of providers) {
       const provider = entry.provider as PluginFormattingProvider;
       try {
@@ -2673,8 +2670,35 @@ const willSaveHandlers = new Map<string, { pluginId: string; handler: (event: { 
 const contentProviders = new Map<string, { read: (uri: string) => string | Promise<string>; write?: (uri: string, content: string) => void | Promise<void> }>();
 const customEditors = new Map<string, { mount: (container: HTMLElement, context: { path: string; read: () => Promise<string> }) => void | (() => void) }>();
 const decorationTypes = new Map<string, { className?: string; style?: string; gutter?: boolean }>();
-const pluginLanguageProviders: PluginLanguageProviderEntry[] = [];
+const pluginLanguageProviders = new Map<PluginLanguageProviderKind, PluginLanguageProviderEntry[]>();
+const noLanguageProviders: PluginLanguageProviderEntry[] = [];
 const pluginContextValues = new Map<string, Map<string, unknown>>();
+
+function addPluginLanguageProvider(entry: PluginLanguageProviderEntry) {
+  const providers = pluginLanguageProviders.get(entry.kind);
+  if (providers) providers.push(entry);
+  else pluginLanguageProviders.set(entry.kind, [entry]);
+}
+
+function removePluginLanguageProvider(entry: PluginLanguageProviderEntry) {
+  const providers = pluginLanguageProviders.get(entry.kind);
+  if (!providers) return;
+  const index = providers.indexOf(entry);
+  if (index >= 0) providers.splice(index, 1);
+  if (!providers.length) pluginLanguageProviders.delete(entry.kind);
+}
+
+function removePluginLanguageProvidersForPlugin(pluginId: string) {
+  for (const [kind, providers] of pluginLanguageProviders) {
+    const remaining = providers.filter((entry) => entry.pluginId !== pluginId);
+    if (remaining.length) pluginLanguageProviders.set(kind, remaining);
+    else pluginLanguageProviders.delete(kind);
+  }
+}
+
+function languageProvidersForKind(kind: PluginLanguageProviderKind): PluginLanguageProviderEntry[] {
+  return pluginLanguageProviders.get(kind) ?? noLanguageProviders;
+}
 
 function setPluginContextValue(pluginId: string, key: string, value: unknown) {
   const values = pluginContextValues.get(pluginId) ?? new Map<string, unknown>();
@@ -2773,8 +2797,8 @@ let activeLanguageBase: () => PluginLanguageBase | null = () => null;
 let activeLanguageContext: () => PluginLanguageContext | null = () => null;
 
 function pluginProviders(kind: PluginLanguageProviderKind, context: PluginLanguageBase): unknown[] {
-  return pluginLanguageProviders
-    .filter((entry) => entry.kind === kind && selectorMatches(entry.selector, context.language, "file", context.path))
+  return languageProvidersForKind(kind)
+    .filter((entry) => selectorMatches(entry.selector, context.language, "file", context.path))
     .map((entry) => entry.provider);
 }
 
@@ -3137,7 +3161,7 @@ function pluginViewPlugin(kind: "codeLens" | "inlayHints" | "semanticTokens") {
     }
     destroy() { this.generation += 1; }
     private refresh(view: EditorView) {
-      if (!pluginLanguageProviders.length) { this.decorations = Decoration.none; return; }
+      if (!languageProvidersForKind(kind).length) { this.decorations = Decoration.none; return; }
       const base = activeLanguageBase();
       if (!base) { this.decorations = Decoration.none; return; }
       const providers = pluginProviders(kind, base) as PluginRangeProvider[];
@@ -3160,7 +3184,7 @@ function pluginViewPlugin(kind: "codeLens" | "inlayHints" | "semanticTokens") {
 }
 
 const pluginCompletionSource = async (context: CompletionContext): Promise<CompletionResult | null> => {
-  if (!pluginLanguageProviders.length) return null;
+  if (!languageProvidersForKind("completion").length) return null;
   const base = activeLanguageBase();
   if (!base) return null;
   const providers = pluginProviders("completion", base) as PluginCompletionProvider[];
@@ -3205,7 +3229,7 @@ function renderPluginHover(dom: HTMLElement, value: unknown): boolean {
 }
 
 const pluginHoverExtension = hoverTooltip((view, position) => {
-  if (!pluginLanguageProviders.length) return null;
+  if (!languageProvidersForKind("hover").length) return null;
   const base = activeLanguageBase();
   if (!base) return null;
   const providers = pluginProviders("hover", base) as PluginHoverProvider[];
@@ -3243,7 +3267,7 @@ const pluginHoverExtension = hoverTooltip((view, position) => {
 });
 
 const pluginFoldingExtension = foldService.of((state, lineStart, lineEnd) => {
-  if (!pluginLanguageProviders.length) return null;
+  if (!languageProvidersForKind("folding").length) return null;
   const base = activeLanguageBase();
   if (!base) return null;
   const providers = pluginProviders("folding", base) as PluginFoldingProvider[];
