@@ -4,7 +4,8 @@ Date: 2026-11-11
 Repository: `/home/tibevdb/Documents/Apps/vdb-ide`
 Branch: `ram-usage-optimizing`
 Base commit: `5be7a17` ("Fixed project structure in editor")
-Status: optimization groups implemented in the working tree; **not committed**.
+Optimization commit: `97732eb` ("First couple of optimizations") contains Groups 1–6 and the first three Rust groups.
+Status: Groups 7–8 and the GitHub panel fix are implemented in the working tree; **not committed**.
 
 This document is the continuation handoff for the memory/performance optimization work. It records what was done, why, what remains, and how to continue safely.
 
@@ -58,30 +59,29 @@ The research document is the authoritative optimization catalogue. Its IDs are u
 
 Confirmed by `git status`:
 
-- Modified:
+- Modified in the working tree:
+  - `OPTIMIZATION_HANDOFF.md`
+  - `src/GithubPanel.tsx`
+  - `src-tauri/src/lib.rs`
+- Committed in `97732eb`:
   - `src/App.tsx`
   - `src/assets.d.ts`
   - `src/pluginRuntime.ts`
   - `src/terminalOutput.ts`
-  - `src-tauri/src/lib.rs`
-- Untracked (created by the prior research phase, not by this implementation):
-  - `OPTIMIZATION_AUDIT.md`
-  - `OPTIMIZATION_RESEARCH.md`
-  - `OPTIMIZATION_HANDOFF.md` (this file)
-- Pre-existing deletions in the working tree, **not caused by this work**:
-  - `LANGUAGE_PLUGIN_SUPPORT.md`
-  - `PLUGIN_API_IMPLEMENTATION.md`
-  - `PLUGIN_API_IMPLEMENTATION_TODO.md`
-  - `PLUGIN_API_PROPOSALS.md`
+  - Part of `src-tauri/src/lib.rs`
+  - `OPTIMIZATION_AUDIT.md`, `OPTIMIZATION_RESEARCH.md`, `OPTIMIZATION_HANDOFF.md`
+  - The pre-existing documentation deletions (`LANGUAGE_PLUGIN_SUPPORT.md`, `PLUGIN_API_IMPLEMENTATION*.md`, `PLUGIN_API_PROPOSALS.md`).
 
-Do not restore or commit those deleted files without checking with the user.
+Do not restore the deleted documentation files without checking with the user.
 
 ### 2.2 Verification performed
 
 Confirmed:
 
-- `npm run build` → exit 0 (this is the frontend typecheck gate: `tsc -b && vite build`). Re-verified after Groups 4–6.
-- `cargo test` in `src-tauri/` → 4 tests passed, 0 failed. The local-server test now also asserts non-HTML asset streaming.
+- `npm run build` → exit 0 (frontend typecheck gate: `tsc -b && vite build`). Re-verified after the GitHub panel fix.
+- Manual dev check: GitHub panel opens and shows repository status; automatic fetch no longer blocks first paint. The reported crash was not reproduced.
+- `cargo test` in `src-tauri/` → 5 tests passed, 0 failed. The local-server test asserts non-HTML asset streaming; `bounds_concurrent_server_connections` covers the connection cap.
+  - `tests::bounds_concurrent_server_connections`
   - `tests::local_server_encodes_file_urls`
   - `tests::parses_git_status_and_github_remote_urls`
   - `tests::watcher_maps_events_and_filters_ignore_paths`
@@ -231,6 +231,29 @@ Not performed:
 
 ---
 
+#### Group 7 — Bounded embedded-server connections
+
+18. **`RS-02`: cap concurrent HTTP connections**
+    - `src-tauri/src/lib.rs`.
+    - Added `MAX_SERVER_CONNECTIONS = 64`, `ConnectionSlot`, and `acquire_connection_slot()`.
+    - Local live server and plugin HTTP server reject excess connections with HTTP 503 instead of spawning unbounded threads.
+    - Each accepted connection owns a slot that decrements on handler completion, including panic unwind.
+    - Added a unit test for the slot cap and release behavior.
+
+---
+
+#### Group 8 — Watcher-driven live-server reload signature
+
+19. **`RS-01`: replace live-server polling with filesystem events**
+    - `src-tauri/src/lib.rs`.
+    - `create_local_http_server` now registers a debounced watcher for the served tree and recomputes `local_file_signature` only when events arrive.
+    - Newly created or renamed directories are registered through `watch_directory_tree`, matching workspace watcher behavior.
+    - Watcher limits or registration failure fall back to the previous 700 ms polling loop, so live reload remains correct on very large trees.
+    - Local-server ignore names are shared with the signature (`LOCAL_SERVER_IGNORED_NAMES`) so watcher and signature cover the same tree.
+    - Removed the `last_request` gating; it is no longer needed.
+
+---
+
 ## 3. Technical architecture and implementation details
 
 ### 3.1 Repository layout
@@ -252,7 +275,7 @@ Frontend line counts after this work:
 - `src/App.tsx` — 5,039 lines. Deliberate monolith: app shell, tree, tabs, editor panes, splits, command palette, context menus, search, workspace state.
 - `src/pluginRuntime.ts` — 4,537 lines. Plugin discovery, activation, API surface, providers, processes, sockets, HTTP, panels.
 - `src/terminalOutput.ts` — 116 lines.
-- `src-tauri/src/lib.rs` — 3,196 lines.
+- `src-tauri/src/lib.rs` — 3,333 lines.
 
 ### 3.2 File/document model
 
@@ -311,10 +334,9 @@ Confirmed from research and code:
 ### 3.7 Local live server
 
 - `local_file_signature()` walks the tree and hashes names, lengths, and mtimes, capped at 20,000 entries.
-- The watcher thread polls every 700 ms while a browser has polled within 30 seconds.
-- The HTTP server spawns one thread per accepted connection.
-- Non-injected files are read fully into memory per request.
-- Not changed in this work.
+- A debounced filesystem watcher recomputes the signature only on events; registration failure or watcher limits fall back to the 700 ms polling loop.
+- The HTTP server caps concurrent connections at 64 and returns 503 beyond that.
+- HTML is read and live-reload-injected in memory; other files stream from disk.
 
 ### 3.8 Plugin processes and sockets
 
@@ -361,13 +383,6 @@ Confirmed from research and code:
 
 - **`PL-09` (lazy plugin activation)**
   - High risk to activation ordering and plugins that register global listeners/commands during activation.
-
-- **`RS-01` (live-server signature polling)**
-  - Needs watcher-based invalidation or subtree signature caching, not a simple interval change.
-
-- **`RS-02` (server thread pool)**
-  - Confirmed unbounded per-connection threads.
-  - Normalized load test should come first; current normal use is low risk.
 
 - **`RE-01` / `RE-02` (React memoization / command memoization)**
   - No React Profiler data; the research explicitly warns against memoizing everything.
@@ -472,6 +487,7 @@ Confirmed by implementation:
 - Terminal replay invoking one callback per historical chunk.
 - One Tauri event per watcher event/catch-up entry.
 - One Tauri event per plugin process read chunk.
+- GitHub panel waited for the automatic `github_fetch` before leaving its loading state; it now renders status first and updates after the fetch. Fetch errors no longer mark the whole panel disconnected.
 
 Not changed, but noted:
 
@@ -511,8 +527,6 @@ Not changed, but noted:
 - Per-keystroke full document materialization (`doc.toString()` → `fileContents` → `editor:changed`).
 - No total open-document memory budget.
 - Editor undo history lost on tab switch; no per-path `EditorState` cache.
-- Live-server full-tree signature polling every 700 ms while polled.
-- Local HTTP server reads whole files and spawns a thread per connection.
 - Plugin process exit monitor polls every 50 ms per process.
 - `pluginProviders` still filters a flat array on each call.
 - All enabled plugins activate at startup.
@@ -565,7 +579,7 @@ From the audit and user instructions:
 | `src/TerminalView.tsx` | xterm instance lifecycle and PTY wiring. | No |
 | `src/settings.ts` | `AppSettings`, defaults, migration, themes, theme CSS. | No |
 | `src/SettingsPanel.tsx` | Settings UI. | No |
-| `src/GithubPanel.tsx` | GitHub panel UI and git/gh calls. | No |
+| `src/GithubPanel.tsx` | GitHub panel UI and git/gh calls. | Yes (loading path) |
 | `src/PluginPanel.tsx` | Plugin install/enable/disable/remove UI. | No |
 | `src/ThemeMaker.tsx`, `src/ThemeColorPicker.tsx` | Custom theme editor. | No |
 | `src/workspaceState.ts` | Unwired workspace snapshot module. | No |
@@ -637,7 +651,7 @@ Approximate current line numbers after formatting:
    - Spawn/exit a plugin PTY and socket; no blocked cleanup.
    - Switch between terminals with large output; order preserved.
    - Copy a large folder tree; tree updates correctly.
-3. If the user approves, commit as one optimization group or split into logical commits.
+3. Groups 1–6 are committed in `97732eb`. Groups 7–8 and the GitHub panel fix remain in the working tree; commit them only if the user asks.
 4. Do not commit the pre-existing deleted markdown files unless the user confirms.
 
 ### 10.2 Second: establish the baseline comparison
@@ -701,13 +715,9 @@ Recommended order based on research and current state:
    - Must be bounded and measured; never lose unsaved edits.
    - Reapply compartments on restore.
 
-3. **`RS-01`** — replace live-server tree polling with watcher-driven invalidation or subtree signature caching.
+3. **`RE-01` / `RE-02`** — only after React Profiler shows pane reconciliation or command list work is material.
 
-4. **`RS-02`** — bounded local-server connection handling if load testing shows thread/RSS spikes.
-
-5. **`RE-01` / `RE-02`** — only after React Profiler shows pane reconciliation or command list work is material.
-
-6. **`CM-07`** — measured large-file mode with visible UX.
+4. **`CM-07`** — measured large-file mode with visible UX.
 
 ### 10.4 Do not do without new evidence
 
@@ -749,6 +759,8 @@ Recommended order based on research and current state:
 - Indent guides reuse one module-level mark and a `RangeSetBuilder`.
 - Non-HTML local-server assets stream from disk; HTML is still injected in memory.
 - The plugin process bus is registered on first process spawn, not at module import.
+- Embedded HTTP servers cap concurrent connections at 64 and return 503 beyond that.
+- Local-server live reload uses watcher events instead of fixed-interval tree polling, with polling fallback.
 - Duplicate paths opened in different split groups are tracked per group; plugin lookups prefer the active group.
 - No runtime profiling or measurement was performed.
 - No commit was made.
@@ -780,6 +792,6 @@ If starting fresh, read in this order:
 3. `OPTIMIZATION_AUDIT.md` — original requirements and constraints.
 4. This handoff.
 5. `git diff` — exact current changes.
-6. `src/App.tsx`, `src/pluginRuntime.ts`, `src/terminalOutput.ts`, `src-tauri/src/lib.rs` — implementation areas.
+6. `src/App.tsx`, `src/pluginRuntime.ts`, `src/terminalOutput.ts`, `src/GithubPanel.tsx`, `src-tauri/src/lib.rs` — implementation areas.
 
-Immediate next action: verify the current working tree, establish the old-vs-new baseline, then select the next group based on measured evidence. Do not begin `CM-01`/`FD-01` without a performance baseline and an explicit plugin-event compatibility decision.
+Immediate next action: decide on committing Groups 7–8 plus the GitHub panel fix; establish the old-vs-new baseline; then select the next group based on measured evidence. Do not begin `CM-01`/`FD-01` without a performance baseline and an explicit plugin-event compatibility decision.

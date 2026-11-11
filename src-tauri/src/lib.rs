@@ -13,7 +13,7 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, sync_channel, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -54,6 +54,7 @@ struct PluginHttpServer {
     stop: Arc<AtomicBool>,
     pending: Arc<Mutex<HashMap<String, std::sync::mpsc::Sender<HttpReply>>>>,
     thread: Option<JoinHandle<()>>,
+    _active_connections: Arc<AtomicUsize>,
 }
 
 struct HttpReply {
@@ -121,6 +122,25 @@ static PLUGIN_SOCKET_COUNTER: AtomicU64 = AtomicU64::new(0);
 static PLUGIN_HTTP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static PLUGIN_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Upper bound on concurrently handled HTTP connections per embedded server.
+const MAX_SERVER_CONNECTIONS: usize = 64;
+
+struct ConnectionSlot(Arc<AtomicUsize>);
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn acquire_connection_slot(active: &Arc<AtomicUsize>) -> Option<ConnectionSlot> {
+    if active.fetch_add(1, Ordering::AcqRel) >= MAX_SERVER_CONNECTIONS {
+        active.fetch_sub(1, Ordering::AcqRel);
+        return None;
+    }
+    Some(ConnectionSlot(Arc::clone(active)))
+}
+
 impl Drop for PluginProcessState {
     fn drop(&mut self) {
         let Ok(processes) = self.0.get_mut() else {
@@ -156,6 +176,7 @@ struct LocalHttpServer {
     port: u16,
     stop: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
+    _active_connections: Arc<AtomicUsize>,
 }
 
 #[derive(Default)]
@@ -1181,14 +1202,31 @@ fn plugin_http_server_start(
     let thread_stop = stop.clone();
     let thread_pending = pending.clone();
     let thread_id = id.clone();
+    let active_connections = Arc::new(AtomicUsize::new(0));
+    let thread_connections = Arc::clone(&active_connections);
     let thread = std::thread::spawn(move || {
         while !thread_stop.load(Ordering::Relaxed) {
             match listener.accept() {
-                Ok((stream, _)) => {
+                Ok((mut stream, _)) => {
+                    let Some(slot) = acquire_connection_slot(&thread_connections) else {
+                        let _ = write_http_response(
+                            &mut stream,
+                            HttpReply {
+                                status: 503,
+                                headers: HashMap::from([(
+                                    "content-type".to_string(),
+                                    "text/plain".to_string(),
+                                )]),
+                                body: b"Too many concurrent requests.".to_vec(),
+                            },
+                        );
+                        continue;
+                    };
                     let app = app.clone();
                     let server_id = thread_id.clone();
                     let pending = thread_pending.clone();
                     std::thread::spawn(move || {
+                        let _slot = slot;
                         handle_plugin_http_connection(app, server_id, pending, stream)
                     });
                 }
@@ -1205,6 +1243,7 @@ fn plugin_http_server_start(
             stop,
             pending,
             thread: Some(thread),
+            _active_connections: active_connections,
         },
     );
     Ok(PluginHttpServerInfo {
@@ -2018,25 +2057,30 @@ fn create_local_http_server(root: PathBuf) -> Result<LocalHttpServer, String> {
 
     let stop = Arc::new(AtomicBool::new(false));
     let generation = Arc::new(AtomicU64::new(local_file_signature(&root)));
-    let last_request = Arc::new(AtomicU64::new(now_millis()));
     let server_stop = Arc::clone(&stop);
     let server_generation = Arc::clone(&generation);
-    let server_last_request = Arc::clone(&last_request);
     let server_root = root.clone();
+    let active_connections = Arc::new(AtomicUsize::new(0));
+    let server_connections = Arc::clone(&active_connections);
     let server_thread = thread::spawn(move || {
         while !server_stop.load(Ordering::Relaxed) {
             match listener.accept() {
-                Ok((stream, _)) => {
+                Ok((mut stream, _)) => {
+                    let Some(slot) = acquire_connection_slot(&server_connections) else {
+                        respond_live_request(
+                            &mut stream,
+                            "503 Service Unavailable",
+                            "text/plain",
+                            b"Too many concurrent requests.",
+                            false,
+                        );
+                        continue;
+                    };
                     let request_root = server_root.clone();
                     let request_generation = Arc::clone(&server_generation);
-                    let request_last_request = Arc::clone(&server_last_request);
                     thread::spawn(move || {
-                        handle_local_request(
-                            stream,
-                            &request_root,
-                            &request_generation,
-                            &request_last_request,
-                        );
+                        let _slot = slot;
+                        handle_local_request(stream, &request_root, &request_generation);
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -2047,35 +2091,108 @@ fn create_local_http_server(root: PathBuf) -> Result<LocalHttpServer, String> {
         }
     });
 
-    let watch_stop = Arc::clone(&stop);
-    let watch_generation = Arc::clone(&generation);
-    let watch_last_request = Arc::clone(&last_request);
-    let watch_root = root.clone();
-    let watcher_thread = thread::spawn(move || {
-        let mut previous = watch_generation.load(Ordering::Relaxed);
-        while !watch_stop.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(700));
-            if watch_stop.load(Ordering::Relaxed) {
-                break;
-            }
-            // No browser polling the reload endpoint: skip the tree walk.
-            if now_millis().saturating_sub(watch_last_request.load(Ordering::Relaxed)) > 30_000 {
-                continue;
-            }
-            let current = local_file_signature(&watch_root);
-            if current != previous {
-                watch_generation.store(current, Ordering::Relaxed);
-                previous = current;
-            }
-        }
-    });
+    let watcher_thread =
+        spawn_local_server_watcher(Arc::clone(&stop), Arc::clone(&generation), root.clone());
 
     Ok(LocalHttpServer {
         root,
         port,
         stop,
         threads: vec![server_thread, watcher_thread],
+        _active_connections: active_connections,
     })
+}
+
+fn spawn_local_server_watcher(
+    stop: Arc<AtomicBool>,
+    generation: Arc<AtomicU64>,
+    root: PathBuf,
+) -> JoinHandle<()> {
+    let (send, receive) = channel::<notify_debouncer_full::DebounceEventResult>();
+    let Ok(mut debouncer) = new_debouncer(WATCH_DEBOUNCE, None, send) else {
+        return thread::spawn(move || run_local_server_poll(stop, generation, root));
+    };
+    let filter = build_local_server_filter(&root);
+    let mut watched = HashSet::new();
+    let mut failures = 0;
+    let stalled = watch_directory_tree(
+        &mut debouncer,
+        &mut watched,
+        &filter,
+        &root,
+        &root,
+        &mut failures,
+    );
+    if !watched.contains(&root) || stalled || failures >= WATCH_MAX_FAILURES {
+        return thread::spawn(move || run_local_server_poll(stop, generation, root));
+    }
+    thread::spawn(move || {
+        run_local_server_watcher(stop, generation, root, debouncer, receive, filter, watched)
+    })
+}
+
+fn run_local_server_watcher(
+    stop: Arc<AtomicBool>,
+    generation: Arc<AtomicU64>,
+    root: PathBuf,
+    mut debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
+    receive: std::sync::mpsc::Receiver<notify_debouncer_full::DebounceEventResult>,
+    filter: ignore::gitignore::Gitignore,
+    mut watched: HashSet<PathBuf>,
+) {
+    let mut failures = 0;
+    while !stop.load(Ordering::Relaxed) {
+        match receive.recv_timeout(Duration::from_millis(500)) {
+            Ok(Ok(events)) => {
+                generation.store(local_file_signature(&root), Ordering::Relaxed);
+                for debounced in events {
+                    let created = match &debounced.event.kind {
+                        EventKind::Create(_) => debounced.event.paths.last().cloned(),
+                        EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
+                            debounced.event.paths.last().cloned()
+                        }
+                        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
+                            debounced.event.paths.get(1).cloned()
+                        }
+                        _ => None,
+                    };
+                    let Some(path) = created else { continue };
+                    let Ok(is_dir) = fs::metadata(&path).map(|data| data.is_dir()) else {
+                        continue;
+                    };
+                    if !is_dir || is_watch_ignored(&filter, &root, &path, true) {
+                        continue;
+                    }
+                    watch_directory_tree(
+                        &mut debouncer,
+                        &mut watched,
+                        &filter,
+                        &root,
+                        &path,
+                        &mut failures,
+                    );
+                }
+            }
+            Ok(Err(_)) => {}
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+fn run_local_server_poll(stop: Arc<AtomicBool>, generation: Arc<AtomicU64>, root: PathBuf) {
+    let mut previous = generation.load(Ordering::Relaxed);
+    while !stop.load(Ordering::Relaxed) {
+        thread::sleep(Duration::from_millis(700));
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let current = local_file_signature(&root);
+        if current != previous {
+            generation.store(current, Ordering::Relaxed);
+            previous = current;
+        }
+    }
 }
 
 fn now_millis() -> u64 {
@@ -2085,12 +2202,7 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
-fn handle_local_request(
-    mut stream: TcpStream,
-    root: &Path,
-    generation: &AtomicU64,
-    last_request: &AtomicU64,
-) {
+fn handle_local_request(mut stream: TcpStream, root: &Path, generation: &AtomicU64) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut request = Vec::with_capacity(1024);
     let mut buffer = [0_u8; 1024];
@@ -2150,7 +2262,6 @@ fn handle_local_request(
         return;
     };
     if relative == "__arc_live_reload" {
-        last_request.store(now_millis(), Ordering::Relaxed);
         let body = generation.load(Ordering::Relaxed).to_string();
         respond_live_request(
             &mut stream,
@@ -2426,6 +2537,20 @@ fn html_escape(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+const LOCAL_SERVER_IGNORED_NAMES: &[&str] = &["node_modules", ".git", "target", ".next", ".cache"];
+
+fn build_local_server_filter(root: &Path) -> ignore::gitignore::Gitignore {
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
+    for name in LOCAL_SERVER_IGNORED_NAMES {
+        let _ = builder.add_line(None, name);
+    }
+    builder.build().unwrap_or_else(|_| {
+        ignore::gitignore::GitignoreBuilder::new(Path::new(""))
+            .build()
+            .expect("empty gitignore builder cannot fail")
+    })
+}
+
 fn local_file_signature(root: &Path) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let mut pending = vec![root.to_path_buf()];
@@ -2444,10 +2569,11 @@ fn local_file_signature(root: &Path) -> u64 {
             }
             let name = entry.file_name();
             if file_type.is_dir() {
-                if matches!(
-                    name.to_str(),
-                    Some("node_modules" | ".git" | "target" | ".next" | ".cache")
-                ) {
+                if name
+                    .to_str()
+                    .map(|name| LOCAL_SERVER_IGNORED_NAMES.contains(&name))
+                    .unwrap_or(false)
+                {
                     continue;
                 }
                 pending.push(path.clone());
@@ -3016,6 +3142,17 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         response
+    }
+
+    #[test]
+    fn bounds_concurrent_server_connections() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let slots: Vec<_> = (0..MAX_SERVER_CONNECTIONS)
+            .map(|_| acquire_connection_slot(&active).expect("slot available"))
+            .collect();
+        assert!(acquire_connection_slot(&active).is_none());
+        drop(slots);
+        assert!(acquire_connection_slot(&active).is_some());
     }
 
     #[test]

@@ -127,18 +127,26 @@ export default function GithubPanel({ workspace, reloadToken }: { workspace: str
         githubFailedWorkspaces.delete(workspace);
         setConnectionFailed(false);
         setStatus(next);
+        setLoading(false);
         setGitName((value) => value || next.userName);
         setGitEmail((value) => value || next.userEmail);
       }
       if (githubReloadTokens.get(workspace) !== reloadToken) return next;
       if (fetchRemote && next.isGithubRepo && next.authenticated) {
-        await invoke("github_fetch", { root: workspace });
-        next = await invoke<GithubStatus>("github_status", { root: workspace });
-        if (githubReloadTokens.get(workspace) === reloadToken) {
-          githubStatusCache.set(workspace, next);
-          setStatus(next);
-          setGitName((value) => value || next.userName);
-          setGitEmail((value) => value || next.userEmail);
+        try {
+          await invoke("github_fetch", { root: workspace });
+          next = await invoke<GithubStatus>("github_status", { root: workspace });
+          if (githubReloadTokens.get(workspace) === reloadToken) {
+            githubStatusCache.set(workspace, next);
+            setStatus(next);
+            setGitName((value) => value || next.userName);
+            setGitEmail((value) => value || next.userEmail);
+          }
+        } catch (cause) {
+          if (githubReloadTokens.get(workspace) === reloadToken) {
+            setError(`Could not fetch from GitHub: ${String(cause)}`);
+          }
+          return null;
         }
       }
       return next;
