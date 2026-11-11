@@ -309,49 +309,6 @@ function resizeLayout(
   };
 }
 
-const htmlTags = [
-  'a',
-  'article',
-  'aside',
-  'audio',
-  'blockquote',
-  'body',
-  'br',
-  'button',
-  'canvas',
-  'code',
-  'div',
-  'em',
-  'footer',
-  'form',
-  'h1',
-  'h2',
-  'h3',
-  'header',
-  'html',
-  'img',
-  'input',
-  'label',
-  'li',
-  'link',
-  'main',
-  'nav',
-  'ol',
-  'option',
-  'p',
-  'section',
-  'select',
-  'small',
-  'span',
-  'strong',
-  'style',
-  'table',
-  'textarea',
-  'title',
-  'ul',
-  'video',
-];
-
 function buildCodeHighlighting(theme: ThemeDefinition) {
   const c = theme.colors;
   return HighlightStyle.define([
@@ -420,37 +377,6 @@ function indentationGuides(tabSize: number) {
     },
     { decorations: (plugin) => plugin.decorations },
   );
-}
-
-function htmlTagCompletion(
-  context: CompletionContext,
-): CompletionResult | null {
-  const line = context.state.doc.lineAt(context.pos);
-  const beforeCursor = context.state.sliceDoc(line.from, context.pos);
-  const match = beforeCursor.match(/(?:^|[\s>])([a-z][\w-]*)$/i);
-  if (!match) return null;
-  const prefix = match[1];
-  const from = context.pos - prefix.length;
-  return {
-    from,
-    options: htmlTags.map((tag) => ({
-      label: tag,
-      type: 'keyword',
-      apply(
-        view: EditorView,
-        completion: { label: string },
-        start: number,
-        end: number,
-      ) {
-        const element = `<${completion.label}></${completion.label}>`;
-        view.dispatch({
-          changes: { from: start, to: end, insert: element },
-          selection: { anchor: start + completion.label.length + 2 },
-        });
-      },
-    })),
-    validFor: /^[a-z][\w-]*$/i,
-  };
 }
 
 const phpCompletions = [
@@ -787,7 +713,10 @@ async function loadCodeLanguage(extension: string): Promise<Extension> {
   extension = aliases[extension] ?? extension;
   if (['html', 'htm', 'svg'].includes(extension))
     return (await import('@codemirror/lang-html')).html();
-  if (extension === 'php') return (await import('@codemirror/lang-php')).php();
+  if (extension === 'php') {
+    const { php, phpLanguage } = await import('@codemirror/lang-php');
+    return [php(), phpLanguage.data.of({ autocomplete: phpCompletion })];
+  }
   if (['css', 'scss'].includes(extension))
     return (await import('@codemirror/lang-css')).css();
   if (['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx'].includes(extension)) {
@@ -990,8 +919,6 @@ function EditorPane({
     const editor = view.current;
     if (!file || !editor) return;
     const extension = extensionOf(file.name);
-    const isHtml = ['html', 'htm'].includes(extension);
-    const isPhp = extension === 'php';
     const isCss = ['css', 'scss'].includes(extension);
     editor.dispatch({
       effects: compartments.settings.reconfigure([
@@ -1019,17 +946,7 @@ function EditorPane({
           ? [indentationGuides(settings.tabSize)]
           : []),
         ...(settings.wordWrap ? [EditorView.lineWrapping] : []),
-        ...(settings.autocomplete
-          ? [
-              autocompletion(
-                isHtml
-                  ? { override: [htmlTagCompletion] }
-                  : isPhp
-                    ? { override: [phpCompletion] }
-                    : {},
-              ),
-            ]
-          : []),
+        ...(settings.autocomplete ? [autocompletion()] : []),
         EditorView.theme({
           '&': { height: '100%' },
           '.cm-scroller': {

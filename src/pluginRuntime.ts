@@ -8,9 +8,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { readText as readClipboardText, writeHtml as writeClipboardHtml, writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import { copyFile, exists, mkdir, open as openFsFile, readDir, readFile, readTextFile, remove, rename as renameFile, stat as statFile, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import type { Extension, Range } from "@codemirror/state";
+import { EditorState, type Extension, type Range } from "@codemirror/state";
 import { Decoration, EditorView as CodeMirrorView, ViewPlugin, WidgetType, keymap, type EditorView, type DecorationSet, type ViewUpdate } from "@codemirror/view";
-import { autocompletion, type Completion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
+import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { foldService } from "@codemirror/language";
 import { hoverTooltip } from "@codemirror/view";
 import * as codeMirrorLanguage from "@codemirror/language";
@@ -3175,7 +3175,7 @@ const pluginLanguageKeymap = keymap.of([
 ]);
 
 const pluginLanguageExtensions: Extension[] = [
-  autocompletion({ override: [pluginCompletionSource] }),
+  EditorState.languageData.of(() => [{ autocomplete: pluginCompletionSource }]),
   pluginHoverExtension,
   pluginFoldingExtension,
   pluginLanguageKeymap,
