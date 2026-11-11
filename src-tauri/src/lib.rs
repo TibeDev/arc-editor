@@ -1397,7 +1397,7 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_diff(root: String, path: Option<String>, staged: bool) -> Result<String, String> {
     let root_path = PathBuf::from(&root);
     let mut args: Vec<&str> = vec!["diff"];
@@ -1643,7 +1643,7 @@ fn parse_changes(data: &[u8]) -> Vec<GithubChange> {
     changes
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_status(root: String) -> Result<GithubStatus, String> {
     let root = PathBuf::from(root)
         .canonicalize()
@@ -1758,7 +1758,7 @@ fn github_status(root: String) -> Result<GithubStatus, String> {
     Ok(status)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_configure_identity(name: String, email: String) -> Result<(), String> {
     let name = name.trim();
     let email = email.trim();
@@ -1780,7 +1780,7 @@ fn github_configure_identity(name: String, email: String) -> Result<(), String> 
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_stage(root: String, path: String, stage: bool) -> Result<(), String> {
     let root = resolve_git_root(Path::new(&root))?;
     let output = if stage {
@@ -1801,7 +1801,7 @@ fn github_stage(root: String, path: String, stage: bool) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_commit(root: String, message: String) -> Result<(), String> {
     let root = resolve_git_root(Path::new(&root))?;
     let message = message.trim();
@@ -1817,7 +1817,7 @@ fn github_commit(root: String, message: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_fetch(root: String) -> Result<(), String> {
     let root = resolve_git_root(Path::new(&root))?;
     let remote = github_remote_name(&root)
@@ -1831,7 +1831,7 @@ fn github_fetch(root: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_pull(root: String) -> Result<(), String> {
     let root = resolve_git_root(Path::new(&root))?;
     let remote = github_remote_name(&root)
@@ -1850,7 +1850,7 @@ fn github_pull(root: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_push(root: String) -> Result<(), String> {
     let root = resolve_git_root(Path::new(&root))?;
     let remote = github_remote_name(&root)
@@ -1869,7 +1869,7 @@ fn github_push(root: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_switch_branch(root: String, branch: String) -> Result<(), String> {
     let root = resolve_git_root(Path::new(&root))?;
     let output = git_command()
@@ -1881,7 +1881,7 @@ fn github_switch_branch(root: String, branch: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_create_branch(root: String, branch: String) -> Result<(), String> {
     let root = resolve_git_root(Path::new(&root))?;
     let branch = branch.trim();
@@ -1904,7 +1904,7 @@ fn github_create_branch(root: String, branch: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn github_create_repo(root: String, name: String, visibility: String) -> Result<(), String> {
     if visibility != "public" && visibility != "private" {
         return Err("Choose public or private visibility.".to_string());

@@ -750,7 +750,6 @@ function EditorPane({
   onSelect,
   onTerminalTitleChange,
   workspace,
-  githubReloadToken,
   diskConflict,
   onConflictReload,
   onConflictKeep,
@@ -779,7 +778,6 @@ function EditorPane({
   onSelect: (id: GroupId, path: string) => void;
   onTerminalTitleChange: (id: string, title: string) => void;
   workspace: string;
-  githubReloadToken: number;
   diskConflict?: boolean;
   onConflictReload?: (path: string) => void;
   onConflictKeep?: (path: string) => void;
@@ -1242,7 +1240,7 @@ function EditorPane({
       {file && <div className="editor-host" ref={host} />}
       {group.activePath === GITHUB_TAB_KEY && (
         <Suspense fallback={<div className="editor-empty" />}>
-          <GithubPanel workspace={workspace} reloadToken={githubReloadToken} />
+          <GithubPanel workspace={workspace} />
         </Suspense>
       )}
       {group.activePath === PLUGIN_TAB_KEY && pluginPanel}
@@ -1402,7 +1400,6 @@ function App() {
   const [groups, setGroups] = useState<EditorGroup[]>([
     { id: 'group-1', activePath: '', tabs: [] },
   ]);
-  const [githubReloadToken, setGithubReloadToken] = useState(0);
   const [diskConflicts, setDiskConflicts] = useState<Set<string>>(new Set());
   const watcherRoot = useRef('');
   const activeWatchRoot = useRef('');
@@ -2195,13 +2192,10 @@ function App() {
     return id;
   };
 
-  const openGithubPanel = (reloadOnIcon = false) => {
+  const openGithubPanel = () => {
     if (!workspace) {
       setMessage('Open a folder first.');
       return;
-    }
-    if (reloadOnIcon && !groups.some((group) => group.tabs.includes(GITHUB_TAB_KEY))) {
-      setGithubReloadToken((token) => token + 1);
     }
     setGroups((current) =>
       current.map((group) =>
@@ -4341,7 +4335,6 @@ function App() {
         onSelect={setActiveTab}
         onTerminalTitleChange={updateTerminalTitle}
         workspace={workspace}
-        githubReloadToken={githubReloadToken}
         diskConflict={diskConflicts.has(group.activePath)}
         onConflictReload={reloadFromDisk}
         onConflictKeep={keepBuffer}
@@ -4568,7 +4561,7 @@ function App() {
                   <button
                     className="tool-button"
                     title="Open GitHub"
-                    onClick={() => openGithubPanel(true)}
+                    onClick={() => openGithubPanel()}
                   >
                     <Github size={14} />
                   </button>
