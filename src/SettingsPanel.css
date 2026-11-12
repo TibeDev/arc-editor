@@ -1,5 +1,4 @@
-.settings-panel{animation:settings-panel-in 170ms ease-out;backdrop-filter:blur(26px) saturate(140%);-webkit-backdrop-filter:blur(26px) saturate(140%)}
-@keyframes settings-panel-in{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+.settings-panel{backdrop-filter:blur(26px) saturate(140%);-webkit-backdrop-filter:blur(26px) saturate(140%)}
 .settings-panel .settings-header{height:56px;flex-basis:56px;padding:0 24px;gap:16px}
 .settings-title{display:flex;align-items:baseline;gap:10px;min-width:0}
 .settings-header h2{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}

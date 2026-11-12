@@ -89,7 +89,7 @@
 .app-shell.app-theme-macos .welcome-shortcuts>div,.app-shell.app-theme-macos .empty-hint{color:var(--macos-secondary)}
 .app-shell.app-theme-macos .welcome-shortcuts kbd{border-color:var(--macos-border);border-radius:5px;background:color-mix(in srgb,var(--macos-sidebar) calc(100% - var(--glass-controls-transparency,0%)),transparent);color:var(--macos-secondary)}
 .app-shell.app-theme-macos .settings-backdrop{background:rgba(25,30,42,var(--glass-macos-overlay-alpha,.18));backdrop-filter:blur(3px)}
-.app-shell.app-theme-macos .settings-panel{border-color:var(--macos-border);border-radius:14px;background:var(--macos-sidebar);color:var(--macos-text);box-shadow:0 24px 70px rgba(30,35,50,.24);animation:macos-panel-in 180ms ease-out}
+.app-shell.app-theme-macos .settings-panel{border-color:var(--macos-border);border-radius:14px;background:var(--macos-sidebar);color:var(--macos-text);box-shadow:0 24px 70px rgba(30,35,50,.24)}
 .app-shell.app-theme-macos .settings-header{border-bottom-color:var(--macos-border);background:var(--macos-sidebar)}
 .app-shell.app-theme-macos .settings-header h2{font-size:15px;font-weight:600}
 .app-shell.app-theme-macos .settings-header span,.app-shell.app-theme-macos .settings-header .tool-button{color:var(--macos-secondary)}
@@ -113,7 +113,7 @@
 .app-shell.app-theme-macos .settings-action,.app-shell.app-theme-macos .settings-reset{font-family:inherit}
 .app-shell.app-theme-macos .settings-reset{border-radius:8px}
 .app-shell.app-theme-macos .context-menu,.app-shell.app-theme-macos .confirm-dialog{border:1px solid color-mix(in srgb,var(--macos-border) 80%,transparent);border-radius:10px;background:color-mix(in srgb,var(--macos-sidebar) calc(100% - var(--glass-floating-transparency,0%)),transparent);color:var(--macos-text);box-shadow:0 12px 32px rgba(25,30,45,.18);backdrop-filter:blur(var(--editor-glass-blur,18px))}
-.app-shell.app-theme-macos .context-menu{padding:6px;animation:macos-popover-in 140ms ease-out}
+.app-shell.app-theme-macos .context-menu{padding:6px}
 .app-shell.app-theme-macos .context-menu button{height:29px;border-radius:6px;color:var(--macos-text);font-family:inherit;font-size:12px}
 .app-shell.app-theme-macos .context-menu button:hover{background:color-mix(in srgb,var(--macos-selected) calc(100% - var(--glass-floating-transparency,0%)),transparent);color:var(--macos-accent)}
 .app-shell.app-theme-macos .context-menu button.danger-item:hover{color:var(--macos-danger)}
@@ -158,9 +158,7 @@
   .app-shell.app-theme-macos .context-menu,.app-shell.app-theme-macos .confirm-dialog,.app-shell.app-theme-macos .message{box-shadow:0 12px 32px rgba(0,0,0,.36)}
   .theme-maker-page.app-theme-macos .theme-color-popover{box-shadow:0 12px 32px rgba(0,0,0,.42)}
 }
-@keyframes macos-popover-in{from{opacity:0;transform:translateY(3px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes macos-panel-in{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
-@media(prefers-reduced-motion:reduce){.app-shell.app-theme-macos button,.app-shell.app-theme-macos .tree-row{transition:none}.app-shell.app-theme-macos .settings-panel,.app-shell.app-theme-macos .context-menu{animation:none}}
+@media(prefers-reduced-motion:reduce){.app-shell.app-theme-macos button,.app-shell.app-theme-macos .tree-row{transition:none}}
 .app-shell.app-theme-macos .file-viewer{margin:0;border:1px solid var(--macos-border);border-radius:9px;overflow:hidden;box-shadow:0 3px 14px rgba(25,30,45,.06)}
 .app-shell.app-theme-macos .file-viewer-resizer{width:6px;flex-basis:6px;background:transparent}
 .app-shell.app-theme-macos .file-viewer-resizer span{background:transparent}
@@ -208,3 +206,6 @@ button:disabled,select:disabled{cursor:not-allowed}
 .theme-maker-page .theme-color-row{user-select:none}
 .theme-maker-page .theme-maker-select-label select{height:32px;border-radius:3px;background-color:var(--theme-raised);color:var(--theme-text);font-size:11px}
 
+:root,body,#root{-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+input,textarea,[contenteditable="true"],.cm-content,.xterm,.xterm-screen,.plugin-view-host,.arc-plugin-output,.plugin-docs-dialog,.message,pre,code{-webkit-user-select:text;user-select:text}
+img,a{-webkit-user-drag:none}

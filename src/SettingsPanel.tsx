@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "./settings";
 import type { PluginConfigurationContribution, PluginConfigurationProperty } from "./pluginRuntime";
 import ThemeColorPicker from "./ThemeColorPicker";
+import Select from "./Select";
 import "./SettingsPanel.css";
 
 const settingsCategories = [
@@ -111,13 +112,17 @@ function FontFamilySetting({ label, value, options, fallback, onChange }: {
   const [customDraft, setCustomDraft] = useState(customName);
   useEffect(() => setCustomDraft(customName), [value]);
   return <>
-    <label className="setting-field"><span>{label} preset</span><select value={preset ? value : "__custom"} onChange={(event) => {
-      const selected = options.find((option) => option.value === event.target.value);
-      if (selected) onChange(selected.value);
-    }}>
-      {!preset && <option value="__custom" disabled>Custom font name below</option>}
-      {options.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}
-    </select></label>
+    <label className="setting-field"><span>{label} preset</span><Select
+      value={preset ? value : "__custom"}
+      options={[
+        ...(!preset ? [{ value: "__custom", label: "Custom font name below", disabled: true }] : []),
+        ...options.map((option) => ({ value: option.value, label: option.label })),
+      ]}
+      onChange={(next) => {
+        const selected = options.find((option) => option.value === next);
+        if (selected) onChange(selected.value);
+      }}
+    /></label>
     <label className="setting-field"><span>Custom {label.toLowerCase()} family</span><input className="font-family-input" type="text" value={customDraft} placeholder="Enter installed font name" onChange={(event) => {
       setCustomDraft(event.target.value);
       if (event.target.value.trim()) onChange(fontStackFromName(event.target.value, fallback));
@@ -143,12 +148,14 @@ function PluginConfigField({ id, label, property, value, onChange }: {
   }, [property.type, value]);
   if (property.enum?.length) {
     const selected = property.enum.find((option) => option === value) ?? value;
-    return <label className="setting-field"><span>{label}</span><select value={String(selected ?? "")} onChange={(event) => {
-      const option = property.enum?.find((entry) => String(entry) === event.target.value);
-      onChange(option);
-    }}>
-      {property.enum.map((option) => <option key={String(option)} value={String(option)}>{String(option)}</option>)}
-    </select>{property.description && <small>{property.description}</small>}</label>;
+    return <label className="setting-field"><span>{label}</span><Select
+      value={String(selected ?? "")}
+      options={property.enum.map((option) => ({ value: String(option), label: String(option) }))}
+      onChange={(next) => {
+        const option = property.enum?.find((entry) => String(entry) === next);
+        onChange(option);
+      }}
+    />{property.description && <small>{property.description}</small>}</label>;
   }
   if (property.type === "boolean") {
     return <label className="setting-toggle"><span><strong>{label}</strong>{property.description && <small>{property.description}</small>}</span><input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} /></label>;
@@ -303,7 +310,7 @@ export default function SettingsPanel({
                 {toggle("bracketMatching", "Bracket matching", "Highlight matching brackets.")}
                 {toggle("autocomplete", "Autocomplete", "Show code completion suggestions.")}
                 {toggle("autoIndent", "Auto indent", "Indent new lines based on surrounding code.")}
-                <label className="setting-field"><span>Tab size</span><select value={settings.tabSize} onChange={(event) => onChange({ tabSize: Number(event.target.value) })}><option value="2">2 spaces</option><option value="4">4 spaces</option><option value="8">8 spaces</option></select></label>
+                <label className="setting-field"><span>Tab size</span><Select value={String(settings.tabSize)} onChange={(next) => onChange({ tabSize: Number(next) })} options={[{ value: "2", label: "2 spaces" }, { value: "4", label: "4 spaces" }, { value: "8", label: "8 spaces" }]} /></label>
               </section>
             </>}
             {activeCategory === "typography" && <>
@@ -323,10 +330,7 @@ export default function SettingsPanel({
             </>}
             {activeCategory === "appearance" && <>
               <section className="settings-section" id="settings-section-appearance-interface"><h3>Interface</h3>
-                <label className="setting-field"><span>App theme</span><select value={settings.appTheme} onChange={(event) => onChange({ appTheme: event.target.value as AppSettings["appTheme"] })}>
-                  <option value="classic">Classic</option>
-                  <option value="macos">Modern</option>
-                </select></label>
+                <label className="setting-field"><span>App theme</span><Select value={settings.appTheme} onChange={(next) => onChange({ appTheme: next as AppSettings["appTheme"] })} options={[{ value: "classic", label: "Classic" }, { value: "macos", label: "Modern" }]} /></label>
                 <div className="setting-note">App style and editor color theme are independent.</div>
                 {toggle("titleBarEnabled", "Custom title bar", "Use Arc's title bar. Turn off to use the system window frame.")}
               </section>
@@ -359,9 +363,7 @@ export default function SettingsPanel({
               </section>
             </>}
             {activeCategory === "terminal" && <section className="settings-section" id="settings-section-terminal-terminal"><h3>Terminal</h3>
-              <label className="setting-field"><span>Cursor shape</span><select value={settings.terminalCursorStyle} onChange={(event) => onChange({ terminalCursorStyle: event.target.value as AppSettings["terminalCursorStyle"] })}>
-                <option value="block">Block</option><option value="underline">Underline</option><option value="bar">Bar</option>
-              </select></label>
+              <label className="setting-field"><span>Cursor shape</span><Select value={settings.terminalCursorStyle} onChange={(next) => onChange({ terminalCursorStyle: next as AppSettings["terminalCursorStyle"] })} options={[{ value: "block", label: "Block" }, { value: "underline", label: "Underline" }, { value: "bar", label: "Bar" }]} /></label>
               {toggle("terminalCursorBlink", "Blinking cursor", "Blink the terminal cursor.")}
               {toggle("terminalScrollbar", "Show scrollbar", "Show the terminal's scrollback scrollbar.")}
               {toggle("terminalShowTitle", "Show shell title", "Use the title reported by the running shell in its tab.")}

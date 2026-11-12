@@ -3,6 +3,7 @@ import { ArrowLeft, FolderOpen, Plus, Save } from "lucide-react";
 import TitleBar from "./TitleBar";
 import { GLASS_BLUR, themeColorWithOpacity, THEME_COLOR_GROUPS, type AppSettings, type ThemeColors, type ThemeDefinition } from "./settings";
 import ThemeColorPicker from "./ThemeColorPicker";
+import Select from "./Select";
 import "./GithubPanel.css";
 import "./PluginPanel.css";
 import "./SettingsPanel.css";
@@ -86,13 +87,13 @@ export default function ThemeMaker({
     <header className="theme-maker-header" style={{ background: glassFill(chrome.colors.sidebar, settings.glassSidebarTransparency), borderColor: chrome.colors.border }}>
       <button className="settings-close" title="Back to settings" aria-label="Back to settings" onClick={onBack}><ArrowLeft size={16} /></button>
       <div className="theme-maker-actions">
-        <label className="theme-maker-select-label"><select aria-label="Theme being edited" value={theme.id} onChange={(event) => {
-          const selected = themes.find((entry) => entry.id === event.target.value);
+        <label className="theme-maker-select-label"><Select ariaLabel="Theme being edited" value={theme.id} options={themes.map((entry) => ({ value: entry.id, label: entry.name }))} onChange={(next) => {
+          const selected = themes.find((entry) => entry.id === next);
           if (selected) {
             setTheme({ ...selected, colors: { ...selected.colors } });
             setError("");
           }
-        }}>{themes.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+        }} /></label>
         <button className="github-secondary plugin-icon-button" title="Open theme folder" aria-label="Open theme folder" onClick={() => onOpenFolder(theme)}><FolderOpen size={15} /></button>
         <button className="github-secondary plugin-icon-button" title="Save theme" aria-label="Save theme" onClick={() => { setError(""); onSave(theme); }}><Save size={15} /></button>
         <button className="github-primary plugin-icon-button" title="Create new theme" aria-label="Create new theme" onClick={createTheme}><Plus size={15} /></button>
