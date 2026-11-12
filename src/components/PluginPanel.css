@@ -152,11 +152,6 @@
   color: var(--muted);
   font-size: var(--font-sm);
 }
-.app-shell.editor-glass-enabled .plugin-header,
-.app-shell.editor-glass-enabled .plugin-card {
-  backdrop-filter: var(--glass-surface-filter);
-  -webkit-backdrop-filter: var(--glass-surface-filter);
-}
 .plugin-view-switch {
   display: flex;
   align-items: center;
