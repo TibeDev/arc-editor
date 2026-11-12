@@ -134,7 +134,9 @@
 }
 .plugin-section-heading {
   margin-top: 26px;
+  margin-bottom: 14px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-md);
 }
@@ -151,6 +153,41 @@
   padding: 17px 0;
   color: var(--muted);
   font-size: var(--font-sm);
+}
+.plugin-section-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-left: auto;
+  min-width: 0;
+}
+.plugin-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  color: var(--muted);
+}
+.plugin-search:focus-within {
+  border-color: color-mix(in srgb, var(--text) 25%, var(--line));
+}
+.plugin-search input {
+  width: 160px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-sm);
+  outline: none;
+}
+.plugin-search input::placeholder {
+  color: var(--muted);
 }
 .plugin-view-switch {
   display: flex;
@@ -221,24 +258,9 @@
 .plugin-view-grid .plugin-empty {
   grid-column: 1/-1;
 }
-.plugin-section-heading .plugin-view-switch {
-  margin-left: auto;
-}
-.plugin-list-wrap {
-  position: relative;
-  min-height: 0;
-  margin-top: 14px;
-}
-.plugin-list-wrap.has-fade::after {
-  content: "";
-  position: absolute;
-  right: 4px;
-  bottom: 0;
-  left: 0;
-  height: 40px;
-  border-radius: 0 0 4px 4px;
-  background: linear-gradient(to bottom, transparent, var(--bg));
-  pointer-events: none;
+.plugin-docs-content {
+  scrollbar-color: #424850 transparent;
+  scrollbar-width: thin;
 }
 .plugin-toggle-button {
   flex: 0 0 auto;
@@ -265,17 +287,6 @@
 .plugin-toggle-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
-}
-.plugin-installed-list,
-.plugin-docs-content {
-  scrollbar-color: #424850 transparent;
-  scrollbar-width: thin;
-}
-.plugin-installed-list {
-  max-height: min(42vh, 420px);
-  min-height: 0;
-  overflow: auto;
-  padding-right: var(--space-xs);
 }
 @media (max-width: 760px) {
   .plugin-header {

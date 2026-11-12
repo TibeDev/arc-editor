@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { ArrowLeft, BookOpen, Download, FolderOpen, LayoutGrid, List, Plug, Puzzle, Trash2 } from "lucide-react";
+import { ArrowLeft, BookOpen, Download, FolderOpen, LayoutGrid, List, Plug, Puzzle, Search, SquareArrowOutUpRight, Trash2 } from "lucide-react";
 import { join } from "@tauri-apps/api/path";
 import pluginApiMarkdown from "../../PLUGIN_API.md?raw";
 import type { InstalledPlugin, PluginPanelContribution } from "../lib/pluginRuntime";
@@ -44,31 +44,16 @@ export default function PluginPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showDocs, setShowDocs] = useState(false);
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLowerCase();
+  const matchesSearch = (fields: string[]) => !query || fields.some((field) => field.toLowerCase().includes(query));
+  const visiblePlugins = plugins.filter((plugin) => matchesSearch([plugin.name, plugin.description, plugin.id]));
+  const visibleBuiltins = availableBuiltins.filter((plugin) => matchesSearch([plugin.name, plugin.description, plugin.id]));
   const [view, setView] = useState<"list" | "grid">(() => localStorage.getItem("arc.plugins-view") === "grid" ? "grid" : "list");
   const changeView = (next: "list" | "grid") => {
     setView(next);
     localStorage.setItem("arc.plugins-view", next);
   };
-  const listRef = useRef<HTMLDivElement>(null);
-  const [listFade, setListFade] = useState(false);
-  const updateListFade = () => {
-    const list = listRef.current;
-    if (!list) return;
-    const overflowing = list.scrollHeight > list.clientHeight + 1;
-    setListFade(overflowing && list.scrollTop + list.clientHeight < list.scrollHeight - 1);
-  };
-  useEffect(() => {
-    const list = listRef.current;
-    updateListFade();
-    if (!list) return;
-    const observer = new ResizeObserver(updateListFade);
-    observer.observe(list);
-    window.addEventListener("resize", updateListFade);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", updateListFade);
-    };
-  }, [view, plugins.length]);
 
   const install = async () => {
     setBusy(true);
@@ -153,48 +138,37 @@ export default function PluginPanel({
       <article className="plugin-docs-markdown"><Suspense fallback={null}><PluginDocs /></Suspense></article>
     </main> : <section className={`plugin-content plugin-view-${view}`}>
       <div className="plugin-section-heading">
-        <h2>Installed plugins</h2><span>{plugins.length}</span>
-        <button className="plugin-view-switch" title={view === "list" ? "Switch to grid view" : "Switch to list view"} aria-label={view === "list" ? "Switch to grid view" : "Switch to list view"} aria-pressed={view === "grid"} onClick={() => changeView(view === "list" ? "grid" : "list")}>
-          <span className={view === "list" ? "active" : ""}><List size={14} /></span>
-          <span className={view === "grid" ? "active" : ""}><LayoutGrid size={14} /></span>
-        </button>
-      </div>
-      <div className={`plugin-list-wrap${listFade ? " has-fade" : ""}`}>
-      <div ref={listRef} className="plugin-card-list plugin-installed-list" onScroll={updateListFade}>
-      {plugins.length ? plugins.map((plugin) => <article className="plugin-card" key={plugin.id}>
-        <div className="plugin-card-icon"><Puzzle size={16} /></div>
-        <div className="plugin-card-details"><strong>{plugin.name}<small>{plugin.builtin ? "Built-in" : plugin.version}</small></strong><span>{plugin.description || plugin.id}</span><code>{plugin.id}</code></div>
-        <div className="plugin-card-actions">
-          <button className={`plugin-toggle-button${plugin.enabled ? " enabled" : ""}`} title={plugin.enabled ? "Disable plugin" : "Enable plugin"} disabled={busy} onClick={() => onTogglePlugin(plugin.id, !plugin.enabled)}>{plugin.enabled ? "Enabled" : "Disabled"}</button>
-          <button className="icon-button" title={`Open ${plugin.name} files`} aria-label={`Open ${plugin.name} files`} disabled={!pluginDirectory || busy} onClick={() => void openPluginFiles(plugin.id)}><FolderOpen size={14} /></button>
-          <button className="icon-button plugin-uninstall" title={`Uninstall ${plugin.name}`} disabled={busy} onClick={() => void uninstall(plugin)}><Trash2 size={14} /></button>
+        <h2>Plugins</h2><span>{visiblePlugins.length + visibleBuiltins.length}</span>
+        <div className="plugin-section-tools">
+          <label className="plugin-search"><Search size={13} /><input value={search} placeholder="Search plugins" aria-label="Search plugins" onChange={(event) => setSearch(event.target.value)} /></label>
+          <button className="plugin-view-switch" title={view === "list" ? "Switch to grid view" : "Switch to list view"} aria-label={view === "list" ? "Switch to grid view" : "Switch to list view"} aria-pressed={view === "grid"} onClick={() => changeView(view === "list" ? "grid" : "list")}>
+            <span className={view === "list" ? "active" : ""}><List size={14} /></span>
+            <span className={view === "grid" ? "active" : ""}><LayoutGrid size={14} /></span>
+          </button>
         </div>
-      </article>) : <div className="plugin-empty">No local plugins installed yet.</div>}
       </div>
-      </div>
-
-      {availableBuiltins.length > 0 && <>
-        <div className="plugin-section-heading"><h2>Included plugins</h2><span>{availableBuiltins.length}</span></div>
-        <div className="plugin-card-list">
-          {availableBuiltins.map((plugin) => <article className="plugin-card" key={plugin.id}>
-            <div className="plugin-card-icon"><Plug size={16} /></div>
-            <div className="plugin-card-details"><strong>{plugin.name}<small>Included</small></strong><span>{plugin.description}</span></div>
-            <div className="plugin-card-actions"><button className="action-button action-button--secondary" disabled={busy} onClick={() => void installBuiltin(plugin.id)}>Install</button></div>
-          </article>)}
-        </div>
-      </>}
-
-      {panels.length > 0 && <>
-        <div className="plugin-section-heading"><h2>Plugin panels</h2><span>{panels.length}</span></div>
-        <div className="plugin-card-list">
-          {panels.map((panel) => <article className="plugin-card" key={panel.id}>
+      <div className="plugin-card-list">
+      {visiblePlugins.length || visibleBuiltins.length ? <>
+        {visiblePlugins.map((plugin) => {
+          const panel = panels.find((candidate) => candidate.pluginId === plugin.id);
+          return <article className="plugin-card" key={plugin.id}>
             <div className="plugin-card-icon"><Puzzle size={16} /></div>
-            <div className="plugin-card-details"><strong>{panel.title}</strong><span>Provided by {panel.pluginName}</span></div>
-            <div className="plugin-card-actions"><button className="action-button action-button--secondary" onClick={() => onOpenPanel(panel.id)}>Open panel</button></div>
-          </article>)}
-        </div>
-      </>}
-
+            <div className="plugin-card-details"><strong>{plugin.name}<small>{plugin.builtin ? "Built-in" : plugin.version}</small></strong><span>{plugin.description || plugin.id}</span><code>{plugin.id}</code></div>
+            <div className="plugin-card-actions">
+              {panel && <button className="icon-button" title={`Open ${panel.title} panel`} aria-label={`Open ${panel.title} panel`} onClick={() => onOpenPanel(panel.id)}><SquareArrowOutUpRight size={14} /></button>}
+              <button className={`plugin-toggle-button${plugin.enabled ? " enabled" : ""}`} title={plugin.enabled ? "Disable plugin" : "Enable plugin"} disabled={busy} onClick={() => onTogglePlugin(plugin.id, !plugin.enabled)}>{plugin.enabled ? "Enabled" : "Disabled"}</button>
+              <button className="icon-button" title={`Open ${plugin.name} files`} aria-label={`Open ${plugin.name} files`} disabled={!pluginDirectory || busy} onClick={() => void openPluginFiles(plugin.id)}><FolderOpen size={14} /></button>
+              <button className="icon-button plugin-uninstall" title={`Uninstall ${plugin.name}`} disabled={busy} onClick={() => void uninstall(plugin)}><Trash2 size={14} /></button>
+            </div>
+          </article>;
+        })}
+        {visibleBuiltins.map((plugin) => <article className="plugin-card" key={plugin.id}>
+          <div className="plugin-card-icon"><Plug size={16} /></div>
+          <div className="plugin-card-details"><strong>{plugin.name}<small>Included</small></strong><span>{plugin.description}</span></div>
+          <div className="plugin-card-actions"><button className="action-button action-button--secondary" disabled={busy} onClick={() => void installBuiltin(plugin.id)}>Install</button></div>
+        </article>)}
+      </> : <div className="plugin-empty">{query ? `No plugins match "${search.trim()}".` : "No plugins installed yet."}</div>}
+      </div>
     </section>}
   </div>;
 }
