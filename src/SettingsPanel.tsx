@@ -197,7 +197,13 @@ export default function SettingsPanel({
   onUpdatePluginConfig?: (pluginId: string, key: string, value: unknown, scope?: "global" | "workspace") => void;
 }) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("editor");
+  const [categorySearch, setCategorySearch] = useState("");
   const [themeSearch, setThemeSearch] = useState("");
+  const visibleCategories = useMemo(() => {
+    const query = categorySearch.trim().toLowerCase();
+    if (!query) return settingsCategories;
+    return settingsCategories.filter((category) => category.label.toLowerCase().includes(query) || category.description.toLowerCase().includes(query));
+  }, [categorySearch]);
   const availableFonts = useMemo(() => ({
     interface: interfaceFonts.filter((option) => !option.value || isFontAvailable(option.value)),
     editor: editorFonts.filter((option) => isFontAvailable(option.value)),
@@ -218,16 +224,28 @@ export default function SettingsPanel({
   const selectedCategory = settingsCategories.find((category) => category.id === activeCategory)!;
 
   return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <aside className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <header className="settings-header"><div><h2 id="settings-title">Settings</h2><span>Arc preferences</span></div><button className="tool-button" aria-label="Close settings" onClick={onClose}><X size={15} /></button></header>
+    <section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <header className="settings-header"><div className="settings-title"><h2 id="settings-title">Settings</h2><span>Arc preferences</span></div><button className="settings-close" aria-label="Close settings" title="Close settings" onClick={onClose}><X size={16} /></button></header>
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Settings categories">
+          <label className="settings-search">
+            <Search size={14} aria-hidden="true" />
+            <input type="text" value={categorySearch} placeholder="Search categories" aria-label="Search settings categories" onChange={(event) => {
+              const value = event.target.value;
+              setCategorySearch(value);
+              const query = value.trim().toLowerCase();
+              if (!query) return;
+              const matches = settingsCategories.filter((category) => category.label.toLowerCase().includes(query) || category.description.toLowerCase().includes(query));
+              if (matches.length && !matches.some((category) => category.id === activeCategory)) setActiveCategory(matches[0].id);
+            }} />
+          </label>
           <div className="settings-nav-list">
-            {settingsCategories.map((category) => {
+            {visibleCategories.map((category) => {
               return <button key={category.id} className="settings-nav-button" aria-current={activeCategory === category.id ? "page" : undefined} onClick={() => setActiveCategory(category.id)}>
                 <span>{category.label}</span>
               </button>;
             })}
+            {!visibleCategories.length && <p className="settings-nav-empty">No matching categories.</p>}
           </div>
           <button className="settings-reset" title="Reset all settings" onClick={() => onChange({ ...DEFAULT_SETTINGS })}><RotateCcw size={13} /> Reset all settings</button>
         </nav>
@@ -299,7 +317,6 @@ export default function SettingsPanel({
                   {transparency("glassTabsTransparency", "Tabs and toolbars")}
                   {transparency("glassTerminalTransparency", "Terminal")}
                   {transparency("glassFloatingTransparency", "Menus and popovers")}
-                  {transparency("glassSettingsTransparency", "Settings panel")}
                   {transparency("glassControlsTransparency", "Inputs and controls")}
                 </>}
               </section>
@@ -338,6 +355,6 @@ export default function SettingsPanel({
           </div>
         </section>
       </div>
-    </aside>
+    </section>
   </div>;
 }

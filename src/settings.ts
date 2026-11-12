@@ -261,7 +261,7 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
   const terminalBackground = glass(c.editor, settings.glassTerminalTransparency);
   const tabsBackground = glass(c.raised, settings.glassTabsTransparency);
   const floatingBackground = glass(c.raised, settings.glassFloatingTransparency);
-  const settingsBackground = glass(c.background, settings.glassSettingsTransparency);
+  const settingsBackground = c.background;
   const controlsBackground = glass(c.raised, settings.glassControlsTransparency);
   const overlayAlpha = settings.editorGlassEnabled
     ? 0.5 * (1 - transparency(settings.glassFloatingTransparency) / 100)

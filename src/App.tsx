@@ -5014,25 +5014,6 @@ function App() {
           )}
         </>
       )}
-      {settingsOpen && (
-        <Suspense fallback={null}>
-          <SettingsPanel
-            settings={settings}
-            themes={themes}
-            customThemeIds={customThemeIds}
-            onChange={updateSettings}
-            onClose={() => setSettingsOpen(false)}
-            onOpenThemeMaker={() => {
-              setSettingsOpen(false);
-              setThemeMakerOpen(true);
-            }}
-            onDeleteTheme={(id) => void deleteTheme(id)}
-            pluginConfigurations={pluginRuntime.configurations}
-            getPluginConfigValue={pluginRuntime.getConfiguration}
-            onUpdatePluginConfig={pluginRuntime.updateConfiguration}
-          />
-        </Suspense>
-      )}
       {commandPaletteOpen && (
         <div
           className="plugin-command-backdrop"
@@ -5081,6 +5062,25 @@ function App() {
         </div>
       )}
       </div>
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsPanel
+            settings={settings}
+            themes={themes}
+            customThemeIds={customThemeIds}
+            onChange={updateSettings}
+            onClose={() => setSettingsOpen(false)}
+            onOpenThemeMaker={() => {
+              setSettingsOpen(false);
+              setThemeMakerOpen(true);
+            }}
+            onDeleteTheme={(id) => void deleteTheme(id)}
+            pluginConfigurations={pluginRuntime.configurations}
+            getPluginConfigValue={pluginRuntime.getConfiguration}
+            onUpdatePluginConfig={pluginRuntime.updateConfiguration}
+          />
+        </Suspense>
+      )}
     </main>
   );
 }
