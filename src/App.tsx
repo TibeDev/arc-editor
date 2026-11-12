@@ -1442,6 +1442,7 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const [message, setMessage] = useState('');
+  const messageHovered = useRef(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
@@ -2452,7 +2453,9 @@ function App() {
       window.setTimeout(
         () =>
           setMessage((current) =>
-            current.startsWith(`${verb} `) ? '' : current,
+            !messageHovered.current && current.startsWith(`${verb} `)
+              ? ''
+              : current,
           ),
         1800,
       );
@@ -2786,7 +2789,9 @@ function App() {
         window.setTimeout(
           () =>
             setMessage((current) =>
-              current === savedMessage ? '' : current,
+              !messageHovered.current && current === savedMessage
+                ? ''
+                : current,
             ),
           1400,
         );
@@ -2844,7 +2849,11 @@ function App() {
         setMessage('Formatted');
         window.setTimeout(
           () =>
-            setMessage((current) => (current === 'Formatted' ? '' : current)),
+            setMessage((current) =>
+              !messageHovered.current && current === 'Formatted'
+                ? ''
+                : current,
+            ),
           1400,
         );
       } catch {
@@ -3112,7 +3121,9 @@ function App() {
       window.setTimeout(
         () =>
           setMessage((current) =>
-            current.startsWith('Copied ') ? '' : current,
+            !messageHovered.current && current.startsWith('Copied ')
+              ? ''
+              : current,
           ),
         1400,
       );
@@ -4860,7 +4871,27 @@ function App() {
             {message && (
               <div
                 className={`message ${message.startsWith('Could not') ? 'error' : ''}`}
-                onClick={() => setMessage('')}
+                onMouseDown={(event) => {
+                  event.currentTarget.style.cursor = 'default';
+                }}
+                onClick={() => {
+                  messageHovered.current = false;
+                  setMessage('');
+                }}
+                onMouseEnter={() => {
+                  messageHovered.current = true;
+                }}
+                onMouseLeave={() => {
+                  messageHovered.current = false;
+                  const leaving = message;
+                  window.setTimeout(
+                    () =>
+                      setMessage((current) =>
+                        current === leaving ? '' : current,
+                      ),
+                    900,
+                  );
+                }}
               >
                 {message}
               </div>
