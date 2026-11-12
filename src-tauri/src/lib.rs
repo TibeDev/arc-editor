@@ -1802,14 +1802,20 @@ fn github_stage(root: String, path: String, stage: bool) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
-fn github_commit(root: String, message: String) -> Result<(), String> {
+fn github_commit(root: String, message: String, description: Option<String>) -> Result<(), String> {
     let root = resolve_git_root(Path::new(&root))?;
     let message = message.trim();
     if message.is_empty() {
         return Err("Enter a commit message.".to_string());
     }
-    let output = git_command()
-        .args(["commit", "-m", message])
+    let description = description.unwrap_or_default();
+    let description = description.trim();
+    let mut command = git_command();
+    command.args(["commit", "-m", message]);
+    if !description.is_empty() {
+        command.args(["-m", description]);
+    }
+    let output = command
         .current_dir(root)
         .output()
         .map_err(|error| format!("Could not run Git: {error}"))?;

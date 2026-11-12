@@ -16,6 +16,14 @@
 .settings-search input::placeholder{color:var(--settings-muted,#87929d)}
 .settings-nav-list{flex:1;min-height:0;display:grid;align-content:start;gap:2px;overflow-y:auto}
 .settings-nav-button{width:100%;min-height:34px;display:flex;align-items:center;gap:10px;padding:0 11px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--settings-muted,#8c939d);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+.settings-nav-group{display:grid;gap:2px}
+.settings-nav-button{padding-right:9px}
+.settings-nav-chevron{margin-left:auto;flex:0 0 auto;color:var(--settings-muted,#8c939d);transition:transform .15s ease}
+.settings-nav-button[aria-expanded=true] .settings-nav-chevron{color:var(--settings-accent,#9ab0ca);transform:rotate(90deg)}
+.settings-subnav{display:grid;gap:1px;margin:2px 0 6px 15px;padding-left:9px;border-left:1px solid var(--settings-border,#2b3036)}
+.settings-subnav-button{min-height:28px;display:flex;align-items:center;padding:0 9px;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--settings-muted,#8c939d);font:inherit;font-size:11px;text-align:left;cursor:pointer}
+.settings-subnav-button:hover{background:color-mix(in srgb,var(--settings-raised,#24282e) 70%,transparent);color:var(--settings-text,#d5d9e0)}
+.settings-subnav-button:focus-visible{outline:1px solid var(--settings-accent,#8ba5c2);outline-offset:1px}
 .settings-nav-button:hover{background:color-mix(in srgb,var(--settings-raised,#24282e) 70%,transparent);color:var(--settings-text,#d5d9e0)}
 .settings-nav-button:focus-visible{outline:1px solid var(--settings-accent,#8ba5c2);outline-offset:1px}
 .settings-nav-button[aria-current=page]{border-color:color-mix(in srgb,var(--settings-border,#343a40) 80%,transparent);background:color-mix(in srgb,var(--settings-raised,#24282e) 82%,transparent);color:var(--settings-text,#d5d9e0);font-weight:500}
@@ -24,10 +32,7 @@
 .settings-nav .settings-reset:hover{background:color-mix(in srgb,var(--settings-raised,#24282e) 70%,transparent);color:var(--settings-text,#d5d9e0)}
 
 .settings-main{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column}
-.settings-page-heading{flex:0 0 auto;padding:26px 34px 18px;border-bottom:1px solid var(--settings-border,#2b3036)}
-.settings-page-heading h3{margin:0;color:var(--settings-text,#d5d9e0);font-size:20px;font-weight:600;letter-spacing:-.02em}
-.settings-page-heading p{margin:6px 0 0;color:var(--settings-muted,#8c939d);font-size:12px;line-height:1.5}
-.settings-main .settings-scroll{min-height:0;flex:1;padding:8px 34px 32px;overflow:auto}
+.settings-main .settings-scroll{min-height:0;flex:1;padding:22px 34px 32px;overflow:auto}
 .settings-main .settings-scroll>section{max-width:820px}
 .settings-panel .settings-section{padding:24px 0 6px;border-bottom:0}
 .settings-panel .settings-section h3{margin:0 0 2px;color:var(--settings-muted,#aeb5bd);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
@@ -61,8 +66,8 @@
 .app-shell.app-theme-macos .settings-search{border-color:var(--macos-border);background:color-mix(in srgb,var(--macos-background) calc(100% - var(--glass-controls-transparency,0%)),transparent);color:var(--macos-secondary)}
 .app-shell.app-theme-macos .settings-search input{color:var(--macos-text)}
 .app-shell.app-theme-macos .settings-search input::placeholder{color:var(--macos-tertiary)}
-.app-shell.app-theme-macos .settings-close{color:var(--macos-secondary)}
-.app-shell.app-theme-macos .settings-close:hover{background:var(--macos-hover);color:var(--macos-text)}
+.app-shell.app-theme-macos .settings-close,.theme-maker-page.app-theme-macos .settings-close{color:var(--macos-secondary)}
+.app-shell.app-theme-macos .settings-close:hover,.theme-maker-page.app-theme-macos .settings-close:hover{background:var(--macos-hover);color:var(--macos-text)}
 .app-shell.app-theme-macos .settings-main .font-family-input{border-color:var(--macos-border);border-radius:7px;background:color-mix(in srgb,var(--macos-sidebar) calc(100% - var(--glass-controls-transparency,0%)),transparent);color:var(--macos-text);font-family:inherit;font-size:12px}
 .app-shell.app-theme-macos .settings-main .font-family-input::placeholder{color:var(--macos-secondary)}
 .app-shell.app-theme-macos .settings-main .font-preview{border-color:var(--macos-border);border-radius:7px;background:color-mix(in srgb,var(--macos-sidebar) calc(100% - var(--glass-controls-transparency,0%)),transparent);color:var(--macos-text)}
@@ -80,6 +85,7 @@
 .app-shell:not(.app-theme-macos) .settings-panel{border-radius:6px}
 .app-shell:not(.app-theme-macos) .settings-close,
 .app-shell:not(.app-theme-macos) .settings-nav .settings-reset,
+.app-shell:not(.app-theme-macos) .settings-subnav-button,
 .app-shell:not(.app-theme-macos) .settings-nav-button,
 .app-shell:not(.app-theme-macos) .settings-search,
 .app-shell:not(.app-theme-macos) .settings-main .setting-field select,
@@ -104,8 +110,15 @@
   .settings-nav-list{display:flex;gap:3px;overflow-x:auto}
   .settings-nav-button{width:auto;min-width:max-content;min-height:32px;padding:0 10px;font-size:11px}
   .settings-nav-empty{display:none}
+  .settings-subnav{display:none}
   .settings-nav .settings-reset{width:32px;flex:0 0 32px;justify-content:center;padding:0;overflow:hidden;font-size:0}
-  .settings-page-heading{padding:18px 18px 13px}
-  .settings-page-heading h3{font-size:18px}
-  .settings-main .settings-scroll{padding:6px 18px 24px}
+  .settings-main .settings-scroll{padding:16px 18px 24px}
 }
+
+.settings-search,.settings-main .setting-field select,.settings-main .setting-field input[type=text],.settings-main .setting-field input[type=number],.settings-main .setting-field textarea,.settings-main .font-family-input,.settings-main .theme-search,.settings-main .settings-action,.settings-nav .settings-reset,.settings-close,.settings-nav-button,.settings-subnav-button{border-color:transparent}
+.settings-search:focus-within,.settings-main .setting-field select:focus,.settings-main .setting-field input[type=text]:focus,.settings-main .setting-field input[type=number]:focus,.settings-main .setting-field textarea:focus,.settings-main .font-family-input:focus,.settings-main .theme-search:focus-within{border-color:color-mix(in srgb,var(--settings-accent,#8ba5c2) 60%,transparent)}
+.settings-nav-button[aria-current=page]{border-color:transparent}
+.settings-main .theme-choice,.settings-main .theme-choice.active{border-color:transparent}
+.settings-main .theme-choice{background:color-mix(in srgb,var(--settings-raised,#202429) 55%,transparent)}
+.settings-main .theme-choice:hover{background:color-mix(in srgb,var(--settings-raised,#202429) 85%,transparent)}
+.settings-main .theme-choice.active{background:color-mix(in srgb,var(--settings-accent,#879bb2) 18%,var(--settings-raised,#202429))}

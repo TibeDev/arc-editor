@@ -98,6 +98,7 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
   const [gitEmail, setGitEmail] = useState("");
   const [branchName, setBranchName] = useState("");
   const [commitMessage, setCommitMessage] = useState("");
+  const [commitDescription, setCommitDescription] = useState("");
   const [authSessionId, setAuthSessionId] = useState<string | null>(null);
   const [authDeviceCode, setAuthDeviceCode] = useState("");
   const [authError, setAuthError] = useState("");
@@ -437,6 +438,10 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
         <div className="github-create-branch"><input value={branchName} onChange={(event) => setBranchName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void perform(async () => { await invoke("github_create_branch", { root: workspace, branch: branchName }); setBranchName(""); }); }} placeholder="New branch" aria-label="New branch name" />
           <button className="github-icon-button" title="Create and switch branch" disabled={busy || !branchName.trim()} onClick={() => void perform(async () => { await invoke("github_create_branch", { root: workspace, branch: branchName }); setBranchName(""); })}><Plus size={15} /></button></div>
       </section>
+      <section className="github-sync-row">
+        <button className="github-secondary" disabled={busy || !status.remote} onClick={() => void perform(() => invoke("github_pull", { root: workspace }))}><ArrowDownToLine size={14} /> Pull</button>
+        <button className="github-primary" disabled={busy || !status.remote || !status.branch} onClick={() => void perform(() => invoke("github_push", { root: workspace }))}><ArrowUpFromLine size={14} /> Push</button>
+      </section>
 
       <section className="github-section github-changes">
         <div className="github-section-heading"><strong>Changes</strong><span>{status.changes.length}</span>
@@ -451,17 +456,15 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
       </section>
 
       <section className="github-commit-section">
-        <textarea value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Summary (required)" rows={2} />
+        <input value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Summary (required)" aria-label="Commit summary" />
+        <textarea value={commitDescription} onChange={(event) => setCommitDescription(event.target.value)} placeholder="Description (optional)" aria-label="Commit description" rows={3} />
         <button className="github-primary github-commit-button" disabled={busy || !commitMessage.trim() || !status.changes.some((change) => change.staged) || !status.userName || !status.userEmail} onClick={() => void perform(async () => {
-          await invoke("github_commit", { root: workspace, message: commitMessage });
+          await invoke("github_commit", { root: workspace, message: commitMessage, description: commitDescription });
           setCommitMessage("");
+          setCommitDescription("");
         }, "Changes committed.")}>{busy ? <LoaderCircle size={14} className="github-spin" /> : <Check size={14} />} Commit staged changes</button>
       </section>
 
-      <section className="github-sync-row">
-        <button className="github-secondary" disabled={busy || !status.remote} onClick={() => void perform(() => invoke("github_pull", { root: workspace }))}><ArrowDownToLine size={14} /> Pull</button>
-        <button className="github-primary" disabled={busy || !status.remote || !status.branch} onClick={() => void perform(() => invoke("github_push", { root: workspace }))}><ArrowUpFromLine size={14} /> Push</button>
-      </section>
     </>}
     </>}
   </div>;

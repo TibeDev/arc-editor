@@ -1,4 +1,4 @@
-import { RotateCcw, Search, Trash2, X } from "lucide-react";
+import { ChevronRight, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "./settings";
 import type { PluginConfigurationContribution, PluginConfigurationProperty } from "./pluginRuntime";
@@ -6,12 +6,12 @@ import ThemeColorPicker from "./ThemeColorPicker";
 import "./SettingsPanel.css";
 
 const settingsCategories = [
-  { id: "editor", label: "Editor", description: "Formatting and editing behavior." },
-  { id: "typography", label: "Fonts & Typography", description: "Choose typefaces and tune reading density." },
-  { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes." },
-  { id: "terminal", label: "Terminal", description: "Cursor and scrollback behavior." },
-  { id: "files", label: "Files", description: "Workspace browsing preferences." },
-  { id: "plugins", label: "Plugins", description: "Settings contributed by installed plugins." },
+  { id: "editor", label: "Editor", description: "Formatting and editing behavior.", sections: [{ id: "formatting", label: "Formatting" }, { id: "editing", label: "Editing" }] },
+  { id: "typography", label: "Fonts & Typography", description: "Choose typefaces and tune reading density.", sections: [{ id: "interface", label: "App interface" }, { id: "editor", label: "Code editor" }, { id: "terminal", label: "Terminal" }] },
+  { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes.", sections: [{ id: "interface", label: "Interface" }, { id: "editor-colors", label: "Editor colors" }, { id: "transparency", label: "Transparency and blur" }] },
+  { id: "terminal", label: "Terminal", description: "Cursor and scrollback behavior.", sections: [{ id: "terminal", label: "Terminal" }] },
+  { id: "files", label: "Files", description: "Workspace browsing preferences.", sections: [{ id: "file-viewer", label: "File viewer" }] },
+  { id: "plugins", label: "Plugins", description: "Settings contributed by installed plugins.", sections: [] },
 ] as const;
 
 type SettingsCategory = typeof settingsCategories[number]["id"];
@@ -197,6 +197,7 @@ export default function SettingsPanel({
   onUpdatePluginConfig?: (pluginId: string, key: string, value: unknown, scope?: "global" | "workspace") => void;
 }) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("editor");
+  const [expandedCategories, setExpandedCategories] = useState<Set<SettingsCategory>>(() => new Set(["editor"]));
   const [categorySearch, setCategorySearch] = useState("");
   const [themeSearch, setThemeSearch] = useState("");
   const visibleCategories = useMemo(() => {
@@ -222,6 +223,17 @@ export default function SettingsPanel({
   </label>;
 
   const selectedCategory = settingsCategories.find((category) => category.id === activeCategory)!;
+  const sectionsForCategory = (category: typeof settingsCategories[number]) => {
+    if (category.id === "plugins") {
+      return pluginConfigurations?.length
+        ? pluginConfigurations.map((contribution) => ({ id: `settings-section-plugins-${contribution.id}`, label: contribution.title }))
+        : [{ id: "settings-section-plugins-none", label: "Plugin settings" }];
+    }
+    return (category.sections as readonly { id: string; label: string }[]).map((section) => ({ id: `settings-section-${category.id}-${section.id}`, label: section.label }));
+  };
+  const scrollToSection = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -236,28 +248,53 @@ export default function SettingsPanel({
               const query = value.trim().toLowerCase();
               if (!query) return;
               const matches = settingsCategories.filter((category) => category.label.toLowerCase().includes(query) || category.description.toLowerCase().includes(query));
-              if (matches.length && !matches.some((category) => category.id === activeCategory)) setActiveCategory(matches[0].id);
+              if (matches.length && !matches.some((category) => category.id === activeCategory)) {
+                setActiveCategory(matches[0].id);
+                setExpandedCategories((current) => new Set(current).add(matches[0].id));
+              }
             }} />
           </label>
           <div className="settings-nav-list">
             {visibleCategories.map((category) => {
-              return <button key={category.id} className="settings-nav-button" aria-current={activeCategory === category.id ? "page" : undefined} onClick={() => setActiveCategory(category.id)}>
-                <span>{category.label}</span>
-              </button>;
+              const active = activeCategory === category.id;
+              const expanded = expandedCategories.has(category.id);
+              return <div className="settings-nav-group" key={category.id}>
+                <button className="settings-nav-button" aria-current={active ? "page" : undefined} aria-expanded={expanded} onClick={() => {
+                  setActiveCategory(category.id);
+                  setExpandedCategories((current) => {
+                    const next = new Set(current);
+                    if (next.has(category.id)) next.delete(category.id);
+                    else next.add(category.id);
+                    return next;
+                  });
+                }}>
+                  <span>{category.label}</span>
+                  <ChevronRight size={13} className="settings-nav-chevron" aria-hidden="true" />
+                </button>
+                {expanded && <div className="settings-subnav">
+                  {sectionsForCategory(category).map((section) => <button key={section.id} className="settings-subnav-button" onClick={() => {
+                    if (active) {
+                      scrollToSection(section.id);
+                    } else {
+                      setActiveCategory(category.id);
+                      setTimeout(() => scrollToSection(section.id), 0);
+                    }
+                  }}>{section.label}</button>)}
+                </div>}
+              </div>;
             })}
             {!visibleCategories.length && <p className="settings-nav-empty">No matching categories.</p>}
           </div>
           <button className="settings-reset" title="Reset all settings" onClick={() => onChange({ ...DEFAULT_SETTINGS })}><RotateCcw size={13} /> Reset all settings</button>
         </nav>
-        <section className="settings-main" aria-labelledby="settings-category-title">
-          <header className="settings-page-heading"><h3 id="settings-category-title">{selectedCategory.label}</h3><p>{selectedCategory.description}</p></header>
+        <section className="settings-main" aria-label={selectedCategory.label}>
           <div className="settings-scroll" key={activeCategory}>
             {activeCategory === "editor" && <>
-              <section className="settings-section"><h3>Formatting</h3>
+              <section className="settings-section" id="settings-section-editor-formatting"><h3>Formatting</h3>
                 {toggle("prettierOnSave", "Format on save", "Run Prettier when saving supported files.")}
                 <div className="setting-note">Format current file: <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd></div>
               </section>
-              <section className="settings-section"><h3>Editing</h3>
+              <section className="settings-section" id="settings-section-editor-editing"><h3>Editing</h3>
                 {toggle("lineNumbers", "Line numbers", "Show line numbers beside code.")}
                 {toggle("indentGuides", "Indent guides", "Show vertical guides for indented code.")}
                 {toggle("activeLine", "Highlight active line", "Highlight line under the caret.")}
@@ -270,22 +307,22 @@ export default function SettingsPanel({
               </section>
             </>}
             {activeCategory === "typography" && <>
-              <section className="settings-section"><h3>App interface</h3>
+              <section className="settings-section" id="settings-section-typography-interface"><h3>App interface</h3>
                 <FontFamilySetting label="Interface font" value={settings.interfaceFontFamily} options={availableFonts.interface} fallback="sans-serif" onChange={(interfaceFontFamily) => onChange({ interfaceFontFamily })} />
                 <div className="setting-note">Custom font names must be installed on your system. Theme default follows Classic or Modern app styling.</div>
               </section>
-              <section className="settings-section"><h3>Code editor</h3>
+              <section className="settings-section" id="settings-section-typography-editor"><h3>Code editor</h3>
                 <FontFamilySetting label="Editor font" value={settings.fontFamily} options={availableFonts.editor} fallback="monospace" onChange={(fontFamily) => onChange({ fontFamily })} />
                 <label className="setting-field"><span>Font size <b>{settings.fontSize}px</b></span><input type="range" min="10" max="24" step="1" value={settings.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) })} /></label>
                 <label className="setting-field"><span>Line height <b>{settings.lineHeight.toFixed(1)}</b></span><input type="range" min="1.2" max="2.2" step="0.1" value={settings.lineHeight} onChange={(event) => onChange({ lineHeight: Number(event.target.value) })} /></label>
               </section>
-              <section className="settings-section"><h3>Terminal</h3>
+              <section className="settings-section" id="settings-section-typography-terminal"><h3>Terminal</h3>
                 <FontFamilySetting label="Terminal font" value={settings.terminalFontFamily} options={availableFonts.terminal} fallback="monospace" onChange={(terminalFontFamily) => onChange({ terminalFontFamily })} />
                 <label className="setting-field"><span>Font size <b>{settings.terminalFontSize}px</b></span><input type="range" min="10" max="24" step="1" value={settings.terminalFontSize} onChange={(event) => onChange({ terminalFontSize: Number(event.target.value) })} /></label>
               </section>
             </>}
             {activeCategory === "appearance" && <>
-              <section className="settings-section"><h3>Interface</h3>
+              <section className="settings-section" id="settings-section-appearance-interface"><h3>Interface</h3>
                 <label className="setting-field"><span>App theme</span><select value={settings.appTheme} onChange={(event) => onChange({ appTheme: event.target.value as AppSettings["appTheme"] })}>
                   <option value="classic">Classic</option>
                   <option value="macos">Modern</option>
@@ -293,7 +330,7 @@ export default function SettingsPanel({
                 <div className="setting-note">App style and editor color theme are independent.</div>
                 {toggle("titleBarEnabled", "Custom title bar", "Use Arc's title bar. Turn off to use the system window frame.")}
               </section>
-              <section className="settings-section"><h3>Editor colors</h3>
+              <section className="settings-section" id="settings-section-appearance-editor-colors"><h3>Editor colors</h3>
                 <label className="theme-search"><Search size={13} /><input value={themeSearch} onChange={(event) => setThemeSearch(event.target.value)} placeholder="Search color themes" /></label>
                 <div className="theme-list" role="list" aria-label="Editor color themes">
                   {filteredThemes.map((theme) => <div className={`theme-choice ${settings.selectedTheme === theme.id ? "active" : ""}`} key={theme.id} role="listitem">
@@ -307,7 +344,7 @@ export default function SettingsPanel({
                 </div>
                 <button className="settings-action" onClick={onOpenThemeMaker}>Open Theme Maker</button>
               </section>
-              <section className="settings-section"><h3>Transparency and blur</h3>
+              <section className="settings-section" id="settings-section-appearance-transparency"><h3>Transparency and blur</h3>
                 {toggle("editorGlassEnabled", "Transparency", "Apply transparency across app surfaces.")}
                 {settings.editorGlassEnabled && <>
                   {toggle("nativeBackgroundBlurEnabled", "Blur desktop background", "Use native OS blur when supported. Linux X11 is unsupported; system controls strength.")}
@@ -321,7 +358,7 @@ export default function SettingsPanel({
                 </>}
               </section>
             </>}
-            {activeCategory === "terminal" && <section className="settings-section"><h3>Terminal</h3>
+            {activeCategory === "terminal" && <section className="settings-section" id="settings-section-terminal-terminal"><h3>Terminal</h3>
               <label className="setting-field"><span>Cursor shape</span><select value={settings.terminalCursorStyle} onChange={(event) => onChange({ terminalCursorStyle: event.target.value as AppSettings["terminalCursorStyle"] })}>
                 <option value="block">Block</option><option value="underline">Underline</option><option value="bar">Bar</option>
               </select></label>
@@ -333,13 +370,13 @@ export default function SettingsPanel({
               <label className="setting-field"><span>Selection color</span><ThemeColorPicker label="Selection color" value={terminalSelectionColor} onChange={(value) => onChange({ terminalSelectionColor: value })} /></label>
               {settings.terminalSelectionColor && <button className="settings-action" onClick={() => onChange({ terminalSelectionColor: "" })}>Use theme selection color</button>}
             </section>}
-            {activeCategory === "files" && <section className="settings-section"><h3>File viewer</h3>
+            {activeCategory === "files" && <section className="settings-section" id="settings-section-files-file-viewer"><h3>File viewer</h3>
               {toggle("showHiddenFiles", "Show hidden files", "Include dotfiles and hidden folders in workspace tree.")}
               {toggle("restoreTerminals", "Reopen terminals", "Recreate previous terminal tabs when reopening a folder (commands are re-run).")}
             </section>}
             {activeCategory === "plugins" && <>
-              {(!pluginConfigurations || pluginConfigurations.length === 0) && <section className="settings-section"><h3>Plugin settings</h3><p>No installed plugin contributes settings.</p></section>}
-              {pluginConfigurations?.map((contribution) => <section className="settings-section" key={contribution.id}>
+              {(!pluginConfigurations || pluginConfigurations.length === 0) && <section className="settings-section" id="settings-section-plugins-none"><h3>Plugin settings</h3><p>No installed plugin contributes settings.</p></section>}
+              {pluginConfigurations?.map((contribution) => <section className="settings-section" id={`settings-section-plugins-${contribution.id}`} key={contribution.id}>
                 <h3>{contribution.title}</h3>
                 <p>{contribution.pluginName}</p>
                 {Object.entries(contribution.properties).map(([key, property]) => <PluginConfigField
