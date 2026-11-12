@@ -6,7 +6,7 @@ import {
   ArrowDownToLine, ArrowUpFromLine, Check, ExternalLink, Frown, GitBranch, Github,
   LoaderCircle, Plus, RefreshCw, Upload,
 } from "lucide-react";
-import "./controls.css";
+import "../styles/controls.css";
 import "./GithubPanel.css";
 import "./GithubPanel.controls.css";
 import "./GithubPanel.updates.css";
@@ -14,7 +14,7 @@ import "./GithubPanel.auth.css";
 import "./GithubPanel.setup.css";
 
 import Select from "./Select";
-import { forgetTerminalOutput, subscribeTerminalOutput, terminalOutputReady } from "./terminalOutput";
+import { forgetTerminalOutput, subscribeTerminalOutput, terminalOutputReady } from "../lib/terminalOutput";
 
 type GithubChange = {
   path: string;

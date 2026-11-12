@@ -7,10 +7,10 @@
   align-items: center;
   gap: 9px;
   border: 1px solid #3b644d;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: #1b2b21;
   color: #b6d9c0;
-  font-size: 10px;
+  font-size: var(--font-sm);
 }
 .github-incoming-banner > svg {
   flex: 0 0 auto;
@@ -28,11 +28,12 @@
   border-color: #45624f;
   background: #26392d;
   color: #d2ead9;
-  font-size: 10px;
+  font-size: var(--font-sm);
 }
 .github-incoming-banner .action-button:hover:not(:disabled) {
   background: #304737;
 }
+
 @media (max-width: 600px) {
   .github-incoming-banner {
     width: calc(100% - 24px);

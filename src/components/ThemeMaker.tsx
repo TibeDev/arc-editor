@@ -1,10 +1,10 @@
 import { useState, type CSSProperties } from "react";
 import { ArrowLeft, FolderOpen, Plus, Save } from "lucide-react";
 import TitleBar from "./TitleBar";
-import { GLASS_BLUR, themeColorWithOpacity, THEME_COLOR_GROUPS, type AppSettings, type ThemeColors, type ThemeDefinition } from "./settings";
+import { GLASS_BLUR, themeColorWithOpacity, THEME_COLOR_GROUPS, type AppSettings, type ThemeColors, type ThemeDefinition } from "../lib/settings";
 import ThemeColorPicker from "./ThemeColorPicker";
 import Select from "./Select";
-import "./controls.css";
+import "../styles/controls.css";
 import "./SettingsPanel.css";
 
 const sample = [

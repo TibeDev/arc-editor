@@ -17,6 +17,10 @@ Guide for AI coding agents working on Arc. Read this before exploring the codeba
 ```
 index.html               Vite entry
 src/                     Frontend (React + TS)
+  App.tsx                App shell and most UI
+  components/            React components with colocated CSS
+  lib/                   Plugin runtime, settings, terminal and workspace logic
+  styles/                Global and shared CSS
 src-tauri/               Rust backend (Tauri 2)
   src/lib.rs             ALL Tauri commands + tests (~1600 lines)
   src/main.rs            Entry: NVIDIA/Wayland workaround + app-data migration
@@ -31,16 +35,17 @@ dist/                    Build output (gitignored)
 | File | Role |
 | --- | --- |
 | `App.tsx` | **Monolith (~4300 lines).** App shell, file tree, tabs, nested editor splits (`SplitContainer`, `EditorPane`), command palette, context menus, search, workspace state. Most UI work happens here |
-| `pluginRuntime.ts` | Plugin loader + full plugin API (`api.files`, `api.editor`, `api.terminal`, `api.ui`, `api.events`, `api.storage`, ...). Built-in plugins are inlined at build time via `import.meta.glob` of `../plugins/*` |
-| `settings.ts` | `AppSettings` type, `DEFAULT_SETTINGS`, `ThemeColors`/`ThemeDefinition`, `BUILTIN_THEMES`, theme CSS generation, settings persistence |
-| `SettingsPanel.tsx` | Settings UI |
-| `GithubPanel.tsx` | GitHub panel UI (calls `github_*` Tauri commands) |
-| `PluginPanel.tsx` | Plugin manager UI (install/enable/disable/remove) |
-| `ThemeMaker.tsx`, `ThemeColorPicker.tsx` | Custom theme editor |
-| `TerminalView.tsx` | xterm terminal component (lazy loaded) |
-| `terminalOutput.ts` | Global `terminal-output` event buffer (2 MB cap/session) so terminals survive tab switches |
+| `lib/pluginRuntime.ts` | Plugin loader + full plugin API (`api.files`, `api.editor`, `api.terminal`, `api.ui`, `api.events`, `api.storage`, ...). Built-in plugins are inlined at build time via `import.meta.glob` of `../../plugins/*` |
+| `lib/settings.ts` | `AppSettings` type, `DEFAULT_SETTINGS`, `ThemeColors`/`ThemeDefinition`, `BUILTIN_THEMES`, theme CSS generation, settings persistence |
+| `components/SettingsPanel.tsx` | Settings UI |
+| `components/GithubPanel.tsx` | GitHub panel UI (calls `github_*` Tauri commands) |
+| `components/PluginPanel.tsx` | Plugin manager UI (install/enable/disable/remove) |
+| `components/ThemeMaker.tsx`, `components/ThemeColorPicker.tsx` | Custom theme editor |
+| `components/TerminalView.tsx` | xterm terminal component (lazy loaded) |
+| `lib/terminalOutput.ts` | Global `terminal-output` event buffer (2 MB cap/session) so terminals survive tab switches |
 | `main.tsx` | React root |
-| `*.css` | Colocated styles per component (e.g. `GithubPanel.auth.css`) |
+| `styles/` | Global styles and shared controls |
+| `components/*.css` | Colocated styles per component (e.g. `GithubPanel.auth.css`) |
 
 ### Backend (`src-tauri/src/lib.rs`)
 
@@ -78,7 +83,7 @@ There is **no frontend test runner**; `npm run build` doubles as the typecheck g
 - **Frontend reads/writes files directly via `@tauri-apps/plugin-fs`**, not custom commands. Custom Rust commands exist only for what plugin-fs can't do (PTY, git/gh, HTTP server, blur, gating).
 - **Tauri capability scopes are security-relevant.** `src-tauri/capabilities/default.json` restricts fs access to `$HOME`, `$DOCUMENT`, `$DOWNLOAD`, `$APPDATA` and allows opening URLs only for `http://127.0.0.1:*`, `github.com`, `cli.github.com`, `git-scm.com`. Update scopes deliberately; don't widen them casually. CSP is `null` (plugin system needs broad JS).
 - **Built-in plugins are bundled raw**: files under `plugins/*/main.js` are self-contained ES modules (no bare package imports), read as strings at build time and executed in the plugin runtime. Keep them dependency-free.
-- **Settings shape is versioned** (`APP_SETTINGS_VERSION` in `settings.ts`). When adding a setting, add it to `AppSettings`, `DEFAULT_SETTINGS`, and the settings merge/migration logic, then wire UI in `SettingsPanel.tsx`.
+- **Settings shape is versioned** (`APP_SETTINGS_VERSION` in `lib/settings.ts`). When adding a setting, add it to `AppSettings`, `DEFAULT_SETTINGS`, and the settings merge/migration logic, then wire UI in `components/SettingsPanel.tsx`.
 - **Themes** are `ThemeDefinition` objects (~30 color slots); themes apply by generating CSS (`themeCss`). New UI colors should map to theme slots, not hardcoded hex.
 - **Versions must stay in sync** across `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` — the release workflow enforces this on tags.
 - `dist/`, `src-tauri/target/`, `src-tauri/gen/` are build artifacts (gitignored). Don't edit.
@@ -90,7 +95,7 @@ There is **no frontend test runner**; `npm run build` doubles as the typecheck g
 | --- | --- |
 | `README.md` | User-facing overview, shortcuts, install |
 | `PLUGIN_API.md` | Full plugin API reference (keep in sync when changing the plugin API) |
-| `FILE_WATCHER.md` | Spec + notes for live file watching (notify-debouncer-full → `fs-changed` events → tree reducer). **Implemented**: `watch_project`/`unwatch_project` in `lib.rs`, listener + delta reducer in `App.tsx` |
+| `FILE_WATCHER.md` | Spec + notes for live file watching (notify-debouncer-full → `fs-changed` events → tree reducer). **Implemented**: `watch_project`/`unwatch_project` in `src-tauri/src/lib.rs`, listener + delta reducer in `src/App.tsx` |
 | `apple-design.md` | Design direction: Apple/Xcode-inspired, layered translucent surfaces, content-first, minimal borders. Follow for UI work |
 
 ## Release process

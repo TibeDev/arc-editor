@@ -6,11 +6,11 @@
   justify-content: center;
   gap: 7px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: #363b42;
   color: var(--text);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--font-md);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -18,7 +18,7 @@
   background: #424850;
 }
 .action-button--secondary {
-  background: #202326;
+  background: var(--hover);
   color: var(--subtle);
 }
 .action-button--secondary:hover:not(:disabled) {
@@ -42,7 +42,7 @@
   display: grid;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--subtle);
 }

@@ -7,7 +7,7 @@
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-lg);
 }
 .plugin-header {
   height: auto;
@@ -16,7 +16,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-lg);
   padding: 0 18px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
@@ -45,13 +45,13 @@
   gap: 2px;
 }
 .plugin-heading strong {
-  font-size: 12px;
+  font-size: var(--font-lg);
   font-weight: 600;
 }
 .plugin-heading span {
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -65,13 +65,13 @@
 }
 .plugin-content h2 {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-lg);
   font-weight: 600;
 }
 .plugin-feedback {
   margin: 12px 18px 0;
   padding: 9px 11px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -85,9 +85,9 @@
   padding: 10px 12px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-lg);
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: var(--panel);
 }
 .plugin-card-icon {
@@ -97,37 +97,37 @@
   display: grid;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   color: var(--subtle);
 }
 .plugin-card-details {
   min-width: 0;
   flex: 1;
   display: grid;
-  gap: 4px;
+  gap: var(--space-xs);
 }
 .plugin-card-details > strong {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
+  gap: var(--space-md);
+  font-size: var(--font-md);
   font-weight: 600;
 }
 .plugin-card-details small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-xs);
   font-weight: 400;
 }
 .plugin-card-details > span {
   overflow: hidden;
   color: var(--subtle);
-  font-size: 10px;
+  font-size: var(--font-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .plugin-card-details > code {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-xs);
 }
 .plugin-uninstall {
   flex: 0 0 28px;
@@ -136,7 +136,7 @@
   margin-top: 26px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-md);
 }
 .plugin-section-heading > span {
   min-width: 18px;
@@ -144,20 +144,18 @@
   border-radius: 10px;
   background: #292d31;
   color: var(--subtle);
-  font-size: 9px;
+  font-size: var(--font-xs);
   text-align: center;
 }
 .plugin-empty {
   padding: 17px 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-sm);
 }
 .app-shell.editor-glass-enabled .plugin-header,
 .app-shell.editor-glass-enabled .plugin-card {
-  backdrop-filter: blur(var(--editor-glass-blur, 18px))
-    saturate(var(--editor-glass-saturation, 130%));
-  -webkit-backdrop-filter: blur(var(--editor-glass-blur, 18px))
-    saturate(var(--editor-glass-saturation, 130%));
+  backdrop-filter: var(--glass-surface-filter);
+  -webkit-backdrop-filter: var(--glass-surface-filter);
 }
 .plugin-view-switch {
   display: flex;
@@ -175,7 +173,7 @@
   height: 24px;
   display: grid;
   place-items: center;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   color: var(--muted);
 }
 .plugin-view-switch span.active {
@@ -188,7 +186,7 @@
 .plugin-card-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-md);
   flex: 0 0 auto;
 }
 .plugin-card-list {
@@ -252,11 +250,11 @@
   height: 24px;
   padding: 0 10px;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--text) 7%, var(--panel));
   color: var(--muted);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-sm);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -273,13 +271,16 @@
   cursor: not-allowed;
   opacity: 0.5;
 }
+.plugin-installed-list,
+.plugin-docs-content {
+  scrollbar-color: #424850 transparent;
+  scrollbar-width: thin;
+}
 .plugin-installed-list {
   max-height: min(42vh, 420px);
   min-height: 0;
   overflow: auto;
-  padding-right: 4px;
-  scrollbar-color: #424850 transparent;
-  scrollbar-width: thin;
+  padding-right: var(--space-xs);
 }
 @media (max-width: 760px) {
   .plugin-header {
@@ -287,11 +288,11 @@
     padding: 8px 10px;
   }
   .plugin-header-actions {
-    gap: 4px;
+    gap: var(--space-xs);
   }
   .plugin-header-actions > button {
     padding-inline: 6px;
-    font-size: 9px;
+    font-size: var(--font-xs);
   }
 }
 @media (max-width: 640px) {
@@ -300,10 +301,10 @@
   }
   .plugin-header .action-button {
     padding: 0 8px;
-    font-size: 10px;
+    font-size: var(--font-sm);
   }
   .plugin-card {
-    gap: 8px;
+    gap: var(--space-md);
     padding: 8px;
   }
   .plugin-card-details > span {

@@ -106,10 +106,10 @@ import {
   SiYaml,
 } from 'react-icons/si';
 import { appDataDir, join } from '@tauri-apps/api/path';
-import TitleBar from './TitleBar';
-import './pluginExtensions.css';
-import './layout-overrides.css';
-import { forgetTerminalOutput } from './terminalOutput';
+import TitleBar from './components/TitleBar';
+import './styles/pluginExtensions.css';
+import './styles/layout-overrides.css';
+import { forgetTerminalOutput } from './lib/terminalOutput';
 import {
   usePluginRuntime,
   type PluginAppSnapshot,
@@ -120,7 +120,7 @@ import {
   type PluginPanelContribution,
   type PluginStatusItem,
   type PluginToolbarAction,
-} from './pluginRuntime';
+} from './lib/pluginRuntime';
 import {
   APP_SETTINGS_VERSION,
   BUILTIN_THEMES,
@@ -130,13 +130,13 @@ import {
   themeCss,
   type AppSettings,
   type ThemeDefinition,
-} from './settings';
+} from './lib/settings';
 
-const TerminalView = lazy(() => import('./TerminalView'));
-const SettingsPanel = lazy(() => import('./SettingsPanel'));
-const GithubPanel = lazy(() => import('./GithubPanel'));
-const PluginPanel = lazy(() => import('./PluginPanel'));
-const ThemeMaker = lazy(() => import('./ThemeMaker'));
+const TerminalView = lazy(() => import('./components/TerminalView'));
+const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
+const GithubPanel = lazy(() => import('./components/GithubPanel'));
+const PluginPanel = lazy(() => import('./components/PluginPanel'));
+const ThemeMaker = lazy(() => import('./components/ThemeMaker'));
 
 type DiskFile = { name: string; path: string; kind: 'file' | 'directory' };
 type FsEvent = {
@@ -4575,27 +4575,6 @@ function App() {
                   >
                     <SettingsIcon size={14} />
                   </button>
-                  <button
-                    className="tool-button"
-                    title="Open plugins"
-                    onClick={openPluginPanel}
-                  >
-                    <Puzzle size={14} />
-                  </button>
-                  <button
-                    className="tool-button"
-                    title="Open GitHub"
-                    onClick={() => openGithubPanel()}
-                  >
-                    <Github size={14} />
-                  </button>
-                  <button
-                    className="tool-button"
-                    title="New terminal (Ctrl+T)"
-                    onClick={() => openTerminal()}
-                  >
-                    <TerminalIcon size={14} />
-                  </button>
                 </div>
                 <div className="explorer-actions">
                   <button
@@ -4736,34 +4715,6 @@ function App() {
                   <div className="empty-hint">No visible files.</div>
                 )}
               </div>
-              <div className="file-explorer-footer">
-                {pluginRuntime.actions.map((action) => (
-                  <button
-                    key={action.id}
-                    className="settings-launch"
-                    aria-label={action.label}
-                    title={action.title ?? action.label}
-                    onClick={() => void runPluginAction(action)}
-                  >
-                    <PluginToolbarIcon
-                      name={action.icon}
-                      svg={
-                        action.icon
-                          ? pluginRuntime.icons[
-                              `${action.pluginId}:${action.icon}`
-                            ]
-                          : undefined
-                      }
-                    />
-                  </button>
-                ))}
-                <span
-                  className="file-explorer-project"
-                  title={workspace.split(/[\\/]/).filter(Boolean).pop()}
-                >
-                  {workspace.split(/[\\/]/).filter(Boolean).pop()}
-                </span>
-              </div>
             </aside>
           )}
           {workspace && (
@@ -4840,7 +4791,7 @@ function App() {
             </div>
           )}
           <section className="editor-root">
-            {renderLayout(layout)}
+            <div className="editor-content">{renderLayout(layout)}</div>
             {pluginRuntime.statusItems.length > 0 && (
               <div className="plugin-status-bar">
                 {pluginRuntime.statusItems
@@ -4868,6 +4819,52 @@ function App() {
                   ))}
               </div>
             )}
+            <div className="editor-footer">
+              <button
+                className="settings-launch"
+                aria-label="Open plugins"
+                title="Open plugins"
+                onClick={openPluginPanel}
+              >
+                <Puzzle size={15} />
+              </button>
+              <button
+                className="settings-launch"
+                aria-label="Open GitHub"
+                title="Open GitHub"
+                onClick={() => openGithubPanel()}
+              >
+                <Github size={15} />
+              </button>
+              <button
+                className="settings-launch"
+                aria-label="New terminal (Ctrl+T)"
+                title="New terminal (Ctrl+T)"
+                onClick={() => openTerminal()}
+              >
+                <TerminalIcon size={15} />
+              </button>
+              {pluginRuntime.actions.map((action) => (
+                <button
+                  key={action.id}
+                  className="settings-launch"
+                  aria-label={action.label}
+                  title={action.title ?? action.label}
+                  onClick={() => void runPluginAction(action)}
+                >
+                  <PluginToolbarIcon
+                    name={action.icon}
+                    svg={
+                      action.icon
+                        ? pluginRuntime.icons[
+                            `${action.pluginId}:${action.icon}`
+                          ]
+                        : undefined
+                    }
+                  />
+                </button>
+              ))}
+            </div>
             {message && (
               <div
                 className={`message ${message.startsWith('Could not') ? 'error' : ''}`}

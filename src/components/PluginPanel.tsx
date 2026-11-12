@@ -2,9 +2,9 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { ArrowLeft, BookOpen, Download, FolderOpen, LayoutGrid, List, Plug, Puzzle, Trash2 } from "lucide-react";
 import { join } from "@tauri-apps/api/path";
-import pluginApiMarkdown from "../PLUGIN_API.md?raw";
-import type { InstalledPlugin, PluginPanelContribution } from "./pluginRuntime";
-import "./controls.css";
+import pluginApiMarkdown from "../../PLUGIN_API.md?raw";
+import type { InstalledPlugin, PluginPanelContribution } from "../lib/pluginRuntime";
+import "../styles/controls.css";
 import "./PluginPanel.css";
 import "./PluginPanel.docs.css";
 

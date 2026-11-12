@@ -3,8 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { subscribeTerminalOutput, terminalOutputReady } from "./terminalOutput";
-import { themeColorWithOpacity, type AppSettings, type ThemeDefinition } from "./settings";
+import { subscribeTerminalOutput, terminalOutputReady } from "../lib/terminalOutput";
+import { themeColorWithOpacity, type AppSettings, type ThemeDefinition } from "../lib/settings";
 
 type TerminalSession = { id: string; cwd: string; command?: string };
 type TerminalSettings = Pick<AppSettings,

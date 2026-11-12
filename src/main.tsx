@@ -1,8 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { migrateStorageNamespace } from "./settings";
-import "./styles.css";
+import { migrateStorageNamespace } from "./lib/settings";
+import "./styles/styles.css";
 
 migrateStorageNamespace();
 

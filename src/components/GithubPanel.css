@@ -5,7 +5,7 @@
   overflow: auto;
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-lg);
 }
 .github-header {
   height: 48px;
@@ -19,7 +19,7 @@
 .github-header-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xs);
 }
 .github-heading {
   min-width: 0;
@@ -39,7 +39,7 @@
 .github-heading strong {
   overflow: hidden;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-lg);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -48,7 +48,7 @@
   max-width: 360px;
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -72,7 +72,7 @@
   margin: 12px 18px 0;
   padding: 9px 11px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -94,7 +94,7 @@
   justify-items: center;
   gap: 10px;
   color: var(--subtle);
-  font-size: 12px;
+  font-size: var(--font-lg);
 }
 .github-setup-card {
   width: min(460px, calc(100% - 36px));
@@ -132,16 +132,16 @@
 .github-help {
   max-width: 340px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-sm);
   line-height: 1.6;
 }
 .github-field {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-sm);
   color: var(--subtle);
-  font-size: 10px;
+  font-size: var(--font-sm);
   text-align: left;
 }
 .github-field input,
@@ -154,12 +154,12 @@
   min-height: 30px;
   padding: 6px 8px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: 0;
   background: color-mix(in srgb, var(--text) 7%, var(--bg));
   color: var(--text);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 .github-field input:focus,
 .github-identity-card input:focus,
@@ -190,15 +190,15 @@
   display: grid;
   gap: 9px;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: var(--panel);
 }
 .github-identity-card > strong {
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 .github-identity-card > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-sm);
   line-height: 1.5;
 }
 .github-identity-card .action-button {
@@ -226,7 +226,7 @@
   display: flex;
   align-items: center;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--text) 7%, var(--bg));
 }
 .github-create-branch input {
@@ -245,7 +245,7 @@
   border-bottom: 1px solid var(--line);
 }
 .github-section-heading strong {
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 .github-section-heading > span {
   min-width: 18px;
@@ -253,7 +253,7 @@
   border-radius: 10px;
   background: #292d31;
   color: var(--subtle);
-  font-size: 9px;
+  font-size: var(--font-xs);
   text-align: center;
 }
 .github-text-button {
@@ -262,7 +262,7 @@
   background: transparent;
   color: var(--subtle);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-sm);
 }
 .github-text-button:hover:not(:disabled) {
   color: var(--text);
@@ -274,13 +274,13 @@
   max-height: 270px;
   overflow: auto;
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: var(--radius-md);
 }
 .github-change {
   min-height: 34px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-md);
   padding: 0 5px;
   border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 40%);
   cursor: pointer;
@@ -294,10 +294,10 @@
   flex: 0 0 17px;
   display: grid;
   place-items: center;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: #292d31;
   color: #c4c8ce;
-  font-size: 9px;
+  font-size: var(--font-xs);
   font-weight: 700;
 }
 .github-change-status.added,
@@ -318,7 +318,7 @@
 .github-change-kind {
   margin-left: auto;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-xs);
 }
 .github-empty-changes {
   height: 64px;
@@ -327,12 +327,12 @@
   justify-content: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 .github-commit-section {
   margin-top: 15px;
   display: grid;
-  gap: 8px;
+  gap: var(--space-md);
 }
 .github-commit-section textarea {
   min-height: 55px;
@@ -347,14 +347,12 @@
   margin-top: 10px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: var(--space-md);
 }
 .app-shell.editor-glass-enabled .github-setup-card,
 .app-shell.editor-glass-enabled .github-identity-card {
-  backdrop-filter: blur(var(--editor-glass-blur, 18px))
-    saturate(var(--editor-glass-saturation, 130%));
-  -webkit-backdrop-filter: blur(var(--editor-glass-blur, 18px))
-    saturate(var(--editor-glass-saturation, 130%));
+  backdrop-filter: var(--glass-surface-filter);
+  -webkit-backdrop-filter: var(--glass-surface-filter);
 }
 @media (max-width: 600px) {
   .github-branch-row {

@@ -16,7 +16,7 @@
   padding: 0 7px;
   background: transparent;
   color: var(--subtle);
-  font-size: 9px;
+  font-size: var(--font-xs);
 }
 .plugin-status-bar button:hover {
   background: var(--selected);
@@ -34,12 +34,12 @@
 .arc-plugin-overlay {
   position: fixed;
   inset: 0;
-  z-index: 120;
+  z-index: var(--z-plugin-overlay, 120);
   display: grid;
   place-items: center;
   padding: 24px;
   background: #000a;
-  backdrop-filter: blur(4px);
+  backdrop-filter: var(--glass-overlay-filter);
 }
 .arc-plugin-modal {
   width: min(560px, 94vw);
@@ -49,19 +49,19 @@
   gap: 10px;
   padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--panel);
   box-shadow: 0 20px 70px #000b;
 }
 .arc-plugin-modal > label {
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 .arc-plugin-modal > input {
   height: 36px;
   padding: 0 10px;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: 0;
   background: var(--bg);
   color: var(--text);
@@ -95,29 +95,29 @@
 }
 .arc-plugin-pick-item span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-sm);
 }
 .arc-plugin-error {
   min-height: 14px;
   color: #e06c75;
-  font-size: 10px;
+  font-size: var(--font-sm);
 }
 .arc-plugin-toast {
   position: fixed;
   right: 18px;
   bottom: 44px;
-  z-index: 130;
+  z-index: var(--z-toast, 130);
   max-width: 420px;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: var(--panel);
   color: var(--text);
   box-shadow: 0 14px 40px #0008;
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 .arc-plugin-toast.warning {
   border-color: #c9a227;
@@ -138,21 +138,21 @@
   gap: 10px;
   padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--panel);
   box-shadow: 0 20px 70px #000b;
 }
 .arc-plugin-diff h3 {
   margin: 0;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-lg);
 }
 .arc-plugin-diff-columns {
   min-height: 0;
   flex: 1;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: var(--space-md);
 }
 .arc-plugin-diff-columns pre {
   min-height: 0;
@@ -160,7 +160,7 @@
   margin: 0;
   padding: 10px;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
   font:
@@ -231,7 +231,7 @@
 .arc-plugin-inlay-hint {
   margin: 0 3px;
   padding: 0 3px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--muted) 16%, transparent);
   color: var(--muted);
   font:
@@ -294,7 +294,7 @@
   width: 10px;
   flex: 0 0 10px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-xs);
 }
 .arc-plugin-tree-icon {
   color: var(--muted);
@@ -304,14 +304,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-xs);
 }
 .arc-plugin-tree-action {
   height: 20px;
   padding: 0 6px;
   background: transparent;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-xs);
 }
 .arc-plugin-tree-action:hover {
   background: var(--selected);

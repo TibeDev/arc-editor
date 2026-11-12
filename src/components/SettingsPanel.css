@@ -1,6 +1,6 @@
 .settings-panel {
-  backdrop-filter: blur(26px) saturate(140%);
-  -webkit-backdrop-filter: blur(26px) saturate(140%);
+  backdrop-filter: var(--glass-settings-filter);
+  -webkit-backdrop-filter: var(--glass-settings-filter);
 }
 .settings-panel .settings-header {
   height: 56px;
@@ -22,7 +22,7 @@
 }
 .settings-header span {
   color: var(--settings-muted, #87919b);
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 .settings-close {
   width: 30px;
@@ -43,7 +43,7 @@
     var(--settings-raised, #24282e) 80%,
     transparent
   );
-  color: var(--settings-text, #d5d9e0);
+  color: var(--settings-text, var(--text));
 }
 .settings-close:focus-visible {
   outline: 1px solid var(--settings-accent, #8ba5c2);
@@ -60,7 +60,7 @@
   flex: 0 0 232px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-lg);
   padding: 18px 14px 16px;
   border-right: 1px solid var(--settings-border, #2b3036);
   background: color-mix(
@@ -72,11 +72,11 @@
 .settings-search {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-md);
   height: 34px;
   padding: 0 11px;
   border: 1px solid var(--settings-border, #343a42);
-  border-radius: 8px;
+  border-radius: var(--radius-xl);
   background: var(--settings-raised, #202429);
   color: var(--settings-muted, #87919b);
 }
@@ -89,9 +89,9 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--settings-text, #d5d9e0);
+  color: var(--settings-text, var(--text));
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-lg);
   outline: none;
 }
 .settings-search input::placeholder {
@@ -117,7 +117,7 @@
   background: transparent;
   color: var(--settings-muted, #8c939d);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-lg);
   text-align: left;
   cursor: pointer;
 }
@@ -151,11 +151,11 @@
   align-items: center;
   padding: 0 9px;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--settings-muted, #8c939d);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--font-md);
   text-align: left;
   cursor: pointer;
 }
@@ -165,7 +165,7 @@
     var(--settings-raised, #24282e) 70%,
     transparent
   );
-  color: var(--settings-text, #d5d9e0);
+  color: var(--settings-text, var(--text));
 }
 .settings-subnav-button:focus-visible {
   outline: 1px solid var(--settings-accent, #8ba5c2);
@@ -177,7 +177,7 @@
     var(--settings-raised, #24282e) 70%,
     transparent
   );
-  color: var(--settings-text, #d5d9e0);
+  color: var(--settings-text, var(--text));
 }
 .settings-nav-button:focus-visible {
   outline: 1px solid var(--settings-accent, #8ba5c2);
@@ -194,13 +194,13 @@
     var(--settings-raised, #24282e) 82%,
     transparent
   );
-  color: var(--settings-text, #d5d9e0);
+  color: var(--settings-text, var(--text));
   font-weight: 500;
 }
 .settings-nav-empty {
   margin: 6px 10px;
   color: var(--settings-muted, #87919b);
-  font-size: 11px;
+  font-size: var(--font-md);
   line-height: 1.5;
 }
 .settings-nav .settings-reset {
@@ -214,7 +214,7 @@
   background: transparent;
   color: var(--settings-muted, #8c939d);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 .settings-nav .settings-reset:hover {
   background: color-mix(
@@ -222,7 +222,7 @@
     var(--settings-raised, #24282e) 70%,
     transparent
   );
-  color: var(--settings-text, #d5d9e0);
+  color: var(--settings-text, var(--text));
 }
 
 .settings-main {
@@ -256,7 +256,7 @@
 .settings-main .settings-section > p {
   margin: 4px 0 6px;
   color: var(--settings-muted, #87919b);
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 .settings-main .setting-toggle {
   min-height: 58px;
@@ -264,13 +264,13 @@
   gap: 20px;
 }
 .settings-main .setting-toggle strong {
-  font-size: 12px;
+  font-size: var(--font-lg);
   font-weight: 500;
 }
 .settings-main .setting-toggle small {
   max-width: 60ch;
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--font-md);
   line-height: 1.5;
 }
 .settings-main .setting-toggle + .setting-toggle,
@@ -307,7 +307,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #d5d9e0;
+  background: var(--text);
   transition: transform 0.15s ease;
 }
 .settings-panel .setting-toggle input[type="checkbox"]:checked {
@@ -325,10 +325,10 @@
 
 .settings-main .setting-field {
   margin: 18px 0;
-  gap: 8px;
+  gap: var(--space-md);
 }
 .settings-main .setting-field > span {
-  font-size: 12px;
+  font-size: var(--font-lg);
 }
 .settings-main .setting-field b {
   color: var(--settings-muted, #87929d);
@@ -340,27 +340,27 @@
   height: 34px;
   padding: 0 11px;
   border: 1px solid var(--settings-border, #343a42);
-  border-radius: 8px;
+  border-radius: var(--radius-xl);
   background: var(--settings-raised, #202429);
-  color: var(--settings-text, #d5d9e0);
+  color: var(--settings-text, var(--text));
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-lg);
 }
 .settings-main .setting-field textarea {
   width: 100%;
   min-height: 96px;
   padding: 10px 11px;
   border: 1px solid var(--settings-border, #343a42);
-  border-radius: 8px;
+  border-radius: var(--radius-xl);
   background: var(--settings-raised, #202429);
-  color: var(--settings-text, #d5d9e0);
+  color: var(--settings-text, var(--text));
   font-family: ui-monospace, monospace;
-  font-size: 12px;
+  font-size: var(--font-lg);
   resize: vertical;
 }
 .settings-main .setting-field small {
   color: var(--settings-muted, #87919b);
-  font-size: 11px;
+  font-size: var(--font-md);
   line-height: 1.5;
 }
 .settings-main .setting-error {
@@ -378,9 +378,9 @@
   margin: 0 0 14px;
   padding: 14px;
   border: 1px solid var(--settings-border, #343a40);
-  border-radius: 8px;
+  border-radius: var(--radius-xl);
   background: var(--settings-raised, #202429);
-  color: var(--settings-text, #d5d9e0);
+  color: var(--settings-text, var(--text));
   font-size: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -392,22 +392,22 @@
 .settings-main .setting-note {
   margin: 8px 0;
   color: var(--settings-muted, #87919b);
-  font-size: 11px;
+  font-size: var(--font-md);
   line-height: 1.6;
 }
 .settings-main .setting-note kbd {
   padding: 2px 5px;
   border: 1px solid var(--settings-border, #373d44);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--settings-text, #a7afb8);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-sm);
 }
 .settings-main .settings-action {
   height: 32px;
   margin: 8px 0 12px;
   border: 1px solid var(--settings-border, #3b424a);
-  border-radius: 8px;
+  border-radius: var(--radius-xl);
   background: var(--settings-raised, #22272c);
   color: var(--settings-text, #c7cdd4);
   font: inherit;
@@ -443,10 +443,10 @@
   height: 34px;
   margin: 12px 0;
   padding: 0 11px;
-  border-radius: 8px;
+  border-radius: var(--radius-xl);
 }
 .settings-main .theme-search input {
-  font-size: 12px;
+  font-size: var(--font-lg);
 }
 .settings-main .theme-list {
   max-height: 260px;
@@ -460,17 +460,17 @@
   padding: 0 11px;
 }
 .settings-main .theme-choice-name {
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 .settings-main .theme-choice-name small {
-  font-size: 9px;
+  font-size: var(--font-xs);
 }
 .settings-main .theme-list-empty {
-  font-size: 11px;
+  font-size: var(--font-md);
 }
 
 .app-shell .settings-panel {
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
 }
 .app-shell .settings-close,
 .app-shell .settings-nav .settings-reset,
@@ -491,13 +491,13 @@
 .app-shell .settings-main .settings-action,
 .app-shell .settings-main .theme-search,
 .app-shell .settings-main .theme-choice {
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 .app-shell
   .settings-panel
   .setting-toggle
   input[type="checkbox"] {
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .app-shell
   .settings-panel
@@ -506,65 +506,7 @@
   border-radius: 2px;
 }
 
-@media (max-width: 720px) {
-  .settings-backdrop {
-    padding: 10px;
-  }
-  .settings-panel {
-    width: 100%;
-    height: calc(100vh - var(--titlebar-height) - 20px);
-    border-radius: 12px;
-  }
-  .settings-panel .settings-header {
-    padding: 0 16px;
-  }
-  .settings-layout {
-    flex-direction: column;
-  }
-  .settings-nav {
-    width: auto;
-    flex: 0 0 auto;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
-    border-right: 0;
-    border-bottom: 1px solid var(--settings-border, #2b3036);
-  }
-  .settings-search {
-    width: 150px;
-    flex: 0 0 150px;
-  }
-  .settings-nav-list {
-    display: flex;
-    gap: 3px;
-    overflow-x: auto;
-  }
-  .settings-nav-button {
-    width: auto;
-    min-width: max-content;
-    min-height: 32px;
-    padding: 0 10px;
-    font-size: 11px;
-  }
-  .settings-nav-empty {
-    display: none;
-  }
-  .settings-subnav {
-    display: none;
-  }
-  .settings-nav .settings-reset {
-    width: 32px;
-    flex: 0 0 32px;
-    justify-content: center;
-    padding: 0;
-    overflow: hidden;
-    font-size: 0;
-  }
-  .settings-main .settings-scroll {
-    padding: 16px 18px 24px;
-  }
-}
+
 
 .settings-search,
 .settings-main .setting-field input[type="text"],
@@ -620,3 +562,62 @@
   );
 }
 
+@media (max-width: 720px) {
+  .settings-backdrop {
+    padding: 10px;
+  }
+  .settings-panel {
+    width: 100%;
+    height: calc(100vh - var(--titlebar-height) - 20px);
+    border-radius: 12px;
+  }
+  .settings-panel .settings-header {
+    padding: 0 16px;
+  }
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-nav {
+    width: auto;
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-md);
+    padding: 10px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--settings-border, #2b3036);
+  }
+  .settings-search {
+    width: 150px;
+    flex: 0 0 150px;
+  }
+  .settings-nav-list {
+    display: flex;
+    gap: 3px;
+    overflow-x: auto;
+  }
+  .settings-nav-button {
+    width: auto;
+    min-width: max-content;
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: var(--font-md);
+  }
+  .settings-nav-empty {
+    display: none;
+  }
+  .settings-subnav {
+    display: none;
+  }
+  .settings-nav .settings-reset {
+    width: 32px;
+    flex: 0 0 32px;
+    justify-content: center;
+    padding: 0;
+    overflow: hidden;
+    font-size: 0;
+  }
+  .settings-main .settings-scroll {
+    padding: 16px 18px 24px;
+  }
+}

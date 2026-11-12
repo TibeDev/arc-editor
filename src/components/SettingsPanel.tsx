@@ -1,7 +1,7 @@
 import { ChevronRight, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "./settings";
-import type { PluginConfigurationContribution, PluginConfigurationProperty } from "./pluginRuntime";
+import { DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "../lib/settings";
+import type { PluginConfigurationContribution, PluginConfigurationProperty } from "../lib/pluginRuntime";
 import ThemeColorPicker from "./ThemeColorPicker";
 import Select from "./Select";
 import "./SettingsPanel.css";
