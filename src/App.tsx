@@ -2736,17 +2736,24 @@ function App() {
       if (!file || !workspace) return false;
       const currentContent = fileContents.current.get(path) ?? '';
       let content: string;
+      let formatFailed = false;
       try {
         const willSaveContent = await pluginRuntime.applyWillSave(
           path,
           currentContent,
         );
-        content = settings.prettierOnSave
-          ? ((await prettierFormat(file.name, willSaveContent)) ??
-            willSaveContent)
-          : willSaveContent;
+        content = willSaveContent;
+        if (settings.prettierOnSave) {
+          try {
+            content =
+              (await prettierFormat(file.name, willSaveContent)) ??
+              willSaveContent;
+          } catch {
+            formatFailed = true;
+          }
+        }
       } catch (error) {
-        setMessage(`Prettier failed; file not saved: ${String(error)}`);
+        setMessage(`Could not save ${file.name}: ${String(error)}`);
         return false;
       }
       try {
@@ -2771,10 +2778,16 @@ function App() {
               : entry,
           ),
         );
-        setMessage('Saved');
+        const savedMessage = formatFailed
+          ? "Prettier couldn't format"
+          : 'Saved';
+        setMessage(savedMessage);
         pluginRuntime.emitEvent('file:saved', { path, content });
         window.setTimeout(
-          () => setMessage((current) => (current === 'Saved' ? '' : current)),
+          () =>
+            setMessage((current) =>
+              current === savedMessage ? '' : current,
+            ),
           1400,
         );
         return true;
@@ -2834,8 +2847,8 @@ function App() {
             setMessage((current) => (current === 'Formatted' ? '' : current)),
           1400,
         );
-      } catch (error) {
-        setMessage(`Prettier failed: ${String(error)}`);
+      } catch {
+        setMessage("Prettier couldn't format");
       }
     },
     [openFiles, updateFile],
