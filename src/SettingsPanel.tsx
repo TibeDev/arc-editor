@@ -11,7 +11,7 @@ const settingsCategories = [
   { id: "typography", label: "Fonts & Typography", description: "Choose typefaces and tune reading density.", sections: [{ id: "interface", label: "App interface" }, { id: "editor", label: "Code editor" }, { id: "terminal", label: "Terminal" }] },
   { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes.", sections: [{ id: "interface", label: "Interface" }, { id: "editor-colors", label: "Editor colors" }, { id: "transparency", label: "Transparency and blur" }] },
   { id: "terminal", label: "Terminal", description: "Cursor and scrollback behavior.", sections: [{ id: "terminal", label: "Terminal" }] },
-  { id: "files", label: "Files", description: "Workspace browsing preferences.", sections: [{ id: "file-viewer", label: "File viewer" }] },
+  { id: "files", label: "Files", description: "Workspace browsing preferences.", sections: [{ id: "file-explorer", label: "File viewer" }] },
   { id: "plugins", label: "Plugins", description: "Settings contributed by installed plugins.", sections: [] },
 ] as const;
 
@@ -316,7 +316,7 @@ export default function SettingsPanel({
             {activeCategory === "typography" && <>
               <section className="settings-section" id="settings-section-typography-interface"><h3>App interface</h3>
                 <FontFamilySetting label="Interface font" value={settings.interfaceFontFamily} options={availableFonts.interface} fallback="sans-serif" onChange={(interfaceFontFamily) => onChange({ interfaceFontFamily })} />
-                <div className="setting-note">Custom font names must be installed on your system. Theme default follows Classic or Modern app styling.</div>
+                <div className="setting-note">Custom font names must be installed on your system. Theme default follows Classic app styling.</div>
               </section>
               <section className="settings-section" id="settings-section-typography-editor"><h3>Code editor</h3>
                 <FontFamilySetting label="Editor font" value={settings.fontFamily} options={availableFonts.editor} fallback="monospace" onChange={(fontFamily) => onChange({ fontFamily })} />
@@ -330,7 +330,7 @@ export default function SettingsPanel({
             </>}
             {activeCategory === "appearance" && <>
               <section className="settings-section" id="settings-section-appearance-interface"><h3>Interface</h3>
-                <label className="setting-field"><span>App theme</span><Select value={settings.appTheme} onChange={(next) => onChange({ appTheme: next as AppSettings["appTheme"] })} options={[{ value: "classic", label: "Classic" }, { value: "macos", label: "Modern" }]} /></label>
+                <label className="setting-field"><span>App theme</span><Select value="classic" onChange={(next) => onChange({ appTheme: next as AppSettings["appTheme"] })} options={[{ value: "classic", label: "Classic" }]} /></label>
                 <div className="setting-note">App style and editor color theme are independent.</div>
                 {toggle("titleBarEnabled", "Custom title bar", "Use Arc's title bar. Turn off to use the system window frame.")}
               </section>
@@ -372,7 +372,7 @@ export default function SettingsPanel({
               <label className="setting-field"><span>Selection color</span><ThemeColorPicker label="Selection color" value={terminalSelectionColor} onChange={(value) => onChange({ terminalSelectionColor: value })} /></label>
               {settings.terminalSelectionColor && <button className="settings-action" onClick={() => onChange({ terminalSelectionColor: "" })}>Use theme selection color</button>}
             </section>}
-            {activeCategory === "files" && <section className="settings-section" id="settings-section-files-file-viewer"><h3>File viewer</h3>
+            {activeCategory === "files" && <section className="settings-section" id="settings-section-files-file-explorer"><h3>File viewer</h3>
               {toggle("showHiddenFiles", "Show hidden files", "Include dotfiles and hidden folders in workspace tree.")}
               {toggle("restoreTerminals", "Reopen terminals", "Recreate previous terminal tabs when reopening a folder (commands are re-run).")}
             </section>}

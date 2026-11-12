@@ -1,1 +1,44 @@
-.github-incoming-banner{width:min(760px,calc(100% - 36px));min-height:44px;margin:12px auto 0;padding:7px 10px;display:flex;align-items:center;gap:9px;border:1px solid #3b644d;border-radius:5px;background:#1b2b21;color:#b6d9c0;font-size:10px}.github-incoming-banner>svg{flex:0 0 auto}.github-incoming-banner>span{flex:1;line-height:1.5}.github-incoming-banner strong{font-weight:700}.github-incoming-banner .github-secondary{min-height:26px;padding:0 9px;border-color:#45624f;background:#26392d;color:#d2ead9;font-size:10px}.github-incoming-banner .github-secondary:hover:not(:disabled){background:#304737}@media(max-width:600px){.github-incoming-banner{width:calc(100% - 24px);flex-wrap:wrap}.github-incoming-banner .github-secondary{margin-left:auto}}
+.github-incoming-banner {
+  width: min(760px, calc(100% - 36px));
+  min-height: 44px;
+  margin: 12px auto 0;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #3b644d;
+  border-radius: 5px;
+  background: #1b2b21;
+  color: #b6d9c0;
+  font-size: 10px;
+}
+.github-incoming-banner > svg {
+  flex: 0 0 auto;
+}
+.github-incoming-banner > span {
+  flex: 1;
+  line-height: 1.5;
+}
+.github-incoming-banner strong {
+  font-weight: 700;
+}
+.github-incoming-banner .action-button {
+  min-height: 26px;
+  padding: 0 9px;
+  border-color: #45624f;
+  background: #26392d;
+  color: #d2ead9;
+  font-size: 10px;
+}
+.github-incoming-banner .action-button:hover:not(:disabled) {
+  background: #304737;
+}
+@media (max-width: 600px) {
+  .github-incoming-banner {
+    width: calc(100% - 24px);
+    flex-wrap: wrap;
+  }
+  .github-incoming-banner .action-button {
+    margin-left: auto;
+  }
+}

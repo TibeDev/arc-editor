@@ -4,9 +4,8 @@ import { ArrowLeft, BookOpen, Download, FolderOpen, LayoutGrid, List, Plug, Puzz
 import { join } from "@tauri-apps/api/path";
 import pluginApiMarkdown from "../PLUGIN_API.md?raw";
 import type { InstalledPlugin, PluginPanelContribution } from "./pluginRuntime";
-import "./GithubPanel.css";
+import "./controls.css";
 import "./PluginPanel.css";
-import "./PluginPanel.folder.css";
 import "./PluginPanel.docs.css";
 
 const PluginDocs = lazy(async () => {
@@ -137,18 +136,18 @@ export default function PluginPanel({
     <header className="plugin-header">
       {showDocs ? <>
         <div className="plugin-heading"><BookOpen size={17} /><div><strong>Plugin API documentation</strong></div></div>
-        <div className="plugin-header-actions"><button className="github-secondary plugin-icon-button" title="Download API guide" aria-label="Download API guide" onClick={downloadApiGuide}><Download size={15} /></button><button className="github-secondary plugin-icon-button" title="Back to plugins" aria-label="Back to plugins" onClick={() => setShowDocs(false)}><ArrowLeft size={15} /></button></div>
+        <div className="plugin-header-actions"><button className="action-button action-button--secondary action-button--compact" title="Download API guide" aria-label="Download API guide" onClick={downloadApiGuide}><Download size={15} /></button><button className="action-button action-button--secondary action-button--compact" title="Back to plugins" aria-label="Back to plugins" onClick={() => setShowDocs(false)}><ArrowLeft size={15} /></button></div>
       </> : <>
         <div className="plugin-heading"><Puzzle size={19} /><div><strong>Plugins</strong></div></div>
         <div className="plugin-header-actions">
-          <button className="github-secondary plugin-icon-button" title="Plugin folder" aria-label="Open plugin folder" disabled={!pluginDirectory} onClick={() => void openPluginFolder()}><FolderOpen size={15} /></button>
-          <button className="github-secondary plugin-icon-button" title="API documentation" aria-label="Open API documentation" onClick={() => setShowDocs(true)}><BookOpen size={15} /></button>
-          <button className="github-primary plugin-icon-button" title="Install from folder" aria-label="Install plugin from folder" disabled={busy} onClick={() => void install()}><Download size={15} /></button>
+          <button className="action-button action-button--secondary action-button--compact" title="Plugin folder" aria-label="Open plugin folder" disabled={!pluginDirectory} onClick={() => void openPluginFolder()}><FolderOpen size={15} /></button>
+          <button className="action-button action-button--secondary action-button--compact" title="API documentation" aria-label="Open API documentation" onClick={() => setShowDocs(true)}><BookOpen size={15} /></button>
+          <button className="action-button action-button--primary action-button--compact" title="Install from folder" aria-label="Install plugin from folder" disabled={busy} onClick={() => void install()}><Download size={15} /></button>
         </div>
       </>}
     </header>
 
-    {error && <div className="github-feedback error">{error}</div>}
+    {error && <div className="plugin-feedback error">{error}</div>}
 
     {showDocs ? <main className="plugin-docs-content">
       <article className="plugin-docs-markdown"><Suspense fallback={null}><PluginDocs /></Suspense></article>
@@ -167,8 +166,8 @@ export default function PluginPanel({
         <div className="plugin-card-details"><strong>{plugin.name}<small>{plugin.builtin ? "Built-in" : plugin.version}</small></strong><span>{plugin.description || plugin.id}</span><code>{plugin.id}</code></div>
         <div className="plugin-card-actions">
           <button className={`plugin-toggle-button${plugin.enabled ? " enabled" : ""}`} title={plugin.enabled ? "Disable plugin" : "Enable plugin"} disabled={busy} onClick={() => onTogglePlugin(plugin.id, !plugin.enabled)}>{plugin.enabled ? "Enabled" : "Disabled"}</button>
-          <button className="github-icon-button" title={`Open ${plugin.name} files`} aria-label={`Open ${plugin.name} files`} disabled={!pluginDirectory || busy} onClick={() => void openPluginFiles(plugin.id)}><FolderOpen size={14} /></button>
-          <button className="github-icon-button plugin-uninstall" title={`Uninstall ${plugin.name}`} disabled={busy} onClick={() => void uninstall(plugin)}><Trash2 size={14} /></button>
+          <button className="icon-button" title={`Open ${plugin.name} files`} aria-label={`Open ${plugin.name} files`} disabled={!pluginDirectory || busy} onClick={() => void openPluginFiles(plugin.id)}><FolderOpen size={14} /></button>
+          <button className="icon-button plugin-uninstall" title={`Uninstall ${plugin.name}`} disabled={busy} onClick={() => void uninstall(plugin)}><Trash2 size={14} /></button>
         </div>
       </article>) : <div className="plugin-empty">No local plugins installed yet.</div>}
       </div>
@@ -180,7 +179,7 @@ export default function PluginPanel({
           {availableBuiltins.map((plugin) => <article className="plugin-card" key={plugin.id}>
             <div className="plugin-card-icon"><Plug size={16} /></div>
             <div className="plugin-card-details"><strong>{plugin.name}<small>Included</small></strong><span>{plugin.description}</span></div>
-            <div className="plugin-card-actions"><button className="github-secondary" disabled={busy} onClick={() => void installBuiltin(plugin.id)}>Install</button></div>
+            <div className="plugin-card-actions"><button className="action-button action-button--secondary" disabled={busy} onClick={() => void installBuiltin(plugin.id)}>Install</button></div>
           </article>)}
         </div>
       </>}
@@ -191,7 +190,7 @@ export default function PluginPanel({
           {panels.map((panel) => <article className="plugin-card" key={panel.id}>
             <div className="plugin-card-icon"><Puzzle size={16} /></div>
             <div className="plugin-card-details"><strong>{panel.title}</strong><span>Provided by {panel.pluginName}</span></div>
-            <div className="plugin-card-actions"><button className="github-secondary" onClick={() => onOpenPanel(panel.id)}>Open panel</button></div>
+            <div className="plugin-card-actions"><button className="action-button action-button--secondary" onClick={() => onOpenPanel(panel.id)}>Open panel</button></div>
           </article>)}
         </div>
       </>}

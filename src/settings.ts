@@ -27,7 +27,7 @@ export type AppSettings = {
   tabSize: number;
   zoomLevel: number;
   selectedTheme: string;
-  appTheme: "classic" | "macos";
+  appTheme: "classic";
   titleBarEnabled: boolean;
   editorGlassEnabled: boolean;
   nativeBackgroundBlurEnabled: boolean;
@@ -220,7 +220,7 @@ export function loadSettings(): AppSettings {
     if (!stored) return DEFAULT_SETTINGS;
     const saved = { ...stored };
     delete saved.editorGlassSaturation;
-    const settings = { ...DEFAULT_SETTINGS, ...saved };
+    const settings = { ...DEFAULT_SETTINGS, ...saved, appTheme: "classic" as const };
     // Previous default made the entire app background fully transparent.
     if (stored.version !== APP_SETTINGS_VERSION && stored.glassAppTransparency === 100) {
       settings.glassAppTransparency = DEFAULT_SETTINGS.glassAppTransparency;
@@ -266,42 +266,33 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
   const overlayAlpha = settings.editorGlassEnabled
     ? 0.5 * (1 - transparency(settings.glassFloatingTransparency) / 100)
     : 0.55;
-  const macOverlayAlpha = settings.editorGlassEnabled
-    ? 0.18 * (1 - transparency(settings.glassFloatingTransparency) / 100)
-    : 0.18;
   return `
-    .app-shell { --settings-muted:${c.muted}; --settings-text:${c.text}; --settings-raised:${c.raised}; --settings-border:${c.border}; --settings-accent:${c.function}; --settings-track:${c.hover}; --editor-glass-blur:${GLASS_BLUR}px; --glass-app-transparency:${transparency(settings.glassAppTransparency)}%; --glass-sidebar-transparency:${transparency(settings.glassSidebarTransparency)}%; --glass-tabs-transparency:${transparency(settings.glassTabsTransparency)}%; --glass-terminal-transparency:${transparency(settings.glassTerminalTransparency)}%; --glass-floating-transparency:${transparency(settings.glassFloatingTransparency)}%; --glass-settings-transparency:${transparency(settings.glassSettingsTransparency)}%; --glass-controls-transparency:${transparency(settings.glassControlsTransparency)}%; --glass-overlay-alpha:${overlayAlpha}; --glass-macos-overlay-alpha:${macOverlayAlpha}; background:${appBackground}; color:${c.text}; }
-    .settings-backdrop,.modal-backdrop { background:rgba(0,0,0,${overlayAlpha}); }
-    .file-viewer { background:${sidebarBackground}; border-color:${c.border}; }
+    .app-shell { --settings-muted:${c.muted}; --settings-text:${c.text}; --settings-raised:${c.raised}; --settings-border:${c.border}; --settings-accent:${c.function}; --settings-track:${c.hover}; --editor-glass-blur:${GLASS_BLUR}px; --glass-app-transparency:${transparency(settings.glassAppTransparency)}%; --glass-sidebar-transparency:${transparency(settings.glassSidebarTransparency)}%; --glass-tabs-transparency:${transparency(settings.glassTabsTransparency)}%; --glass-terminal-transparency:${transparency(settings.glassTerminalTransparency)}%; --glass-floating-transparency:${transparency(settings.glassFloatingTransparency)}%; --glass-settings-transparency:${transparency(settings.glassSettingsTransparency)}%; --glass-controls-transparency:${transparency(settings.glassControlsTransparency)}%; --glass-overlay-alpha:${overlayAlpha}; background:${appBackground}; color:${c.text}; }
+    .settings-backdrop { background:rgba(0,0,0,${overlayAlpha}); }
+    .file-explorer { background:${sidebarBackground}; border-color:${c.border}; }
     .terminal-stack,.terminal-host,.terminal-view { background:${terminalBackground}; }
-    .viewer-heading,.breadcrumbs,.tab-strip,.editor-tab,.tree-create-row,.search-row,.confirm-dialog,.context-menu,.split-divider { border-color:${c.border}; }
-    .viewer-heading,.breadcrumbs,.empty-hint,.tree-row,.workspace-header,.welcome-shortcuts>div { color:${c.secondaryText}; }
-    .workspace-open,.search-row,.tab-close,.save-button,.show-viewer { color:${c.muted}; }
-    .workspace-row,.tree-row:hover { background:${glass(c.hover, settings.glassSidebarTransparency)}; }
-    .tool-button:hover,.tool-button.selected,.editor-tab:hover,.save-button:hover,.welcome-open:hover { background:${glass(c.hover, settings.glassControlsTransparency)}; }
+    .explorer-heading,.tab-strip,.editor-tab,.tree-create-row,.search-row,.context-menu,.split-divider { border-color:${c.border}; }
+    .explorer-heading,.empty-hint,.tree-row,.welcome-shortcuts>div { color:${c.secondaryText}; }
+    .search-row,.tab-close,.show-file-explorer { color:${c.muted}; }
+    .tree-row:hover { background:${glass(c.hover, settings.glassSidebarTransparency)}; }
+    .tool-button:hover,.tool-button.selected,.editor-tab:hover,.welcome-open:hover { background:${glass(c.hover, settings.glassControlsTransparency)}; }
     .context-menu button:hover { background:${glass(c.hover, settings.glassFloatingTransparency)}; }
     .editor-tab .tab-close:hover { background:${glass(c.hover, settings.glassTabsTransparency)}; }
     .split-divider:hover,.split-divider:active { background:${glass(c.selected, settings.glassTabsTransparency)}; }
     .tree-row.selected { background:${glass(c.selected, settings.glassSidebarTransparency)}; color:${c.text}; }
     .tool-button.selected { background:${glass(c.selected, settings.glassControlsTransparency)}; color:${c.text}; }
     .editor-pane { background:${editorBackground}; color:${c.text}; }
-    .editor-tab.active { background:${tabsBackground}; color:${c.text}; }
     .welcome-screen { background:${appBackground}; color:${c.text}; }
     .tab-strip,.editor-tab { background:${tabsBackground}; }
-    .context-menu,.confirm-dialog { background:${floatingBackground}; }
-    .settings-panel,.settings-header { background:${settingsBackground}; }
+    .context-menu { background:${floatingBackground}; }
+    .settings-panel,.settings-header { background:${settingsBackground}; border-color:${c.border}; }
     .split-divider { background:${tabsBackground}; }
     .editor-tab { color:${c.secondaryText}; }
-    .editor-tab.active,.tab-name,.welcome-name,.confirm-dialog,.context-menu button,.settings-panel { color:${c.text}; }
-    .settings-section,.settings-header,.tree-create-row,.search-row,.workspace-row { border-color:${c.border}; }
+    .editor-tab.active,.tab-name,.welcome-name,.context-menu button,.settings-panel { color:${c.text}; }
+    .settings-section,.settings-header,.tree-create-row,.search-row { border-color:${c.border}; }
     .settings-section h3,.setting-toggle strong,.setting-field>span { color:${c.secondaryText}; }
-    .settings-field select,.setting-field select,.theme-maker-select-label select,.settings-action,.settings-reset,.welcome-open,.confirm-actions button { background-color:${controlsBackground}; border-color:${c.border}; color:${c.text}; }
-    .setting-field select option,.theme-maker-select-label select option { background:${c.raised}; color:${c.text}; }
-    .setting-field input[type=color] { background:${controlsBackground}; border-color:${c.border}; }
-    .setting-toggle input,.setting-field input[type=range],.theme-picker-channel input { accent-color:${c.function}; }
-    .setting-toggle input { background:${glass(c.hover, settings.glassControlsTransparency)}; border-color:${c.border}; }
-    .setting-toggle input:checked { background:${glass(c.function, settings.glassControlsTransparency)}; border-color:${c.function}; }
-    .setting-field input[type=range] { background:${glass(c.border, settings.glassControlsTransparency)}; }
+    .settings-action,.settings-reset,.welcome-open { background-color:${controlsBackground}; border-color:${c.border}; color:${c.text}; }
+    .setting-field input[type=range] { accent-color:${c.function}; background:${glass(c.border, settings.glassControlsTransparency)}; }
     .setting-field input[type=range]::-webkit-slider-thumb { background:${c.function}; border-color:${c.text}; }
     .setting-field input[type=range]::-moz-range-thumb { background:${c.function}; border-color:${c.text}; }
     .theme-search,.theme-choice,.theme-choice button,.theme-list-empty { border-color:${c.border}; color:${c.secondaryText}; }
@@ -310,23 +301,21 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
     .theme-choice.active,.theme-choice.active>button { background:${glass(c.selected, settings.glassControlsTransparency)}; color:${c.text}; }
     .theme-choice:hover,.theme-choice button:hover,.theme-remove:hover { background:${glass(c.hover, settings.glassControlsTransparency)}; color:${c.text}; }
     .theme-remove { color:${c.muted}; }
-    .context-menu,.confirm-dialog { border:1px solid ${c.border}; }
+    .context-menu { border:1px solid ${c.border}; }
     .context-menu kbd,.context-menu button kbd,.setting-note,.setting-toggle small { color:${c.muted}; }
     .menu-divider { background:${c.border}; }
-    .workspace-header svg,.tool-button,.save-button,.tab-close { color:${c.muted}; }
+    .tool-button,.tab-close { color:${c.muted}; }
     .tree-row.selected,.editor-tab.active { color:${c.text}; }
-    .editor-tab,.tab-strip { background:${tabsBackground}; }
     .welcome-open { border:1px solid ${c.border}; }
     .welcome-shortcuts kbd { background:${controlsBackground}; border-color:${c.border}; color:${c.secondaryText}; }
     .rename-row input,.tree-create-row input,.search-row input { color:${c.text}; }
     .rename-row input { background:${controlsBackground}; border-color:${c.border}; }
     .tree-create-row { background:${glass(c.raised, settings.glassSidebarTransparency)}; border-color:${c.border}; }
     .editor-pane.drop-target { outline-color:${c.secondaryText}; background:${editorBackground}; }
-    .breadcrumbs { border-color:${c.border}; }
     .theme-choice-name small { color:${c.muted}; }
     .settings-launch { color:${c.muted}; }
     .settings-launch:hover { color:${c.text}; }
-    .editor-root,.editor-layout,.editor-empty { background:${appBackground}; color:${c.secondaryText}; }
+    .editor-root,.editor-empty { background:${appBackground}; color:${c.secondaryText}; }
     .cm-editor { background:${editorBackground}!important; color:${c.text}!important; }
     .cm-scroller { font-family:${settings.fontFamily}; font-size:${settings.fontSize}px; line-height:${settings.lineHeight}; tab-size:${settings.tabSize}; }
     .cm-gutters { color:${c.lineNumber}!important; }
@@ -355,8 +344,7 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
     .cm-tooltip-autocomplete .cm-completionDetail { color:${c.muted}!important; }
     .cm-tooltip-autocomplete ul { font-family:${settings.fontFamily}; }
     .xterm,.xterm-viewport,.xterm-screen { background-color:${editorBackground}!important; }
-    .settings-header,.settings-panel { border-color:${c.border}; }
-    .settings-header span,.theme-maker-title span { color:${c.muted}; }
-    .setting-field select,.theme-maker-select-label select,.settings-action,.settings-reset,.welcome-open,.confirm-actions button { border-color:${c.border}; }
+    .settings-header span { color:${c.muted}; }
+    .settings-action,.settings-reset,.welcome-open { border-color:${c.border}; }
   `;
 }

@@ -1,7 +1,0 @@
-.github-header-actions{display:flex;align-items:center;gap:4px}
-.github-heading{min-width:0;overflow:hidden}
-.github-heading strong{overflow:hidden;color:var(--text);font-size:12px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
-.github-unavailable{min-height:220px;flex:1;display:grid;align-content:center;justify-items:center;gap:10px;color:var(--subtle);font-size:12px}
-.github-panel{background:var(--panel,#151719)}
-.github-feedback.success{width:min(760px,calc(100% - 36px));margin:12px auto 0}
-@media(max-width:600px){.github-feedback.success{width:calc(100% - 24px)}}

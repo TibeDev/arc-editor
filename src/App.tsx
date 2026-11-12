@@ -108,7 +108,7 @@ import {
 import { appDataDir, join } from '@tauri-apps/api/path';
 import TitleBar from './TitleBar';
 import './pluginExtensions.css';
-import './panel-layout.css';
+import './layout-overrides.css';
 import { forgetTerminalOutput } from './terminalOutput';
 import {
   usePluginRuntime,
@@ -3410,7 +3410,7 @@ function App() {
       const inViewer =
         !settingsOpen &&
         !themeMakerOpen &&
-        Boolean(target.closest('.file-viewer')) &&
+        Boolean(target.closest('.file-explorer')) &&
         !target.matches("input, textarea, [contenteditable='true']");
       if (inViewer && !renamingPath && !newItemKind) {
         // Escape deselects (VS Code behavior): selection falls back to root.
@@ -3487,7 +3487,7 @@ function App() {
       !settingsOpen &&
       !themeMakerOpen &&
       Boolean(
-        target.closest('.file-viewer, .context-menu') ||
+        target.closest('.file-explorer, .context-menu') ||
         contextMenu ||
         (target === document.body &&
           (selectedPath ||
@@ -4246,7 +4246,7 @@ function App() {
       },
     },
     {
-      id: 'toggle-file-viewer',
+      id: 'toggle-file-explorer',
       title: 'Toggle File Viewer',
       run: () => setViewerOpen((visible) => !visible),
     },
@@ -4423,7 +4423,7 @@ function App() {
 
   return (
     <main
-      className={`app-shell ${settings.appTheme === 'macos' ? 'app-theme-macos' : ''} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'}`}
+      className={`app-shell ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'}`}
       style={settings.interfaceFontFamily ? { fontFamily: settings.interfaceFontFamily } : undefined}
       onClick={() => {
         if (contextMenu) setContextMenu(null);
@@ -4551,7 +4551,7 @@ function App() {
         <>
           {workspace && viewerOpen && (
             <aside
-              className="file-viewer"
+              className="file-explorer"
               style={{
                 width: settings.sidebarWidth,
                 flexBasis: settings.sidebarWidth,
@@ -4566,8 +4566,8 @@ function App() {
                 });
               }}
             >
-              <div className="viewer-heading">
-                <div className="viewer-actions">
+              <div className="explorer-heading">
+                <div className="explorer-actions">
                   <button
                     className="tool-button"
                     title="Settings (Ctrl+,)"
@@ -4597,7 +4597,7 @@ function App() {
                     <TerminalIcon size={14} />
                   </button>
                 </div>
-                <div className="viewer-actions">
+                <div className="explorer-actions">
                   <button
                     className="tool-button"
                     title="Search files"
@@ -4736,7 +4736,7 @@ function App() {
                   <div className="empty-hint">No visible files.</div>
                 )}
               </div>
-              <div className="file-viewer-footer">
+              <div className="file-explorer-footer">
                 {pluginRuntime.actions.map((action) => (
                   <button
                     key={action.id}
@@ -4758,7 +4758,7 @@ function App() {
                   </button>
                 ))}
                 <span
-                  className="file-viewer-project"
+                  className="file-explorer-project"
                   title={workspace.split(/[\\/]/).filter(Boolean).pop()}
                 >
                   {workspace.split(/[\\/]/).filter(Boolean).pop()}
@@ -4768,7 +4768,7 @@ function App() {
           )}
           {workspace && (
             <div
-              className={`file-viewer-resizer ${viewerOpen ? '' : 'collapsed'}`}
+              className={`file-explorer-resizer ${viewerOpen ? '' : 'collapsed'}`}
               role="separator"
               tabIndex={0}
               aria-label="Resize file viewer"
@@ -4796,7 +4796,7 @@ function App() {
           )}
           {workspace && !viewerOpen && (
             <button
-              className="show-viewer"
+              className="show-file-explorer"
               title="Show file viewer (Ctrl+B)"
               onClick={() => setViewerOpen(true)}
             >
@@ -5016,11 +5016,11 @@ function App() {
       )}
       {commandPaletteOpen && (
         <div
-          className="plugin-command-backdrop"
+          className="command-palette-backdrop"
           onClick={() => setCommandPaletteOpen(false)}
         >
           <section
-            className="plugin-command-dialog"
+            className="command-palette-dialog"
             role="dialog"
             aria-modal="true"
             aria-label="Command palette"

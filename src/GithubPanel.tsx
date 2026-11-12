@@ -6,12 +6,13 @@ import {
   ArrowDownToLine, ArrowUpFromLine, Check, ExternalLink, Frown, GitBranch, Github,
   LoaderCircle, Plus, RefreshCw, Upload,
 } from "lucide-react";
+import "./controls.css";
 import "./GithubPanel.css";
 import "./GithubPanel.controls.css";
 import "./GithubPanel.updates.css";
 import "./GithubPanel.auth.css";
 import "./GithubPanel.setup.css";
-import "./GithubPanel.layout.css";
+
 import Select from "./Select";
 import { forgetTerminalOutput, subscribeTerminalOutput, terminalOutputReady } from "./terminalOutput";
 
@@ -81,7 +82,7 @@ function SetupRequirement({ name, command, url, onOpen }: {
   const [copied, setCopied] = useState(false);
   return <div className="github-setup-requirement">
     <div className="github-setup-requirement-heading"><strong>{name}</strong><span>Required</span></div>
-    {command && <div className="github-install-command"><code>{command}</code><button className="github-secondary" onClick={() => void writeText(command).then(() => setCopied(true)).catch(() => setCopied(false))}>{copied ? "Copied" : "Copy"}</button></div>}
+    {command && <div className="github-install-command"><code>{command}</code><button className="action-button action-button--secondary" onClick={() => void writeText(command).then(() => setCopied(true)).catch(() => setCopied(false))}>{copied ? "Copied" : "Copy"}</button></div>}
     <button className="github-text-button" onClick={() => onOpen(url)}>Official installation instructions <ExternalLink size={12} /></button>
   </div>;
 }
@@ -348,12 +349,12 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
     ?.replace(/^https?:\/\/github\.com\//i, "")
     .replace(/\.git$/i, "") ?? repoName;
 
-  return <div className="github-panel" style={{ backgroundColor: "var(--bg, #111315)" }}>
+  return <div className="github-panel">
     <header className="github-header">
       <div className="github-heading"><GitBranch size={17} /><strong title={displayedRepoName}>{displayedRepoName}</strong></div>
       <div className="github-header-actions">
-        {status?.repoUrl && <button className="github-icon-button" title="Open repository in browser" aria-label="Open repository in browser" onClick={() => void openLink(status.repoUrl!)}><ExternalLink size={15} /></button>}
-        <button className="github-icon-button" title="Fetch and refresh repository" aria-label="Fetch and refresh repository" disabled={busy} onClick={() => void checkForUpdates()}>{busy ? <LoaderCircle size={15} className="github-spin" /> : <RefreshCw size={15} />}</button>
+        {status?.repoUrl && <button className="icon-button" title="Open repository in browser" aria-label="Open repository in browser" onClick={() => void openLink(status.repoUrl!)}><ExternalLink size={15} /></button>}
+        <button className="icon-button" title="Fetch and refresh repository" aria-label="Fetch and refresh repository" disabled={busy} onClick={() => void checkForUpdates()}>{busy ? <LoaderCircle size={15} className="github-spin" /> : <RefreshCw size={15} />}</button>
       </div>
     </header>
 
@@ -377,14 +378,14 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
       <h2>Set up GitHub with Arc</h2>
       {authSessionId ? <div className="github-auth-flow">
         <p>{authDeviceCode ? "Enter this one-time code on GitHub:" : "Starting secure GitHub sign-in…"}</p>
-        {authDeviceCode && <div className="github-device-code"><code>{authDeviceCode}</code><button className="github-secondary" onClick={() => void writeText(authDeviceCode).then(() => setNotice("Device code copied." )).catch((cause) => setAuthError(String(cause)))}>Copy code</button></div>}
+        {authDeviceCode && <div className="github-device-code"><code>{authDeviceCode}</code><button className="action-button action-button--secondary" onClick={() => void writeText(authDeviceCode).then(() => setNotice("Device code copied." )).catch((cause) => setAuthError(String(cause)))}>Copy code</button></div>}
         <span className="github-help">Browser opens automatically. Arc waits here until you approve sign-in.</span>
-        {authDeviceCode && <button className="github-secondary" onClick={() => void openLink("https://github.com/login/device")}><ExternalLink size={13} /> Open GitHub device page</button>}
+        {authDeviceCode && <button className="action-button action-button--secondary" onClick={() => void openLink("https://github.com/login/device")}><ExternalLink size={13} /> Open GitHub device page</button>}
         {authError && <span className="github-auth-error">{authError}</span>}
         <button className="github-text-button" onClick={() => void cancelAuth()}>Cancel sign-in</button>
       </div> : <>
         <p>Sign in once. Arc completes GitHub’s device authorization inside this panel.</p>
-        <button className="github-primary" disabled={busy} onClick={() => void beginAuth()}>{busy ? <LoaderCircle size={14} className="github-spin" /> : <Github size={15} />} Sign in to GitHub</button>
+        <button className="action-button action-button--primary" disabled={busy} onClick={() => void beginAuth()}>{busy ? <LoaderCircle size={14} className="github-spin" /> : <Github size={15} />} Sign in to GitHub</button>
         {authError && <span className="github-auth-error">{authError}</span>}
       </>}
     </section> : !status.isGithubRepo ? <>
@@ -404,7 +405,7 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
           : "Create a GitHub repository from this folder. Arc initializes Git when needed."}</p>
         <label className="github-field"><span>Repository name</span><input value={repoName} onChange={(event) => setRepoName(event.target.value)} placeholder="my-project" /></label>
         <label className="github-field"><span>Visibility</span><Select value={visibility} onChange={setVisibility} options={[{ value: "private", label: "Private" }, { value: "public", label: "Public" }]} /></label>
-        <button className="github-primary" disabled={busy || !repoName.trim()} onClick={() => void perform(
+        <button className="action-button action-button--primary" disabled={busy || !repoName.trim()} onClick={() => void perform(
           () => invoke("github_create_repo", { root: workspace, name: repoName.trim(), visibility }),
           "GitHub repository created.",
         )}>{busy ? <LoaderCircle size={14} className="github-spin" /> : <Plus size={14} />} Create repository</button>
@@ -413,7 +414,7 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
       {status.behind > 0 && <div className="github-incoming-banner">
         <ArrowDownToLine size={15} />
         <span><strong>{status.behind} new commit{status.behind === 1 ? "" : "s"}</strong> available to pull from GitHub.</span>
-        <button className="github-secondary" disabled={busy} onClick={() => void perform(() => invoke("github_pull", { root: workspace }), "Pulled changes.")}>Pull now</button>
+        <button className="action-button action-button--secondary" disabled={busy} onClick={() => void perform(() => invoke("github_pull", { root: workspace }), "Pulled changes.")}>Pull now</button>
       </div>}
       {status.ahead > 0 && <div className="github-feedback"><ArrowUpFromLine size={14} /> <strong>{status.ahead} local commit{status.ahead === 1 ? "" : "s"}</strong> ready to push.</div>}
       {status.remote && status.ahead === 0 && status.behind === 0 && <div className="github-feedback success">Branch is up to date with GitHub.</div>}
@@ -430,11 +431,11 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
       <section className="github-section github-branch-row">
         <label className="github-field"><span>Current branch</span><Select value={status.branch ?? ""} disabled={busy || !status.branches.length} onChange={(next) => void perform(() => invoke("github_switch_branch", { root: workspace, branch: next }))} options={[...(!status.branch ? [{ value: "", label: "No branch" }] : []), ...status.branches.map((branch) => ({ value: branch, label: branch }))]} /></label>
         <div className="github-create-branch"><input value={branchName} onChange={(event) => setBranchName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void perform(async () => { await invoke("github_create_branch", { root: workspace, branch: branchName }); setBranchName(""); }); }} placeholder="New branch" aria-label="New branch name" />
-          <button className="github-icon-button" title="Create and switch branch" disabled={busy || !branchName.trim()} onClick={() => void perform(async () => { await invoke("github_create_branch", { root: workspace, branch: branchName }); setBranchName(""); })}><Plus size={15} /></button></div>
+          <button className="icon-button" title="Create and switch branch" disabled={busy || !branchName.trim()} onClick={() => void perform(async () => { await invoke("github_create_branch", { root: workspace, branch: branchName }); setBranchName(""); })}><Plus size={15} /></button></div>
       </section>
       <section className="github-sync-row">
-        <button className="github-secondary" disabled={busy || !status.remote} onClick={() => void perform(() => invoke("github_pull", { root: workspace }))}><ArrowDownToLine size={14} /> Pull</button>
-        <button className="github-primary" disabled={busy || !status.remote || !status.branch} onClick={() => void perform(() => invoke("github_push", { root: workspace }))}><ArrowUpFromLine size={14} /> Push</button>
+        <button className="action-button action-button--secondary" disabled={busy || !status.remote} onClick={() => void perform(() => invoke("github_pull", { root: workspace }))}><ArrowDownToLine size={14} /> Pull</button>
+        <button className="action-button action-button--primary" disabled={busy || !status.remote || !status.branch} onClick={() => void perform(() => invoke("github_push", { root: workspace }))}><ArrowUpFromLine size={14} /> Push</button>
       </section>
 
       <section className="github-section github-changes">
@@ -452,7 +453,7 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
       <section className="github-commit-section">
         <input value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Summary (required)" aria-label="Commit summary" />
         <textarea value={commitDescription} onChange={(event) => setCommitDescription(event.target.value)} placeholder="Description (optional)" aria-label="Commit description" rows={3} />
-        <button className="github-primary github-commit-button" disabled={busy || !commitMessage.trim() || !status.changes.some((change) => change.staged) || !status.userName || !status.userEmail} onClick={() => void perform(async () => {
+        <button className="action-button action-button--primary github-commit-button" disabled={busy || !commitMessage.trim() || !status.changes.some((change) => change.staged) || !status.userName || !status.userEmail} onClick={() => void perform(async () => {
           await invoke("github_commit", { root: workspace, message: commitMessage, description: commitDescription });
           setCommitMessage("");
           setCommitDescription("");
@@ -477,6 +478,6 @@ function IdentitySetup({ name, email, disabled, onName, onEmail, onSave }: {
     <span>Git uses this name and email on your commits. Arc saves them to your global Git config.</span>
     <input value={name} onChange={(event) => onName(event.target.value)} placeholder="Your name" aria-label="Git name" />
     <input value={email} onChange={(event) => onEmail(event.target.value)} placeholder="you@example.com" aria-label="Git email" />
-    <button className="github-secondary" disabled={disabled || !name.trim() || !email.trim()} onClick={onSave}>Save identity</button>
+    <button className="action-button action-button--secondary" disabled={disabled || !name.trim() || !email.trim()} onClick={onSave}>Save identity</button>
   </section>;
 }

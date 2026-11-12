@@ -4,8 +4,7 @@ import TitleBar from "./TitleBar";
 import { GLASS_BLUR, themeColorWithOpacity, THEME_COLOR_GROUPS, type AppSettings, type ThemeColors, type ThemeDefinition } from "./settings";
 import ThemeColorPicker from "./ThemeColorPicker";
 import Select from "./Select";
-import "./GithubPanel.css";
-import "./PluginPanel.css";
+import "./controls.css";
 import "./SettingsPanel.css";
 
 const sample = [
@@ -57,7 +56,7 @@ export default function ThemeMaker({
   };
 
   const chrome = initialTheme;
-  return <main className={`theme-maker-page ${settings.appTheme === "macos" ? "app-theme-macos" : ""} ${settings.editorGlassEnabled ? "editor-glass-enabled" : ""} ${colorPickerOpen ? "color-picker-open" : ""} ${settings.titleBarEnabled ? "" : "titlebar-off"}`} style={{
+  return <main className={`theme-maker-page ${settings.editorGlassEnabled ? "editor-glass-enabled" : ""} ${colorPickerOpen ? "color-picker-open" : ""} ${settings.titleBarEnabled ? "" : "titlebar-off"}`} style={{
     background: glassFill(chrome.colors.background, settings.glassAppTransparency),
     color: chrome.colors.text,
     fontFamily: settings.interfaceFontFamily || undefined,
@@ -94,9 +93,9 @@ export default function ThemeMaker({
             setError("");
           }
         }} /></label>
-        <button className="github-secondary plugin-icon-button" title="Open theme folder" aria-label="Open theme folder" onClick={() => onOpenFolder(theme)}><FolderOpen size={15} /></button>
-        <button className="github-secondary plugin-icon-button" title="Save theme" aria-label="Save theme" onClick={() => { setError(""); onSave(theme); }}><Save size={15} /></button>
-        <button className="github-primary plugin-icon-button" title="Create new theme" aria-label="Create new theme" onClick={createTheme}><Plus size={15} /></button>
+        <button className="action-button action-button--secondary action-button--compact" title="Open theme folder" aria-label="Open theme folder" onClick={() => onOpenFolder(theme)}><FolderOpen size={15} /></button>
+        <button className="action-button action-button--secondary action-button--compact" title="Save theme" aria-label="Save theme" onClick={() => { setError(""); onSave(theme); }}><Save size={15} /></button>
+        <button className="action-button action-button--primary action-button--compact" title="Create new theme" aria-label="Create new theme" onClick={createTheme}><Plus size={15} /></button>
       </div>
     </header>
     {(error || errorMessage) && <div className="theme-maker-error" role="alert">{error || errorMessage}</div>}

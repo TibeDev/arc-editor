@@ -1,1 +1,68 @@
-.github-setup-guide{align-items:stretch;text-align:left}.github-setup-guide>.github-setup-icon,.github-setup-guide>h2,.github-setup-guide>p{text-align:center}.github-setup-guide>.github-setup-icon{align-self:center}.github-setup-guide>.github-field{width:100%}.github-setup-requirement{width:100%;padding:12px;border:1px solid var(--line);border-radius:5px;background:#111315}.github-setup-requirement-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}.github-setup-requirement-heading strong{font-size:11px}.github-setup-requirement-heading span{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}.github-install-command{display:flex;align-items:center;gap:8px}.github-install-command code{min-width:0;flex:1;overflow-wrap:anywhere;color:var(--text);font-family:inherit;font-size:10px;line-height:1.5}.github-install-command .github-secondary{flex:0 0 auto;min-height:26px;padding:0 9px}.github-setup-requirement>.github-text-button{margin-top:8px;margin-left:0;padding:3px 0;display:inline-flex;align-items:center;gap:5px;text-align:left}.github-setup-guide>.github-help{align-self:center}
+.github-setup-guide {
+  align-items: stretch;
+  text-align: left;
+}
+.github-setup-guide > .github-setup-icon,
+.github-setup-guide > h2,
+.github-setup-guide > p {
+  text-align: center;
+}
+.github-setup-guide > .github-setup-icon {
+  align-self: center;
+}
+.github-setup-guide > .github-field {
+  width: 100%;
+}
+.github-setup-requirement {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #111315;
+}
+.github-setup-requirement-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+.github-setup-requirement-heading strong {
+  font-size: 11px;
+}
+.github-setup-requirement-heading span {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.github-install-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.github-install-command code {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.github-install-command .action-button {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 9px;
+}
+.github-setup-requirement > .github-text-button {
+  margin-top: 8px;
+  margin-left: 0;
+  padding: 3px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  text-align: left;
+}
+.github-setup-guide > .github-help {
+  align-self: center;
+}

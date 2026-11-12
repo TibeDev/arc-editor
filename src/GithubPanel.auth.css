@@ -1,1 +1,47 @@
-.github-auth-flow{width:100%;display:grid;justify-items:center;gap:12px}.github-auth-flow>p{margin:0;color:var(--subtle);line-height:1.6}.github-device-code{width:100%;display:flex;align-items:center;justify-content:center;gap:8px}.github-device-code code{flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:4px;background:#111315;color:var(--text);font-family:inherit;font-size:18px;font-weight:700;letter-spacing:.15em}.github-auth-flow .github-help{max-width:360px}.github-auth-flow .github-text-button{margin:0;padding:5px;color:var(--muted)}.github-auth-flow .github-text-button:hover{color:var(--text)}.github-auth-error{color:#f0aaaa;font-size:10px;line-height:1.5;overflow-wrap:anywhere}
+.github-auth-flow {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+}
+.github-auth-flow > p {
+  margin: 0;
+  color: var(--subtle);
+  line-height: 1.6;
+}
+.github-device-code {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.github-device-code code {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #111315;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+}
+.github-auth-flow .github-help {
+  max-width: 360px;
+}
+.github-auth-flow .github-text-button {
+  margin: 0;
+  padding: 5px;
+  color: var(--muted);
+}
+.github-auth-flow .github-text-button:hover {
+  color: var(--text);
+}
+.github-auth-error {
+  color: #f0aaaa;
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}

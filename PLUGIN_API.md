@@ -96,7 +96,7 @@ await api.files.open("src/app.js");
 await api.files.refresh();
 ```
 
-`files.list(path)` returns `{ path, name, kind }` objects for one directory. `files.create` creates missing parent folders. `files.write` updates an open editor and saves it when that file is open. `files.delete` updates editor and file-viewer state.
+`files.list(path)` returns `{ path, name, kind }` objects for one directory. `files.create` creates missing parent folders. `files.write` updates an open editor and saves it when that file is open. `files.delete` updates editor and file-explorer state.
 
 ## Editor control
 
