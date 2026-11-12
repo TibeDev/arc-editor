@@ -3,6 +3,10 @@ import { ArrowLeft, FolderOpen, Plus, Save } from "lucide-react";
 import TitleBar from "./TitleBar";
 import { GLASS_BLUR, themeColorWithOpacity, THEME_COLOR_GROUPS, type AppSettings, type ThemeColors, type ThemeDefinition } from "./settings";
 import ThemeColorPicker from "./ThemeColorPicker";
+import Select from "./Select";
+import "./GithubPanel.css";
+import "./PluginPanel.css";
+import "./SettingsPanel.css";
 
 const sample = [
   { number: "1", parts: [{ text: "const", color: "keyword" }, { text: " greeting", color: "text" }, { text: " = ", color: "operator" }, { text: "'Hello, Arc!'", color: "string" }, { text: ";", color: "operator" }] },
@@ -52,53 +56,58 @@ export default function ThemeMaker({
     onCreate(theme, name);
   };
 
+  const chrome = initialTheme;
   return <main className={`theme-maker-page ${settings.appTheme === "macos" ? "app-theme-macos" : ""} ${settings.editorGlassEnabled ? "editor-glass-enabled" : ""} ${colorPickerOpen ? "color-picker-open" : ""} ${settings.titleBarEnabled ? "" : "titlebar-off"}`} style={{
-    background: glassFill(theme.colors.background, settings.glassAppTransparency),
-    color: theme.colors.text,
+    background: glassFill(chrome.colors.background, settings.glassAppTransparency),
+    color: chrome.colors.text,
     fontFamily: settings.interfaceFontFamily || undefined,
     "--editor-glass-blur": `${GLASS_BLUR}px`,
     "--glass-app-transparency": `${settings.editorGlassEnabled ? settings.glassAppTransparency : 0}%`,
     "--glass-sidebar-transparency": `${settings.editorGlassEnabled ? settings.glassSidebarTransparency : 0}%`,
     "--glass-controls-transparency": `${settings.editorGlassEnabled ? settings.glassControlsTransparency : 0}%`,
     "--glass-floating-transparency": `${settings.editorGlassEnabled ? settings.glassFloatingTransparency : 0}%`,
-    "--glass-controls-surface": glassFill(theme.colors.raised, settings.glassControlsTransparency),
-    "--glass-floating-surface": glassFill(theme.colors.raised, settings.glassFloatingTransparency),
-    "--theme-raised": theme.colors.raised,
-    "--theme-raised-opaque": theme.colors.raised.slice(0, 7),
-    "--theme-border": theme.colors.border,
-    "--theme-text": theme.colors.text,
-    "--theme-secondary": theme.colors.secondaryText,
-    "--theme-muted": theme.colors.muted,
-    "--theme-hover": theme.colors.hover,
-    "--theme-selected": theme.colors.selected,
+    "--glass-controls-surface": glassFill(chrome.colors.raised, settings.glassControlsTransparency),
+    "--glass-floating-surface": glassFill(chrome.colors.raised, settings.glassFloatingTransparency),
+    "--theme-raised": chrome.colors.raised,
+    "--theme-raised-opaque": chrome.colors.raised.slice(0, 7),
+    "--theme-border": chrome.colors.border,
+    "--theme-text": chrome.colors.text,
+    "--theme-secondary": chrome.colors.secondaryText,
+    "--theme-muted": chrome.colors.muted,
+    "--theme-hover": chrome.colors.hover,
+    "--theme-selected": chrome.colors.selected,
+    "--settings-muted": chrome.colors.muted,
+    "--settings-text": chrome.colors.text,
+    "--settings-raised": chrome.colors.raised,
+    "--settings-border": chrome.colors.border,
+    "--settings-accent": chrome.colors.function,
   } as CSSProperties}>
     {settings.titleBarEnabled && <TitleBar />}
     <div className="theme-maker-body">
-    <header className="theme-maker-header" style={{ background: glassFill(theme.colors.sidebar, settings.glassSidebarTransparency), borderColor: theme.colors.border }}>
-      <button className="theme-back" onClick={onBack}><ArrowLeft size={15} /> Settings</button>
-      <div className="theme-maker-title"><strong>Theme Maker</strong><span>Live editor preview</span></div>
-      <label className="theme-maker-select-label"><span>Editing</span><select value={theme.id} onChange={(event) => {
-        const selected = themes.find((entry) => entry.id === event.target.value);
-        if (selected) {
-          setTheme({ ...selected, colors: { ...selected.colors } });
-          setError("");
-        }
-      }}>{themes.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+    <header className="theme-maker-header" style={{ background: glassFill(chrome.colors.sidebar, settings.glassSidebarTransparency), borderColor: chrome.colors.border }}>
+      <button className="settings-close" title="Back to settings" aria-label="Back to settings" onClick={onBack}><ArrowLeft size={16} /></button>
       <div className="theme-maker-actions">
-        <button onClick={() => onOpenFolder(theme)}><FolderOpen size={13} /> Open Theme’s Folder</button>
-        <button onClick={createTheme}><Plus size={13} /> Create New Theme</button>
-        <button className="theme-save-button" onClick={() => { setError(""); onSave(theme); }}><Save size={13} /> Save Theme</button>
+        <label className="theme-maker-select-label"><Select ariaLabel="Theme being edited" value={theme.id} options={themes.map((entry) => ({ value: entry.id, label: entry.name }))} onChange={(next) => {
+          const selected = themes.find((entry) => entry.id === next);
+          if (selected) {
+            setTheme({ ...selected, colors: { ...selected.colors } });
+            setError("");
+          }
+        }} /></label>
+        <button className="github-secondary plugin-icon-button" title="Open theme folder" aria-label="Open theme folder" onClick={() => onOpenFolder(theme)}><FolderOpen size={15} /></button>
+        <button className="github-secondary plugin-icon-button" title="Save theme" aria-label="Save theme" onClick={() => { setError(""); onSave(theme); }}><Save size={15} /></button>
+        <button className="github-primary plugin-icon-button" title="Create new theme" aria-label="Create new theme" onClick={createTheme}><Plus size={15} /></button>
       </div>
     </header>
     {(error || errorMessage) && <div className="theme-maker-error" role="alert">{error || errorMessage}</div>}
     <div className="theme-maker-content">
-      <aside className="theme-controls" style={{ background: glassFill(theme.colors.sidebar, settings.glassSidebarTransparency), borderColor: theme.colors.border }}>
+      <aside className="theme-controls" style={{ background: glassFill(chrome.colors.sidebar, settings.glassSidebarTransparency), borderColor: chrome.colors.border }}>
         {THEME_COLOR_GROUPS.map((group) => <section className="theme-color-group" key={group.name}>
           <h2>{group.name}</h2>
-          {group.keys.map((key) => <label className="theme-color-row" key={key}>
+          {group.keys.map((key) => <div className="theme-color-row" key={key}>
             <span>{key === "invalidBackground" ? "Invalid background" : key.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`)}</span>
             <ThemeColorPicker label={key} value={theme.colors[key]} onChange={(value) => updateColor(key, value)} onOpenChange={setColorPickerOpen} />
-          </label>)}
+          </div>)}
         </section>)}
       </aside>
       <section className="theme-preview-area">

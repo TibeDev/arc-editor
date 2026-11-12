@@ -12,6 +12,7 @@ import "./GithubPanel.updates.css";
 import "./GithubPanel.auth.css";
 import "./GithubPanel.setup.css";
 import "./GithubPanel.layout.css";
+import Select from "./Select";
 import { forgetTerminalOutput, subscribeTerminalOutput, terminalOutputReady } from "./terminalOutput";
 
 type GithubChange = {
@@ -98,6 +99,7 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
   const [gitEmail, setGitEmail] = useState("");
   const [branchName, setBranchName] = useState("");
   const [commitMessage, setCommitMessage] = useState("");
+  const [commitDescription, setCommitDescription] = useState("");
   const [authSessionId, setAuthSessionId] = useState<string | null>(null);
   const [authDeviceCode, setAuthDeviceCode] = useState("");
   const [authError, setAuthError] = useState("");
@@ -365,12 +367,8 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
       <div className="github-setup-icon"><Github size={22} /></div>
       <h2>Set up GitHub tools</h2>
       <p>Install Git and GitHub CLI, then restart Arc. Choose your operating system for matching instructions.</p>
-      <label className="github-field"><span>Operating system</span><select value={setupPlatform} onChange={(event) => setPlatformOverride(event.target.value as SetupPlatform)}>
-        <option value="windows">Windows</option><option value="linux">Linux</option><option value="macos">macOS</option>
-      </select></label>
-      {setupPlatform === "linux" && <label className="github-field"><span>Linux distribution</span><select value={linuxDistro} onChange={(event) => setLinuxDistro(event.target.value as LinuxDistro)}>
-        <option value="debian">Ubuntu / Debian</option><option value="fedora">Fedora</option><option value="arch">Arch / Manjaro</option><option value="opensuse">openSUSE</option><option value="alpine">Alpine</option><option value="other">Other distribution</option>
-      </select></label>}
+      <label className="github-field"><span>Operating system</span><Select value={setupPlatform} onChange={(next) => setPlatformOverride(next as SetupPlatform)} options={[{ value: "windows", label: "Windows" }, { value: "linux", label: "Linux" }, { value: "macos", label: "macOS" }]} /></label>
+      {setupPlatform === "linux" && <label className="github-field"><span>Linux distribution</span><Select value={linuxDistro} onChange={(next) => setLinuxDistro(next as LinuxDistro)} options={[{ value: "debian", label: "Ubuntu / Debian" }, { value: "fedora", label: "Fedora" }, { value: "arch", label: "Arch / Manjaro" }, { value: "opensuse", label: "openSUSE" }, { value: "alpine", label: "Alpine" }, { value: "other", label: "Other distribution" }]} /></label>}
       {!status?.gitInstalled && <SetupRequirement name={setupPlatform === "windows" ? "Git for Windows" : "Git"} command={setupCommands.git} url={gitInstallUrl} onOpen={(url) => void openLink(url)} />}
       {!status?.ghInstalled && <SetupRequirement name="GitHub CLI" command={setupCommands.gh} url={ghInstallUrl} onOpen={(url) => void openLink(url)} />}
       {setupPlatform === "linux" && <span className="github-help">Package names and commands can vary by distribution version. Official instructions cover additional distros.</span>}
@@ -405,7 +403,7 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
           ? "This folder has Git history but no GitHub remote. Create a repository and connect it."
           : "Create a GitHub repository from this folder. Arc initializes Git when needed."}</p>
         <label className="github-field"><span>Repository name</span><input value={repoName} onChange={(event) => setRepoName(event.target.value)} placeholder="my-project" /></label>
-        <label className="github-field"><span>Visibility</span><select value={visibility} onChange={(event) => setVisibility(event.target.value)}><option value="private">Private</option><option value="public">Public</option></select></label>
+        <label className="github-field"><span>Visibility</span><Select value={visibility} onChange={setVisibility} options={[{ value: "private", label: "Private" }, { value: "public", label: "Public" }]} /></label>
         <button className="github-primary" disabled={busy || !repoName.trim()} onClick={() => void perform(
           () => invoke("github_create_repo", { root: workspace, name: repoName.trim(), visibility }),
           "GitHub repository created.",
@@ -430,12 +428,13 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
       /> : null}
 
       <section className="github-section github-branch-row">
-        <label className="github-field"><span>Current branch</span><select value={status.branch ?? ""} disabled={busy || !status.branches.length} onChange={(event) => void perform(() => invoke("github_switch_branch", { root: workspace, branch: event.target.value }))}>
-          {!status.branch && <option value="">No branch</option>}
-          {status.branches.map((branch) => <option value={branch} key={branch}>{branch}</option>)}
-        </select></label>
+        <label className="github-field"><span>Current branch</span><Select value={status.branch ?? ""} disabled={busy || !status.branches.length} onChange={(next) => void perform(() => invoke("github_switch_branch", { root: workspace, branch: next }))} options={[...(!status.branch ? [{ value: "", label: "No branch" }] : []), ...status.branches.map((branch) => ({ value: branch, label: branch }))]} /></label>
         <div className="github-create-branch"><input value={branchName} onChange={(event) => setBranchName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void perform(async () => { await invoke("github_create_branch", { root: workspace, branch: branchName }); setBranchName(""); }); }} placeholder="New branch" aria-label="New branch name" />
           <button className="github-icon-button" title="Create and switch branch" disabled={busy || !branchName.trim()} onClick={() => void perform(async () => { await invoke("github_create_branch", { root: workspace, branch: branchName }); setBranchName(""); })}><Plus size={15} /></button></div>
+      </section>
+      <section className="github-sync-row">
+        <button className="github-secondary" disabled={busy || !status.remote} onClick={() => void perform(() => invoke("github_pull", { root: workspace }))}><ArrowDownToLine size={14} /> Pull</button>
+        <button className="github-primary" disabled={busy || !status.remote || !status.branch} onClick={() => void perform(() => invoke("github_push", { root: workspace }))}><ArrowUpFromLine size={14} /> Push</button>
       </section>
 
       <section className="github-section github-changes">
@@ -451,17 +450,15 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
       </section>
 
       <section className="github-commit-section">
-        <textarea value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Summary (required)" rows={2} />
+        <input value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Summary (required)" aria-label="Commit summary" />
+        <textarea value={commitDescription} onChange={(event) => setCommitDescription(event.target.value)} placeholder="Description (optional)" aria-label="Commit description" rows={3} />
         <button className="github-primary github-commit-button" disabled={busy || !commitMessage.trim() || !status.changes.some((change) => change.staged) || !status.userName || !status.userEmail} onClick={() => void perform(async () => {
-          await invoke("github_commit", { root: workspace, message: commitMessage });
+          await invoke("github_commit", { root: workspace, message: commitMessage, description: commitDescription });
           setCommitMessage("");
+          setCommitDescription("");
         }, "Changes committed.")}>{busy ? <LoaderCircle size={14} className="github-spin" /> : <Check size={14} />} Commit staged changes</button>
       </section>
 
-      <section className="github-sync-row">
-        <button className="github-secondary" disabled={busy || !status.remote} onClick={() => void perform(() => invoke("github_pull", { root: workspace }))}><ArrowDownToLine size={14} /> Pull</button>
-        <button className="github-primary" disabled={busy || !status.remote || !status.branch} onClick={() => void perform(() => invoke("github_push", { root: workspace }))}><ArrowUpFromLine size={14} /> Push</button>
-      </section>
     </>}
     </>}
   </div>;
