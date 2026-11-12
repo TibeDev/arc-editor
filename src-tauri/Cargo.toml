@@ -18,11 +18,13 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-updater = "2"
 portable-pty = "0.9"
 notify-debouncer-full = "0.5"
 ignore = "0.4"
 keyring = "4"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 window-vibrancy-wayland = { package = "window-vibrancy", git = "https://github.com/tauri-apps/window-vibrancy.git", rev = "0d2bf22b77318690b54a27fa0505437718fd69f6" }

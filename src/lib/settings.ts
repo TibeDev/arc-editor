@@ -1,3 +1,5 @@
+export type UpdateChannel = "stable" | "beta" | "off";
+
 export type AppSettings = {
   prettierOnSave: boolean;
   lineNumbers: boolean;
@@ -39,9 +41,12 @@ export type AppSettings = {
   glassFloatingTransparency: number;
   glassSettingsTransparency: number;
   glassControlsTransparency: number;
+  updateChannel: UpdateChannel;
+  autoCheckUpdates: boolean;
+  autoInstallUpdates: boolean;
 };
 
-export const APP_SETTINGS_VERSION = 1;
+export const APP_SETTINGS_VERSION = 2;
 
 export const GLASS_BLUR = 18;
 
@@ -120,6 +125,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   glassFloatingTransparency: 18,
   glassSettingsTransparency: 12,
   glassControlsTransparency: 12,
+  updateChannel: "stable",
+  autoCheckUpdates: true,
+  autoInstallUpdates: false,
 };
 
 export const DEFAULT_THEME: ThemeDefinition = {
@@ -221,9 +229,18 @@ export function loadSettings(): AppSettings {
     const saved = { ...stored };
     delete saved.editorGlassSaturation;
     const settings = { ...DEFAULT_SETTINGS, ...saved, appTheme: "classic" as const };
-    // Previous default made the entire app background fully transparent.
-    if (stored.version !== APP_SETTINGS_VERSION && stored.glassAppTransparency === 100) {
+    // The pre-versioned default made the entire app background fully transparent.
+    if ((stored.version ?? 0) < 1 && stored.glassAppTransparency === 100) {
       settings.glassAppTransparency = DEFAULT_SETTINGS.glassAppTransparency;
+    }
+    if (!["stable", "beta", "off"].includes(settings.updateChannel)) {
+      settings.updateChannel = DEFAULT_SETTINGS.updateChannel;
+    }
+    if (typeof settings.autoCheckUpdates !== "boolean") {
+      settings.autoCheckUpdates = DEFAULT_SETTINGS.autoCheckUpdates;
+    }
+    if (typeof settings.autoInstallUpdates !== "boolean") {
+      settings.autoInstallUpdates = DEFAULT_SETTINGS.autoInstallUpdates;
     }
     return settings;
   } catch {

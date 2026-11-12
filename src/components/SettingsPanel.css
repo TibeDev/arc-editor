@@ -420,6 +420,25 @@
     var(--settings-border, #3b424a)
   );
 }
+.settings-main .settings-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.settings-main .update-available {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--settings-border, #343a42);
+  border-radius: var(--radius-xl);
+  background: var(--settings-raised, #202429);
+}
+.settings-main .update-available strong {
+  font-size: var(--font-lg);
+}
+.settings-main .update-notes {
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
 .settings-main .setting-field > .theme-color-picker {
   --theme-border: var(--settings-border, #353c43);
   --theme-raised: var(--settings-raised, #202429);

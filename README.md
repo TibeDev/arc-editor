@@ -23,6 +23,8 @@ From the project folder, pass the downloaded or locally built AppImage to the in
 
 The script works with only the AppImage and this script. It copies Arc to `~/Applications/Arc.AppImage`, creates a launcher entry under `$XDG_DATA_HOME` (or `~/.local/share`), and needs no `sudo`. Search for Arc in the app launcher.
 
+Installed AppImages update automatically. Arc checks for signed releases, replaces `~/Applications/Arc.AppImage` in place, and restarts. Choose Stable or Beta under **Settings → Updates**.
+
 ## Working in a project
 
 Open a folder with `Ctrl+K`, then `Ctrl+O`. Use the file browser to open or manage files. Save with `Ctrl+S`; supported files can be formatted with Prettier on save or with `Alt+Shift+F`.

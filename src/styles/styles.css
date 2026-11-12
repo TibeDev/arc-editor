@@ -460,6 +460,78 @@ input:focus-visible {
 .message.error {
   color: #e0a4a4;
 }
+.update-banner {
+  position: fixed;
+  top: calc(var(--titlebar-height) + 10px);
+  right: 12px;
+  z-index: var(--z-message);
+  width: min(360px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  box-shadow: 0 8px 24px #0006;
+  color: var(--text);
+  font-size: var(--font-sm);
+  -webkit-backdrop-filter: var(--glass-surface-filter);
+  backdrop-filter: var(--glass-surface-filter);
+}
+.update-banner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.update-banner-copy strong {
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+.update-banner-copy span {
+  color: var(--muted);
+}
+.update-banner-actions {
+  display: flex;
+  gap: 6px;
+}
+.update-banner-actions button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--selected);
+  color: var(--text);
+}
+.update-banner-actions button:hover {
+  background: var(--hover);
+}
+.update-banner-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.update-banner-actions button.secondary {
+  background: transparent;
+  color: var(--muted);
+}
+.update-banner-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+}
+.update-banner-progress div {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+.update-banner-progress i {
+  display: block;
+  height: 100%;
+  background: var(--settings-accent, #8ba5c2);
+  transition: width 0.2s ease;
+}
 .cm-tooltip-autocomplete {
   min-width: 190px;
   border: 1px solid #3a3e43 !important;

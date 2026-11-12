@@ -53,7 +53,8 @@ import {
 } from '@codemirror/autocomplete';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { invoke, isTauri, Channel } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -130,7 +131,9 @@ import {
   themeCss,
   type AppSettings,
   type ThemeDefinition,
+  type UpdateChannel,
 } from './lib/settings';
+import type { UpdateDownloadEvent, UpdateInfo } from './lib/updater';
 
 const TerminalView = lazy(() => import('./components/TerminalView'));
 const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
@@ -1393,6 +1396,20 @@ function App() {
   const [customThemeIds, setCustomThemeIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [themeMakerOpen, setThemeMakerOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
+  const [availableUpdate, setAvailableUpdate] = useState<
+    (UpdateInfo & { channel: UpdateChannel; manual: boolean }) | null
+  >(null);
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState('');
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<{
+    downloaded: number;
+    total: number | null;
+  }>({ downloaded: 0, total: null });
+  const [updateError, setUpdateError] = useState('');
+  const updateCheckInFlight = useRef(false);
+  const updateInstallingRef = useRef(false);
   const [workspace, setWorkspace] = useState('');
   const [files, setFiles] = useState<DiskFile[]>([]);
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
@@ -1493,6 +1510,12 @@ function App() {
     () => themeCss(activeTheme, settings),
     [activeTheme, settings],
   );
+  const updatePercent = updateProgress.total
+    ? Math.min(
+        100,
+        Math.round((updateProgress.downloaded / updateProgress.total) * 100),
+      )
+    : null;
 
   useEffect(() => {
     localStorage.setItem(
@@ -1500,6 +1523,134 @@ function App() {
       JSON.stringify({ ...settings, version: APP_SETTINGS_VERSION }),
     );
   }, [settings]);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      setAppVersion('dev');
+      return;
+    }
+    void getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(''));
+  }, []);
+
+  const installUpdate = useCallback(async (automatic = false) => {
+    if (!isTauri() || updateInstallingRef.current) return;
+    if (!automatic && openFilesRef.current.some((file) => file.dirty)) {
+      const approved = window.confirm(
+        'Some files have unsaved changes. Install the update and restart Arc now? Unsaved changes will be lost.',
+      );
+      if (!approved) return;
+    }
+    updateInstallingRef.current = true;
+    setUpdateInstalling(true);
+    setUpdateError('');
+    setUpdateProgress({ downloaded: 0, total: null });
+    try {
+      const onEvent = new Channel<UpdateDownloadEvent>();
+      onEvent.onmessage = (event) => {
+        if (event.event === 'started') {
+          setUpdateProgress({
+            downloaded: 0,
+            total: event.data.contentLength ?? null,
+          });
+        } else if (event.event === 'progress') {
+          setUpdateProgress((current) => ({
+            ...current,
+            downloaded: current.downloaded + event.data.chunkLength,
+          }));
+        }
+      };
+      await invoke('updater_install', { onEvent });
+      setAvailableUpdate(null);
+      setMessage('Update installed. Restart Arc to finish.');
+    } catch (error) {
+      const reason = String(error);
+      setUpdateError(reason);
+      setMessage(`Could not install update: ${reason}`);
+      setAvailableUpdate(null);
+    } finally {
+      updateInstallingRef.current = false;
+      setUpdateInstalling(false);
+    }
+  }, []);
+
+  const checkForUpdates = useCallback(async (manual = false) => {
+    if (!isTauri()) {
+      if (manual) setMessage('Updates are only available in the desktop app.');
+      return;
+    }
+    const channel = settingsRef.current.updateChannel;
+    if (channel === 'off') {
+      if (manual) setMessage('Updates are turned off.');
+      return;
+    }
+    if (!manual && import.meta.env.DEV) return;
+    if (updateCheckInFlight.current || updateInstallingRef.current) return;
+    updateCheckInFlight.current = true;
+    setUpdateChecking(true);
+    setUpdateError('');
+    if (manual) setDismissedUpdateVersion('');
+    try {
+      const info = await invoke<UpdateInfo | null>('updater_check', {
+        channel,
+        allowDowngrade: manual,
+      });
+      if (settingsRef.current.updateChannel !== channel) return;
+      setAvailableUpdate(info ? { ...info, channel, manual } : null);
+    } catch (error) {
+      const reason = String(error);
+      if (settingsRef.current.updateChannel !== channel) return;
+      setUpdateError(reason);
+      if (manual) setMessage(`Could not check for updates: ${reason}`);
+    } finally {
+      updateCheckInFlight.current = false;
+      setUpdateChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri() || import.meta.env.DEV) return;
+    if (!settings.autoCheckUpdates || settings.updateChannel === 'off') return;
+    const initial = window.setTimeout(() => void checkForUpdates(), 5000);
+    const interval = window.setInterval(
+      () => void checkForUpdates(),
+      6 * 60 * 60 * 1000,
+    );
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(interval);
+    };
+  }, [checkForUpdates, settings.autoCheckUpdates, settings.updateChannel]);
+
+  const previousUpdateChannel = useRef(settings.updateChannel);
+  useEffect(() => {
+    if (previousUpdateChannel.current === settings.updateChannel) return;
+    previousUpdateChannel.current = settings.updateChannel;
+    setAvailableUpdate(null);
+    setDismissedUpdateVersion('');
+    setUpdateError('');
+  }, [settings.updateChannel]);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) return;
+    if (
+      !availableUpdate ||
+      !settings.autoInstallUpdates ||
+      !settings.autoCheckUpdates ||
+      settings.updateChannel === 'off'
+    )
+      return;
+    if (availableUpdate.channel !== settings.updateChannel) return;
+    if (availableUpdate.manual) return;
+    void installUpdate(true);
+  }, [
+    availableUpdate,
+    settings.autoInstallUpdates,
+    settings.autoCheckUpdates,
+    settings.updateChannel,
+    installUpdate,
+  ]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -4430,6 +4581,42 @@ function App() {
       }}
     >
       <style>{dynamicThemeCss}</style>
+      {availableUpdate && availableUpdate.version !== dismissedUpdateVersion && (
+        <aside className="update-banner" aria-label="Update available">
+          <div className="update-banner-copy" role="status" aria-live="polite">
+            <strong>Arc {availableUpdate.version} is available</strong>
+            <span>You have {availableUpdate.currentVersion}.</span>
+          </div>
+          {updateInstalling ? (
+            <div className="update-banner-progress">
+              <span>
+                {updatePercent === null
+                  ? 'Downloading update…'
+                  : `Downloading update… ${updatePercent}%`}
+              </span>
+              <div>
+                <i
+                  style={{
+                    width: `${updatePercent === null ? 15 : updatePercent}%`,
+                  }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="update-banner-actions">
+              <button disabled={updateChecking} onClick={() => void installUpdate()}>Install</button>
+              <button
+                className="secondary"
+                onClick={() =>
+                  setDismissedUpdateVersion(availableUpdate.version)
+                }
+              >
+                Later
+              </button>
+            </div>
+          )}
+        </aside>
+      )}
       {settings.titleBarEnabled && <TitleBar />}
       <div className="app-body">
       {!workspace &&
@@ -5075,6 +5262,14 @@ function App() {
             pluginConfigurations={pluginRuntime.configurations}
             getPluginConfigValue={pluginRuntime.getConfiguration}
             onUpdatePluginConfig={pluginRuntime.updateConfiguration}
+            appVersion={appVersion}
+            updateAvailable={availableUpdate}
+            updateChecking={updateChecking}
+            updateInstalling={updateInstalling}
+            updateProgress={updateProgress}
+            updateError={updateError}
+            onCheckForUpdates={() => void checkForUpdates(true)}
+            onInstallUpdate={() => void installUpdate()}
           />
         </Suspense>
       )}

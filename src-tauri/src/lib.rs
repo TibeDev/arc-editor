@@ -18,9 +18,10 @@ use std::sync::mpsc::{channel, sync_channel, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{Emitter, Manager, State};
+use tauri::{ipc::Channel, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_fs::FsExt;
+use tauri_plugin_updater::{Update, UpdaterExt};
 
 #[derive(Default)]
 struct TerminalState(Mutex<TerminalSessions>);
@@ -3089,6 +3090,119 @@ fn unwatch_project(state: State<'_, WatcherState>, root: String) -> Result<(), S
     Ok(())
 }
 
+struct PendingUpdate(Mutex<Option<Update>>);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInfo {
+    version: String,
+    current_version: String,
+    notes: Option<String>,
+    date: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(
+    tag = "event",
+    content = "data",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum UpdateDownloadEvent {
+    Started { content_length: Option<u64> },
+    Progress { chunk_length: usize },
+    Finished,
+}
+
+fn update_endpoint(channel: &str) -> Result<&'static str, String> {
+    match channel {
+        "stable" => {
+            Ok("https://github.com/TibeDev/arc-editor/releases/latest/download/latest.json")
+        }
+        "beta" => Ok("https://github.com/TibeDev/arc-editor/releases/download/beta/latest.json"),
+        _ => Err(format!("unknown update channel: {channel}")),
+    }
+}
+
+#[tauri::command]
+async fn updater_check(
+    app: tauri::AppHandle,
+    channel: String,
+    allow_downgrade: bool,
+    pending: State<'_, PendingUpdate>,
+) -> Result<Option<UpdateInfo>, String> {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("APPIMAGE").is_none() {
+        return Err("Automatic updates require the AppImage build of Arc.".to_string());
+    }
+
+    let endpoint = update_endpoint(&channel)?
+        .parse()
+        .map_err(|error| format!("invalid update endpoint: {error}"))?;
+
+    *pending.0.lock().map_err(|error| error.to_string())? = None;
+
+    let update = app
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .map_err(|error| error.to_string())?
+        .version_comparator(move |current, update| {
+            update.version > current || (allow_downgrade && update.version != current)
+        })
+        .build()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let info = update.as_ref().map(|update| UpdateInfo {
+        version: update.version.clone(),
+        current_version: update.current_version.clone(),
+        notes: update.body.clone(),
+        date: update.date.map(|date| date.to_string()),
+    });
+
+    *pending.0.lock().map_err(|error| error.to_string())? = update;
+    Ok(info)
+}
+
+#[tauri::command]
+async fn updater_install(
+    app: tauri::AppHandle,
+    pending: State<'_, PendingUpdate>,
+    on_event: Channel<UpdateDownloadEvent>,
+) -> Result<(), String> {
+    let update = pending
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .take()
+        .ok_or_else(|| "no pending update".to_string())?;
+
+    let started_channel = on_event.clone();
+    let progress_channel = on_event.clone();
+    let finished_channel = on_event;
+    let mut started = false;
+
+    update
+        .download_and_install(
+            |chunk_length, content_length| {
+                if !started {
+                    let _ = started_channel.send(UpdateDownloadEvent::Started { content_length });
+                    started = true;
+                }
+                let _ = progress_channel.send(UpdateDownloadEvent::Progress { chunk_length });
+            },
+            || {
+                let _ = finished_channel.send(UpdateDownloadEvent::Finished);
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -3098,10 +3212,12 @@ pub fn run() {
         .manage(PluginSocketState::default())
         .manage(PluginHttpServerState::default())
         .manage(WatcherState::default())
+        .manage(PendingUpdate(Mutex::new(None)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             workspace_pick,
             workspace_access_allowed,
@@ -3143,7 +3259,9 @@ pub fn run() {
             github_create_branch,
             github_create_repo,
             plugin_local_server_start,
-            plugin_local_server_stop
+            plugin_local_server_stop,
+            updater_check,
+            updater_install
         ])
         .run(tauri::generate_context!())
         .expect("error while running Arc");
@@ -3350,5 +3468,44 @@ mod tests {
         assert_eq!(relative_watch_path(&root, &Path::new("/etc")), "");
 
         drop(fs::remove_dir_all(root));
+    }
+
+    #[test]
+    fn updater_channels_map_to_release_manifests() {
+        assert_eq!(
+            update_endpoint("stable").unwrap(),
+            "https://github.com/TibeDev/arc-editor/releases/latest/download/latest.json"
+        );
+        assert_eq!(
+            update_endpoint("beta").unwrap(),
+            "https://github.com/TibeDev/arc-editor/releases/download/beta/latest.json"
+        );
+        assert!(update_endpoint("nightly").is_err());
+        assert!(update_endpoint("off").is_err());
+    }
+
+    #[test]
+    fn updater_events_use_camel_case_fields() {
+        assert_eq!(
+            serde_json::to_value(UpdateDownloadEvent::Started {
+                content_length: Some(42)
+            })
+            .unwrap(),
+            serde_json::json!({
+                "event": "started",
+                "data": { "contentLength": 42 }
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(UpdateDownloadEvent::Progress { chunk_length: 7 }).unwrap(),
+            serde_json::json!({
+                "event": "progress",
+                "data": { "chunkLength": 7 }
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(UpdateDownloadEvent::Finished).unwrap(),
+            serde_json::json!({ "event": "finished" })
+        );
     }
 }

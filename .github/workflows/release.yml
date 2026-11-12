@@ -6,31 +6,21 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - os: ubuntu-24.04
-            name: linux
-            bundles: deb rpm appimage
-            assets: |
-              src-tauri/target/release/bundle/**/*.deb
-              src-tauri/target/release/bundle/**/*.rpm
-              src-tauri/target/release/bundle/**/*.AppImage
+            args: --ci --bundles deb rpm appimage
           - os: windows-latest
-            name: windows
-            bundles: msi nsis
-            assets: |
-              src-tauri/target/release/bundle/**/*.msi
-              src-tauri/target/release/bundle/**/*.exe
+            args: --ci --bundles msi nsis
           - os: macos-latest
-            name: macos
-            bundles: dmg
-            assets: src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
+            args: --ci --target universal-apple-darwin --bundles dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -80,37 +70,30 @@ jobs:
         if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
-      - name: Build Linux or Windows installers
-        if: runner.os != 'macOS'
-        run: npm run tauri build -- --ci --bundles ${{ matrix.bundles }}
-
-      - name: Build universal macOS installer
-        if: runner.os == 'macOS'
-        run: npm run tauri build -- --ci --target universal-apple-darwin --bundles dmg
-
-      - uses: actions/upload-artifact@v7
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          name: arc-${{ matrix.name }}
-          path: ${{ matrix.assets }}
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
+          tagName: ${{ github.ref_name }}
+          releaseName: "Arc ${{ github.ref_name }}"
+          generateReleaseNotes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }}
 
-  release:
+  channel-pointer:
     needs: build
+    if: contains(github.ref_name, '-')
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     steps:
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: arc-*
-          path: release-assets
-          merge-multiple: true
-
-      - uses: softprops/action-gh-release@v3
-        with:
-          name: Arc ${{ github.ref_name }}
-          generate_release_notes: true
-          files: release-assets/**/*
-          fail_on_unmatched_files: true
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view beta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create beta --repo "$GITHUB_REPOSITORY" --prerelease \
+              --title "Beta channel" --notes "Points to the latest beta build."
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json --output /tmp/latest.json --clobber
+          gh release upload beta /tmp/latest.json --repo "$GITHUB_REPOSITORY" --clobber

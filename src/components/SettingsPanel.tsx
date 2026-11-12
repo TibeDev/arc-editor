@@ -1,6 +1,7 @@
 import { ChevronRight, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "../lib/settings";
+import type { UpdateInfo } from "../lib/updater";
 import type { PluginConfigurationContribution, PluginConfigurationProperty } from "../lib/pluginRuntime";
 import ThemeColorPicker from "./ThemeColorPicker";
 import Select from "./Select";
@@ -12,6 +13,7 @@ const settingsCategories = [
   { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes.", sections: [{ id: "interface", label: "Interface" }, { id: "editor-colors", label: "Editor colors" }, { id: "transparency", label: "Transparency and blur" }] },
   { id: "terminal", label: "Terminal", description: "Cursor and scrollback behavior.", sections: [{ id: "terminal", label: "Terminal" }] },
   { id: "files", label: "Files", description: "Workspace browsing preferences.", sections: [{ id: "file-explorer", label: "File viewer" }] },
+  { id: "updates", label: "Updates", description: "Release channel and automatic updates.", sections: [{ id: "channel", label: "Release channel" }, { id: "behavior", label: "Automatic updates" }] },
   { id: "plugins", label: "Plugins", description: "Settings contributed by installed plugins.", sections: [] },
 ] as const;
 
@@ -191,6 +193,14 @@ export default function SettingsPanel({
   pluginConfigurations,
   getPluginConfigValue,
   onUpdatePluginConfig,
+  appVersion,
+  updateAvailable,
+  updateChecking,
+  updateInstalling,
+  updateProgress,
+  updateError,
+  onCheckForUpdates,
+  onInstallUpdate,
 }: {
   settings: AppSettings;
   themes: ThemeDefinition[];
@@ -202,6 +212,14 @@ export default function SettingsPanel({
   pluginConfigurations?: PluginConfigurationContribution[];
   getPluginConfigValue?: (pluginId: string, key: string, fallback?: unknown) => unknown;
   onUpdatePluginConfig?: (pluginId: string, key: string, value: unknown, scope?: "global" | "workspace") => void;
+  appVersion: string;
+  updateAvailable: UpdateInfo | null;
+  updateChecking: boolean;
+  updateInstalling: boolean;
+  updateProgress: { downloaded: number; total: number | null };
+  updateError: string;
+  onCheckForUpdates: () => void;
+  onInstallUpdate: () => void;
 }) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("editor");
   const [expandedCategories, setExpandedCategories] = useState<Set<SettingsCategory>>(() => new Set(["editor"]));
@@ -220,6 +238,9 @@ export default function SettingsPanel({
   const filteredThemes = useMemo(() => themes.filter((theme) => theme.name.toLowerCase().includes(themeSearch.toLowerCase())), [themeSearch, themes]);
   const selectedTheme = themes.find((theme) => theme.id === settings.selectedTheme) ?? DEFAULT_THEME;
   const terminalSelectionColor = settings.terminalSelectionColor || selectedTheme.colors.selection.slice(0, 7);
+  const updatePercent = updateProgress.total
+    ? Math.min(100, Math.round((updateProgress.downloaded / updateProgress.total) * 100))
+    : null;
   const transparency = (key: "glassAppTransparency" | "glassSidebarTransparency" | "editorGlassTransparency" | "glassTabsTransparency" | "glassTerminalTransparency" | "glassFloatingTransparency" | "glassSettingsTransparency" | "glassControlsTransparency", label: string) => <label className="setting-field" key={key}>
     <span>{label} <b>{settings[key]}%</b></span>
     <input type="range" min="0" max="100" step="1" value={settings[key]} onChange={(event) => onChange({ [key]: Number(event.target.value) })} />
@@ -376,6 +397,28 @@ export default function SettingsPanel({
               {toggle("showHiddenFiles", "Show hidden files", "Include dotfiles and hidden folders in workspace tree.")}
               {toggle("restoreTerminals", "Reopen terminals", "Recreate previous terminal tabs when reopening a folder (commands are re-run).")}
             </section>}
+            {activeCategory === "updates" && <>
+              <section className="settings-section" id="settings-section-updates-channel"><h3>Release channel</h3>
+                <label className="setting-field"><span>Channel</span><Select value={settings.updateChannel} onChange={(next) => onChange({ updateChannel: next as AppSettings["updateChannel"] })} options={[{ value: "stable", label: "Stable" }, { value: "beta", label: "Beta" }, { value: "off", label: "Off" }]} /></label>
+                <div className="setting-note">Stable receives normal releases. Beta receives prereleases, including builds that may be less tested.</div>
+                <div className="setting-note">Switching to an older release, including an older beta, requires Check now.</div>
+                <div className="setting-note">Current version: {appVersion || "unknown"}</div>
+              </section>
+              <section className="settings-section" id="settings-section-updates-behavior"><h3>Automatic updates</h3>
+                {toggle("autoCheckUpdates", "Check for updates", "Check GitHub Releases shortly after launch and every 6 hours.")}
+                {toggle("autoInstallUpdates", "Install updates automatically", "Install updates found by automatic checks without asking. Unsaved editor state may be lost.")}
+                <div className="setting-note">Automatic checks run only in packaged builds.</div>
+                <button className="settings-action" disabled={settings.updateChannel === "off" || updateChecking || updateInstalling} onClick={onCheckForUpdates}>{updateChecking ? "Checking..." : "Check now"}</button>
+                {updateError && <div className="setting-note setting-error">{updateError}</div>}
+                {updateInstalling && <div className="setting-note">{updatePercent === null ? "Downloading update…" : `Downloading update… ${updatePercent}%`}</div>}
+                {updateAvailable && <div className="update-available">
+                  <strong>Arc {updateAvailable.version} is available</strong>
+                  <div className="setting-note">You have {updateAvailable.currentVersion}.</div>
+                  {updateAvailable.notes && <div className="setting-note update-notes">{updateAvailable.notes}</div>}
+                  <button className="settings-action" disabled={updateInstalling || updateChecking} onClick={onInstallUpdate}>Install update</button>
+                </div>}
+              </section>
+            </>}
             {activeCategory === "plugins" && <>
               {(!pluginConfigurations || pluginConfigurations.length === 0) && <section className="settings-section" id="settings-section-plugins-none"><h3>Plugin settings</h3><p>No installed plugin contributes settings.</p></section>}
               {pluginConfigurations?.map((contribution) => <section className="settings-section" id={`settings-section-plugins-${contribution.id}`} key={contribution.id}>
