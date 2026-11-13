@@ -399,6 +399,7 @@ input:focus-visible {
   margin-left: auto;
   color: #828890;
   opacity: 0;
+  cursor: pointer;
 }
 .editor-tab:hover .tab-close,
 .editor-tab.active .tab-close {
