@@ -1,4 +1,4 @@
-export type UpdateChannel = "stable" | "beta" | "off";
+export type UpdateChannel = "stable" | "beta";
 
 export type AppSettings = {
   prettierOnSave: boolean;
@@ -233,7 +233,7 @@ export function loadSettings(): AppSettings {
     if ((stored.version ?? 0) < 1 && stored.glassAppTransparency === 100) {
       settings.glassAppTransparency = DEFAULT_SETTINGS.glassAppTransparency;
     }
-    if (!["stable", "beta", "off"].includes(settings.updateChannel)) {
+    if (!["stable", "beta"].includes(settings.updateChannel)) {
       settings.updateChannel = DEFAULT_SETTINGS.updateChannel;
     }
     if (typeof settings.autoCheckUpdates !== "boolean") {

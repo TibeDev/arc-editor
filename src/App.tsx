@@ -1575,16 +1575,12 @@ function App() {
     }
   }, []);
 
-  const checkForUpdates = useCallback(async (manual = false) => {
+  const checkForUpdates = useCallback(async (manual = false, allowDowngrade = false, channelOverride?: UpdateChannel) => {
     if (!isTauri()) {
       if (manual) setMessage('Updates are only available in the desktop app.');
       return;
     }
-    const channel = settingsRef.current.updateChannel;
-    if (channel === 'off') {
-      if (manual) setMessage('Updates are turned off.');
-      return;
-    }
+    const channel = channelOverride ?? settingsRef.current.updateChannel;
     if (!manual && import.meta.env.DEV) return;
     if (updateCheckInFlight.current || updateInstallingRef.current) return;
     updateCheckInFlight.current = true;
@@ -1594,10 +1590,11 @@ function App() {
     try {
       const info = await invoke<UpdateInfo | null>('updater_check', {
         channel,
-        allowDowngrade: manual,
+        allowDowngrade: manual || allowDowngrade,
       });
       if (settingsRef.current.updateChannel !== channel) return;
       setAvailableUpdate(info ? { ...info, channel, manual } : null);
+      return info ?? null;
     } catch (error) {
       const reason = String(error);
       if (settingsRef.current.updateChannel !== channel) return;
@@ -1611,7 +1608,7 @@ function App() {
 
   useEffect(() => {
     if (!isTauri() || import.meta.env.DEV) return;
-    if (!settings.autoCheckUpdates || settings.updateChannel === 'off') return;
+    if (!settings.autoCheckUpdates) return;
     const initial = window.setTimeout(() => void checkForUpdates(), 5000);
     const interval = window.setInterval(
       () => void checkForUpdates(),
@@ -1630,24 +1627,22 @@ function App() {
     setAvailableUpdate(null);
     setDismissedUpdateVersion('');
     setUpdateError('');
-  }, [settings.updateChannel]);
+    void (async () => {
+      const info = await checkForUpdates(false, true, settings.updateChannel);
+      if (!info || settingsRef.current.updateChannel !== settings.updateChannel) return;
+      await installUpdate();
+    })();
+  }, [checkForUpdates, installUpdate, settings.updateChannel]);
 
   useEffect(() => {
     if (import.meta.env.DEV) return;
-    if (
-      !availableUpdate ||
-      !settings.autoInstallUpdates ||
-      !settings.autoCheckUpdates ||
-      settings.updateChannel === 'off'
-    )
-      return;
+    if (!availableUpdate || !settings.autoInstallUpdates) return;
     if (availableUpdate.channel !== settings.updateChannel) return;
     if (availableUpdate.manual) return;
     void installUpdate(true);
   }, [
     availableUpdate,
     settings.autoInstallUpdates,
-    settings.autoCheckUpdates,
     settings.updateChannel,
     installUpdate,
   ]);

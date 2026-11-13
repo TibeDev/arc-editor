@@ -1,10 +1,11 @@
-import { ChevronRight, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { ChevronRight, LoaderCircle, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "../lib/settings";
 import type { UpdateInfo } from "../lib/updater";
 import type { PluginConfigurationContribution, PluginConfigurationProperty } from "../lib/pluginRuntime";
 import ThemeColorPicker from "./ThemeColorPicker";
 import Select from "./Select";
+import "../styles/controls.css";
 import "./SettingsPanel.css";
 
 const settingsCategories = [
@@ -399,16 +400,16 @@ export default function SettingsPanel({
             </section>}
             {activeCategory === "updates" && <>
               <section className="settings-section" id="settings-section-updates-channel"><h3>Release channel</h3>
-                <label className="setting-field"><span>Channel</span><Select value={settings.updateChannel} onChange={(next) => onChange({ updateChannel: next as AppSettings["updateChannel"] })} options={[{ value: "stable", label: "Stable" }, { value: "beta", label: "Beta" }, { value: "off", label: "Off" }]} /></label>
-                <div className="setting-note">Stable receives normal releases. Beta receives prereleases, including builds that may be less tested.</div>
-                <div className="setting-note">Switching to an older release, including an older beta, requires Check now.</div>
-                <div className="setting-note">Current version: {appVersion || "unknown"}</div>
+                <label className="setting-field"><span>Channel</span><Select value={settings.updateChannel} onChange={(next) => onChange({ updateChannel: next as AppSettings["updateChannel"] })} options={[{ value: "stable", label: "Stable" }, { value: "beta", label: "Beta" }]} /></label>
+                <div className="settings-version-row">
+                  <span className="setting-note">Current version: {appVersion || "unknown"}</span>
+                  <button className="icon-button" title="Check for updates" aria-label="Check for updates" disabled={updateChecking || updateInstalling} onClick={onCheckForUpdates}>{updateChecking ? <LoaderCircle size={15} className="settings-spin" /> : <RefreshCw size={15} />}</button>
+                </div>
               </section>
               <section className="settings-section" id="settings-section-updates-behavior"><h3>Automatic updates</h3>
                 {toggle("autoCheckUpdates", "Check for updates", "Check GitHub Releases shortly after launch and every 6 hours.")}
                 {toggle("autoInstallUpdates", "Install updates automatically", "Install updates found by automatic checks without asking. Unsaved editor state may be lost.")}
                 <div className="setting-note">Automatic checks run only in packaged builds.</div>
-                <button className="settings-action" disabled={settings.updateChannel === "off" || updateChecking || updateInstalling} onClick={onCheckForUpdates}>{updateChecking ? "Checking..." : "Check now"}</button>
                 {updateError && <div className="setting-note setting-error">{updateError}</div>}
                 {updateInstalling && <div className="setting-note">{updatePercent === null ? "Downloading update…" : `Downloading update… ${updatePercent}%`}</div>}
                 {updateAvailable && <div className="update-available">

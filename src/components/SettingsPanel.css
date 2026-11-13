@@ -403,6 +403,23 @@
   font: inherit;
   font-size: var(--font-sm);
 }
+.settings-main .settings-version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.settings-main .settings-version-row .setting-note {
+  margin: 8px 0;
+}
+.settings-spin {
+  animation: settings-spin 1s linear infinite;
+}
+@keyframes settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .settings-main .settings-action {
   height: 32px;
   margin: 8px 0 12px;
