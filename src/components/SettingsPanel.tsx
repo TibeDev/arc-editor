@@ -264,9 +264,21 @@ export default function SettingsPanel({
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (event.defaultPrevented) return;
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <header className="settings-header"><div className="settings-title"><h2 id="settings-title">Settings</h2><span>Arc preferences</span></div><button className="settings-close" aria-label="Close settings" title="Close settings" onClick={onClose}><X size={16} /></button></header>
+    <section className="settings-panel" role="dialog" aria-modal="true" aria-label="Settings">
+      <button className="settings-close" aria-label="Close settings" title="Close settings" onClick={onClose}><X size={16} /></button>
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Settings categories">
           <label className="settings-search">

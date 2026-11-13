@@ -1,30 +1,13 @@
 .settings-panel {
+  position: relative;
   backdrop-filter: var(--glass-settings-filter);
   -webkit-backdrop-filter: var(--glass-settings-filter);
 }
-.settings-panel .settings-header {
-  height: 56px;
-  flex-basis: 56px;
-  padding: 0 24px;
-  gap: 16px;
-}
-.settings-title {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  min-width: 0;
-}
-.settings-header h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-.settings-header span {
-  color: var(--settings-muted, #87919b);
-  font-size: var(--font-md);
-}
 .settings-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
   width: 30px;
   height: 30px;
   flex: 0 0 30px;
@@ -38,11 +21,7 @@
   cursor: pointer;
 }
 .settings-close:hover {
-  background: color-mix(
-    in srgb,
-    var(--settings-raised, #24282e) 80%,
-    transparent
-  );
+  background: transparent;
   color: var(--settings-text, var(--text));
 }
 .settings-close:focus-visible {
@@ -606,9 +585,6 @@
     width: 100%;
     height: calc(100vh - var(--titlebar-height) - 20px);
     border-radius: 12px;
-  }
-  .settings-panel .settings-header {
-    padding: 0 16px;
   }
   .settings-layout {
     flex-direction: column;
