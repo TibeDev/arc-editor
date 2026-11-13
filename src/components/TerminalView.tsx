@@ -23,10 +23,15 @@ export default function TerminalView({ session, active, theme, settings, onTitle
   const host = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
   const fit = useRef<FitAddon | null>(null);
+  const writeFrame = useRef<number | null>(null);
+  const writeBuffer = useRef("");
+  const inputTimer = useRef<number | null>(null);
+  const inputBuffer = useRef("");
+  const lastSize = useRef("");
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!active || !host.current) return;
+    if (!host.current) return;
     const xterm = new Terminal({
       cursorBlink: settings.terminalCursorBlink,
       cursorStyle: settings.terminalCursorStyle,
@@ -51,12 +56,33 @@ export default function TerminalView({ session, active, theme, settings, onTitle
 
     let disposed = false;
     let input: { dispose: () => void } | undefined;
-    const unsubscribe = subscribeTerminalOutput(session.id, (data) => xterm.write(data));
+    const queueWrite = (data: string) => {
+      writeBuffer.current += data;
+      if (writeFrame.current !== null) return;
+      writeFrame.current = window.requestAnimationFrame(() => {
+        writeFrame.current = null;
+        const pending = writeBuffer.current;
+        writeBuffer.current = "";
+        if (pending) xterm.write(pending);
+      });
+    };
+    const flushInput = () => {
+      inputTimer.current = null;
+      const pending = inputBuffer.current;
+      inputBuffer.current = "";
+      if (!pending) return;
+      void invoke("terminal_write", { id: session.id, data: pending }).catch((error) =>
+        xterm.write(`\r\nTerminal input failed: ${String(error)}\r\n`),
+      );
+    };
+    const unsubscribe = subscribeTerminalOutput(session.id, queueWrite);
     void terminalOutputReady().then(() => invoke("terminal_spawn", { id: session.id, cwd: session.cwd || null, command: session.command ?? null }))
       .then(() => {
         if (disposed) return;
         input = xterm.onData((data) => {
-          void invoke("terminal_write", { id: session.id, data }).catch((error) => xterm.write(`\r\nTerminal input failed: ${String(error)}\r\n`));
+          inputBuffer.current += data;
+          if (inputTimer.current === null)
+            inputTimer.current = window.setTimeout(flushInput, 8);
         });
         setReady(true);
       })
@@ -66,13 +92,22 @@ export default function TerminalView({ session, active, theme, settings, onTitle
       disposed = true;
       unsubscribe();
       input?.dispose();
+      if (inputTimer.current !== null) {
+        window.clearTimeout(inputTimer.current);
+        flushInput();
+      }
+      if (writeFrame.current !== null) {
+        window.cancelAnimationFrame(writeFrame.current);
+        writeFrame.current = null;
+      }
+      writeBuffer.current = "";
       titleChange.dispose();
       xterm.dispose();
       terminal.current = null;
       fit.current = null;
       setReady(false);
     };
-  }, [active, session.id, session.cwd, session.command, onTitleChange]);
+  }, [session.id, session.cwd, session.command, onTitleChange]);
 
   useEffect(() => {
     const xterm = terminal.current;
@@ -94,14 +129,22 @@ export default function TerminalView({ session, active, theme, settings, onTitle
 
   useEffect(() => {
     if (!ready || !active || !host.current || !terminal.current || !fit.current) return;
+    let frame: number | null = null;
     const resize = () => {
-      const xterm = terminal.current;
-      const fitAddon = fit.current;
-      if (!host.current?.clientWidth || !host.current.clientHeight || !xterm || !fitAddon) return;
-      try {
-        fitAddon.fit();
-        void invoke("terminal_resize", { id: session.id, cols: xterm.cols, rows: xterm.rows });
-      } catch { /* Terminal may not have measurable dimensions yet. */ }
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        const xterm = terminal.current;
+        const fitAddon = fit.current;
+        if (!active || !host.current?.clientWidth || !host.current.clientHeight || !xterm || !fitAddon) return;
+        try {
+          fitAddon.fit();
+          const size = `${xterm.cols}x${xterm.rows}`;
+          if (size === lastSize.current) return;
+          lastSize.current = size;
+          void invoke("terminal_resize", { id: session.id, cols: xterm.cols, rows: xterm.rows });
+        } catch { /* Terminal may not have measurable dimensions yet. */ }
+      });
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host.current);
@@ -109,7 +152,10 @@ export default function TerminalView({ session, active, theme, settings, onTitle
       resize();
       terminal.current?.focus();
     });
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
   }, [active, ready, session.id, settings.terminalFontFamily, settings.terminalFontSize, settings.terminalPadding]);
 
   return <div

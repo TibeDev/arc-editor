@@ -784,6 +784,22 @@ export function usePluginRuntime(
     window.dispatchEvent(new CustomEvent(`arc:${event}`, { detail: payload }));
   }, [notify]);
 
+  const refreshTimer = useRef<number | null>(null);
+  const refreshWaiters = useRef<(() => void)[]>([]);
+  const scheduleRefresh = useCallback(() => new Promise<void>((resolve) => {
+    refreshWaiters.current.push(resolve);
+    if (refreshTimer.current !== null) return;
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      const finish = () => {
+        const waiters = refreshWaiters.current;
+        refreshWaiters.current = [];
+        waiters.forEach((waiter) => waiter());
+      };
+      Promise.resolve(hostActionsRef.current.refreshWorkspace()).then(finish, finish);
+    }, 40);
+  }), []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -1041,6 +1057,8 @@ export function usePluginRuntime(
               ? { path: context.path, language: context.language }
               : null;
           };
+          let cachedTextDoc: unknown = null;
+          let cachedText = "";
           activeLanguageContext = () => {
             const context = hostActionsRef.current.getEditorContext();
             if (!context) return null;
@@ -1048,18 +1066,24 @@ export function usePluginRuntime(
             if (!editor) return null;
             const offset = editor.state.selection.main.head;
             const line = editor.state.doc.lineAt(offset);
-            const text = editor.state.doc.toString();
-            const word = /[A-Za-z0-9_$-]*$/.exec(text.slice(0, offset))?.[0] ?? "";
+            const doc = editor.state.doc;
+            if (cachedTextDoc !== doc) {
+              cachedTextDoc = doc;
+              cachedText = doc.toString();
+            }
+            const text = cachedText;
+            const word = /[A-Za-z0-9_$-]*$/.exec(line.text.slice(0, offset - line.from))?.[0] ?? "";
             return { path: context.path, language: context.language, text, offset, line: line.text, lineFrom: line.from, lineTo: line.to, word };
           };
           const outputChannels = new Map<string, PluginOutputChannel>();
           const makeOutputChannel = (name: string): PluginOutputChannel => {
-            let buffer = "";
+            const chunks: string[] = [];
+            let size = 0;
             let truncated = false;
             let publishTimer: number | null = null;
             const panelId = `${plugin.id}:output-${slugify(name)}`;
             const displayBuffer = () =>
-              truncated ? `… earlier output truncated …\n${buffer}` : buffer;
+              truncated ? `… earlier output truncated …\n${chunks.join("")}` : chunks.join("");
             const publish = () => setPanels((current) => [
               ...current.filter((entry) => entry.id !== panelId),
               {
@@ -1077,9 +1101,18 @@ export function usePluginRuntime(
               },
             ]);
             const appendOutput = (text: string) => {
-              buffer = `${buffer}${text}`;
-              if (buffer.length > pluginOutputBufferLimit) {
-                buffer = buffer.slice(-pluginOutputBufferLimit);
+              chunks.push(text);
+              size += text.length;
+              while (size > pluginOutputBufferLimit && chunks.length) {
+                const excess = size - pluginOutputBufferLimit;
+                const first = chunks[0];
+                if (first.length <= excess) {
+                  chunks.shift();
+                  size -= first.length;
+                } else {
+                  chunks[0] = first.slice(excess);
+                  size -= excess;
+                }
                 truncated = true;
               }
               if (publishTimer !== null) return;
@@ -1094,7 +1127,8 @@ export function usePluginRuntime(
               appendLine: (text) => appendOutput(`${text}\n`),
               show: () => hostActionsRef.current.openPluginPanel(panelId),
               clear: () => {
-                buffer = "";
+                chunks.length = 0;
+                size = 0;
                 truncated = false;
                 if (publishTimer !== null) {
                   window.clearTimeout(publishTimer);
@@ -1271,7 +1305,7 @@ export function usePluginRuntime(
                   await writeTextFile(destination, content);
                   emitEvent("file:saved", { path });
                 }
-                await hostActionsRef.current.refreshWorkspace();
+                await scheduleRefresh();
               },
               writeBytes: async (path, bytes) => {
                 const provider = providerFor(path);
@@ -1279,7 +1313,7 @@ export function usePluginRuntime(
                 const destination = await resolveFilePath(path);
                 await mkdir(await parentDirectoryPath(destination), { recursive: true });
                 await writeFile(destination, bytes);
-                await hostActionsRef.current.refreshWorkspace();
+                await scheduleRefresh();
               },
               writeAtomic: async (path, content) => {
                 const destination = await resolveFilePath(path);
@@ -1292,19 +1326,24 @@ export function usePluginRuntime(
                   await remove(temporary).catch(() => undefined);
                   throw error;
                 }
-                await hostActionsRef.current.refreshWorkspace();
+                await scheduleRefresh();
               },
               openReadStream: async (path) => {
-                const bytes = await readFile(resolveFilePath(path));
-                let offset = 0;
+                const file = await openFsFile(resolveFilePath(path), { read: true });
+                let closed = false;
                 return {
                   read: async (size = 64 * 1024) => {
-                    if (offset >= bytes.length) return null;
-                    const chunk = bytes.slice(offset, offset + Math.max(1, size));
-                    offset += chunk.length;
-                    return chunk;
+                    if (closed) return null;
+                    const buffer = new Uint8Array(Math.max(1, size));
+                    const length = await file.read(buffer);
+                    if (length === null) return null;
+                    return buffer.slice(0, length);
                   },
-                  close: async () => undefined,
+                  close: async () => {
+                    if (closed) return;
+                    closed = true;
+                    await file.close();
+                  },
                 };
               },
               openWriteStream: async (path) => {
@@ -1321,7 +1360,7 @@ export function usePluginRuntime(
                     if (closed) return;
                     closed = true;
                     await file.close();
-                    await hostActionsRef.current.refreshWorkspace();
+                    await scheduleRefresh();
                   },
                 };
               },
@@ -1347,11 +1386,11 @@ export function usePluginRuntime(
                 if (await exists(destination)) throw new Error(`File already exists: ${path}`);
                 await mkdir(await parentDirectoryPath(destination), { recursive: true });
                 await writeTextFile(destination, content);
-                await hostActionsRef.current.refreshWorkspace();
+                await scheduleRefresh();
               },
               createDirectory: async (path) => {
                 await mkdir(await resolveFilePath(path), { recursive: true });
-                await hostActionsRef.current.refreshWorkspace();
+                await scheduleRefresh();
               },
               delete: async (path) => {
                 await resolveFilePath(path);
@@ -1370,7 +1409,7 @@ export function usePluginRuntime(
                 const target = await resolveFilePath(destination);
                 await mkdir(await parentDirectoryPath(target), { recursive: true });
                 await copyFile(source, target);
-                await hostActionsRef.current.refreshWorkspace();
+                await scheduleRefresh();
               },
               move: async (sourcePath, destinationPath, options) => {
                 const source = await resolveFilePath(sourcePath);
@@ -1379,12 +1418,12 @@ export function usePluginRuntime(
                 if (options?.overwrite && await exists(destination)) await remove(destination, { recursive: true });
                 await mkdir(await parentDirectoryPath(destination), { recursive: true });
                 await renameFile(source, destination);
-                await hostActionsRef.current.refreshWorkspace();
+                await scheduleRefresh();
               },
               trash: async (path) => {
                 const absolute = await resolveFilePath(path);
                 await invoke("plugin_trash_path", { path: absolute });
-                await hostActionsRef.current.refreshWorkspace();
+                await scheduleRefresh();
               },
               open: async (path) => {
                 await resolveFilePath(path);
@@ -2113,7 +2152,7 @@ export function usePluginRuntime(
                 const path = await resolveFilePath(destination);
                 await mkdir(await parentDirectoryPath(path), { recursive: true });
                 await writeFile(path, merged);
-                await hostActionsRef.current.refreshWorkspace();
+                await scheduleRefresh();
                 return { path: destination, bytes: received };
               },
               isOnline: () => navigator.onLine,
@@ -2746,6 +2785,13 @@ const pluginDecorationField = codeMirrorState.StateField.define<Map<string, Deco
   create: () => new Map(),
   update(value, transaction) {
     let next = value;
+    if (transaction.docChanged) {
+      const mapped = new Map<string, DecorationSet>();
+      value.forEach((set, key) => {
+        mapped.set(key, set.map(transaction.changes));
+      });
+      next = mapped;
+    }
     for (const effect of transaction.effects) {
       if (!effect.is(setPluginDecorations)) continue;
       const { path, type, ranges } = effect.value;
@@ -3155,11 +3201,22 @@ function pluginViewPlugin(kind: "codeLens" | "inlayHints" | "semanticTokens") {
   return ViewPlugin.fromClass(class {
     decorations: DecorationSet = Decoration.none;
     private generation = 0;
+    private timer: number | null = null;
     constructor(view: EditorView) { this.refresh(view); }
     update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged || update.selectionSet) this.refresh(update.view);
+      if (update.docChanged || update.selectionSet) this.schedule(update.view);
     }
-    destroy() { this.generation += 1; }
+    destroy() {
+      this.generation += 1;
+      if (this.timer !== null) window.clearTimeout(this.timer);
+    }
+    private schedule(view: EditorView) {
+      if (this.timer !== null) window.clearTimeout(this.timer);
+      this.timer = window.setTimeout(() => {
+        this.timer = null;
+        this.refresh(view);
+      }, 80);
+    }
     private refresh(view: EditorView) {
       if (!languageProvidersForKind(kind).length) { this.decorations = Decoration.none; return; }
       const base = activeLanguageBase();
@@ -3473,18 +3530,28 @@ function uriToPath(uri: string): string {
   return isWindowsHost ? raw.replace(/^\//, "").replace(/\//g, "\\") : raw;
 }
 
+const globPatternCache = new Map<string, RegExp | null>();
+
 function matchGlob(path: string, pattern: string): boolean {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, "\u0000")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\?/g, "[^/]")
-    .replace(/\u0000/g, ".*");
-  try {
-    return new RegExp(`^${escaped}$`).test(path.replace(/\\/g, "/"));
-  } catch {
-    return path.includes(pattern);
+  let matcher = globPatternCache.get(pattern);
+  if (matcher === undefined) {
+    const escaped = pattern
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*\*/g, "\u0000")
+      .replace(/\*/g, "[^/]*")
+      .replace(/\?/g, "[^/]")
+      .replace(/\u0000/g, ".*");
+    try {
+      matcher = new RegExp(`^${escaped}$`);
+    } catch {
+      matcher = null;
+    }
+    if (globPatternCache.size > 500) globPatternCache.clear();
+    globPatternCache.set(pattern, matcher);
   }
+  return matcher
+    ? matcher.test(path.replace(/\\/g, "/"))
+    : path.includes(pattern);
 }
 
 async function listWorkspaceFiles(
@@ -3498,8 +3565,10 @@ async function listWorkspaceFiles(
   const exclude = options?.exclude ?? ["node_modules", ".git", "dist", "build", "target", ".next", ".cache"];
   const results: { path: string; name: string; kind: "file" | "directory" }[] = [];
   const queue: { directory: string; prefix: string; depth: number }[] = [{ directory: joinNativePath(root, path), prefix: path, depth: 0 }];
-  while (queue.length && results.length < maxResults) {
-    const current = queue.shift()!;
+  let head = 0;
+  while (head < queue.length && results.length < maxResults) {
+    const current = queue[head];
+    head += 1;
     let entries: Awaited<ReturnType<typeof readDir>>;
     try {
       entries = await readDir(current.directory);

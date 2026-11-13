@@ -15,7 +15,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, sync_channel, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{ipc::Channel, Emitter, Manager, State};
@@ -266,7 +266,7 @@ impl Drop for TerminalState {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn terminal_spawn(
     app: tauri::AppHandle,
     state: State<'_, TerminalState>,
@@ -416,7 +416,7 @@ fn emit_terminal_output(app: &tauri::AppHandle, id: &str, pending: &mut Vec<u8>)
     .is_ok()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn terminal_write(state: State<'_, TerminalState>, id: String, data: String) -> Result<(), String> {
     let process = state
         .0
@@ -432,7 +432,7 @@ fn terminal_write(state: State<'_, TerminalState>, id: String, data: String) -> 
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn terminal_resize(
     state: State<'_, TerminalState>,
     id: String,
@@ -458,7 +458,7 @@ fn terminal_resize(
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn terminal_close(state: State<'_, TerminalState>, id: String) -> Result<(), String> {
     let process = {
         let mut sessions = state.0.lock().map_err(|error| error.to_string())?;
@@ -828,7 +828,7 @@ fn plugin_process_close_stdin(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_process_stop(
     state: State<'_, PluginProcessState>,
     id: String,
@@ -863,7 +863,7 @@ fn plugin_process_stop(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_process_exec(
     executable: String,
     args: Vec<String>,
@@ -927,7 +927,7 @@ fn plugin_process_which(executable: String) -> Result<Option<String>, String> {
     Ok(find_executable(&executable).map(|path| path.to_string_lossy().into_owned()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_socket_connect(
     app: tauri::AppHandle,
     state: State<'_, PluginSocketState>,
@@ -1030,7 +1030,7 @@ fn plugin_socket_connect(
     Ok(id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_socket_write(
     state: State<'_, PluginSocketState>,
     id: String,
@@ -1328,14 +1328,14 @@ fn plugin_secret_entry(plugin_id: &str, key: &str) -> Result<keyring::Entry, Str
         .map_err(|error| format!("OS credential store is unavailable: {error}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_secret_set(plugin_id: String, key: String, value: String) -> Result<(), String> {
     plugin_secret_entry(&plugin_id, &key)?
         .set_password(&value)
         .map_err(|error| format!("Could not store plugin secret: {error}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_secret_get(plugin_id: String, key: String) -> Result<Option<String>, String> {
     match plugin_secret_entry(&plugin_id, &key)?.get_password() {
         Ok(value) => Ok(Some(value)),
@@ -1344,7 +1344,7 @@ fn plugin_secret_get(plugin_id: String, key: String) -> Result<Option<String>, S
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_secret_delete(plugin_id: String, key: String) -> Result<(), String> {
     match plugin_secret_entry(&plugin_id, &key)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -1352,7 +1352,7 @@ fn plugin_secret_delete(plugin_id: String, key: String) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_trash_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let source = PathBuf::from(&path);
     if !source.exists() {
@@ -1646,26 +1646,60 @@ fn parse_changes(data: &[u8]) -> Vec<GithubChange> {
 
 #[tauri::command(async)]
 fn github_status(root: String) -> Result<GithubStatus, String> {
+    static GIT_INSTALLED: OnceLock<Mutex<Option<(Instant, bool)>>> = OnceLock::new();
+    static GH_INSTALLED: OnceLock<Mutex<Option<(Instant, bool)>>> = OnceLock::new();
+    static GH_AUTH_CACHE: OnceLock<Mutex<Option<(Instant, bool)>>> = OnceLock::new();
     let root = PathBuf::from(root)
         .canonicalize()
         .map_err(|error| format!("Could not access workspace: {error}"))?;
-    let git_installed = git_command()
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false);
-    let gh_installed = gh_command()
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false);
+    let git_installed = {
+        let cache = GIT_INSTALLED.get_or_init(|| Mutex::new(None));
+        let mut guard = cache.lock().unwrap_or_else(|error| error.into_inner());
+        match *guard {
+            Some((checked_at, value)) if checked_at.elapsed() < Duration::from_secs(15) => value,
+            _ => {
+                let value = git_command()
+                    .arg("--version")
+                    .output()
+                    .map(|output| output.status.success())
+                    .unwrap_or(false);
+                *guard = Some((Instant::now(), value));
+                value
+            }
+        }
+    };
+    let gh_installed = {
+        let cache = GH_INSTALLED.get_or_init(|| Mutex::new(None));
+        let mut guard = cache.lock().unwrap_or_else(|error| error.into_inner());
+        match *guard {
+            Some((checked_at, value)) if checked_at.elapsed() < Duration::from_secs(15) => value,
+            _ => {
+                let value = gh_command()
+                    .arg("--version")
+                    .output()
+                    .map(|output| output.status.success())
+                    .unwrap_or(false);
+                *guard = Some((Instant::now(), value));
+                value
+            }
+        }
+    };
     let authenticated = if gh_installed {
-        gh_command()
-            .args(["auth", "status"])
-            .current_dir(&root)
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+        let cache = GH_AUTH_CACHE.get_or_init(|| Mutex::new(None));
+        let mut guard = cache.lock().unwrap_or_else(|error| error.into_inner());
+        match *guard {
+            Some((checked_at, value)) if checked_at.elapsed() < Duration::from_secs(3) => value,
+            _ => {
+                let value = gh_command()
+                    .args(["auth", "status"])
+                    .current_dir(&root)
+                    .output()
+                    .map(|output| output.status.success())
+                    .unwrap_or(false);
+                *guard = Some((Instant::now(), value));
+                value
+            }
+        }
     } else {
         false
     };
@@ -1689,8 +1723,6 @@ fn github_status(root: String) -> Result<GithubStatus, String> {
     if !git_installed {
         return Ok(status);
     }
-    status.user_name = git_config_value(&root, "user.name");
-    status.user_email = git_config_value(&root, "user.email");
     let Ok(repo_root) = resolve_git_root(&root) else {
         return Ok(status);
     };
@@ -2000,7 +2032,7 @@ fn github_create_repo(root: String, name: String, visibility: String) -> Result<
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_local_server_start(
     app: tauri::AppHandle,
     state: State<'_, LocalHttpServerState>,
@@ -2025,19 +2057,26 @@ fn plugin_local_server_start(
         return Err("Invalid local server entry path.".to_string());
     }
 
-    let mut active = state.0.lock().map_err(|error| error.to_string())?;
-    if let Some(server) = active.get(&plugin_id).filter(|server| server.root == root) {
-        return Ok(local_server_info(&server.root, server.port, &entry));
-    }
-    drop(active.remove(&plugin_id));
+    let previous = {
+        let mut active = state.0.lock().map_err(|error| error.to_string())?;
+        if let Some(server) = active.get(&plugin_id).filter(|server| server.root == root) {
+            return Ok(local_server_info(&server.root, server.port, &entry));
+        }
+        active.remove(&plugin_id)
+    };
+    drop(previous);
 
     let server = create_local_http_server(root)?;
     let info = local_server_info(&server.root, server.port, &entry);
-    active.insert(plugin_id, server);
+    state
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .insert(plugin_id, server);
     Ok(info)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_local_server_stop(
     state: State<'_, LocalHttpServerState>,
     plugin_id: String,
@@ -2166,7 +2205,7 @@ fn run_local_server_watcher(
     while !stop.load(Ordering::Relaxed) {
         match receive.recv_timeout(Duration::from_millis(500)) {
             Ok(Ok(events)) => {
-                generation.store(local_file_signature(&root), Ordering::Relaxed);
+                generation.fetch_add(1, Ordering::Relaxed);
                 for debounced in events {
                     let created = match &debounced.event.kind {
                         EventKind::Create(_) => debounced.event.paths.last().cloned(),
@@ -2903,7 +2942,7 @@ fn relative_watch_path(root: &Path, path: &Path) -> String {
         .unwrap_or_default()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn watch_project(
     app: tauri::AppHandle,
     state: State<'_, WatcherState>,
@@ -2918,26 +2957,32 @@ fn watch_project(
 
     let mut watched = HashSet::new();
     let mut failures = 0_usize;
-
-    {
+    let previous = {
         let mut inner = state.inner.lock().map_err(|_error| "watcher poisoned")?;
-        inner.watcher = None;
         inner.root = None;
         inner.watched.clear();
         inner.failures = 0;
-        watch_directory_tree(
-            &mut debouncer,
-            &mut watched,
-            &filter,
-            &root_path,
-            &root_path,
-            &mut failures,
-        );
-        if !watched.contains(&root_path) {
-            return Err(format!(
-                "Could not watch {root}: watcher registration failed"
-            ));
-        }
+        inner.filter = None;
+        inner.reported_limit = false;
+        inner.watcher.take()
+    };
+    drop(previous);
+
+    watch_directory_tree(
+        &mut debouncer,
+        &mut watched,
+        &filter,
+        &root_path,
+        &root_path,
+        &mut failures,
+    );
+    if !watched.contains(&root_path) {
+        return Err(format!(
+            "Could not watch {root}: watcher registration failed"
+        ));
+    }
+    {
+        let mut inner = state.inner.lock().map_err(|_error| "watcher poisoned")?;
         inner.watcher = Some(debouncer);
         inner.root = Some(root_path.clone());
         inner.watched = watched;
@@ -3073,20 +3118,24 @@ fn watch_project(
     Ok(root_path.to_string_lossy().replace('\\', "/"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn unwatch_project(state: State<'_, WatcherState>, root: String) -> Result<(), String> {
     let Ok(root_path) = fs::canonicalize(&root) else {
         return Ok(()); // root gone; dropping the watcher below is enough
     };
-    let mut inner = state.inner.lock().map_err(|_error| "watcher poisoned")?;
-    if inner.root.as_deref() == Some(root_path.as_path()) {
-        inner.watcher = None;
+    let watcher = {
+        let mut inner = state.inner.lock().map_err(|_error| "watcher poisoned")?;
+        if inner.root.as_deref() != Some(root_path.as_path()) {
+            return Ok(());
+        }
         inner.root = None;
         inner.watched.clear();
         inner.failures = 0;
         inner.reported_limit = false;
         inner.filter = None;
-    }
+        inner.watcher.take()
+    };
+    drop(watcher);
     Ok(())
 }
 

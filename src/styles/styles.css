@@ -1056,6 +1056,11 @@ input:focus-visible {
   margin-top: 14px;
 }
 /* Theme Maker */
+.theme-maker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+}
 .theme-maker-page {
   height: 100vh;
   min-height: 420px;
@@ -1699,8 +1704,6 @@ input:focus-visible {
 .app-shell.editor-glass-enabled .file-explorer,
 .app-shell.editor-glass-enabled .editor-pane,
 .app-shell.editor-glass-enabled .tab-strip,
-.app-shell.editor-glass-enabled .settings-panel,
-.app-shell.editor-glass-enabled .settings-header,
 .app-shell.editor-glass-enabled .context-menu,
 .app-shell.editor-glass-enabled .search-row,
 .app-shell.editor-glass-enabled .theme-search,

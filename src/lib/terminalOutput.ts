@@ -56,7 +56,12 @@ function ensureListener() {
       historySize += chunk.data.length;
       trimHistory();
       for (const subscriber of subscribers.get(payload.id) ?? []) {
-        if (subscriber.active) subscriber.callback(payload.data);
+        if (!subscriber.active) continue;
+        try {
+          subscriber.callback(payload.data);
+        } catch {
+          // One terminal view must not stop output for the others.
+        }
       }
     }).then(() => undefined).catch((error) => {
       listener = undefined;

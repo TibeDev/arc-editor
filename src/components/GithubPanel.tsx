@@ -174,10 +174,15 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
 
   useEffect(() => {
     if (!authSessionId) return;
+    let inFlight = false;
     const interval = window.setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
       void invoke<GithubStatus>("github_status", { root: workspace }).then((next) => {
         if (next.authenticated) void finishAuth(authSessionId);
-      }).catch(() => undefined);
+      }).catch(() => undefined).finally(() => {
+        inFlight = false;
+      });
     }, 1500);
     return () => window.clearInterval(interval);
   }, [authSessionId, finishAuth, workspace]);

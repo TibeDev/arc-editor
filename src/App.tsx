@@ -225,10 +225,14 @@ async function requestWorkspaceAccess(root: string): Promise<boolean> {
   return true;
 }
 
-function matchesPluginShortcut(
-  event: KeyboardEvent,
-  shortcut: string,
-): boolean {
+const parsedShortcuts = new Map<
+  string,
+  { key: string; control: boolean; shift: boolean; alt: boolean }
+>();
+
+function parsePluginShortcut(shortcut: string) {
+  const cached = parsedShortcuts.get(shortcut);
+  if (cached) return cached;
   const parts = shortcut
     .toLowerCase()
     .split('+')
@@ -236,17 +240,29 @@ function matchesPluginShortcut(
   const key = parts.find(
     (part) => !['ctrl', 'cmd', 'meta', 'shift', 'alt', 'option'].includes(part),
   );
-  if (!key) return false;
-  const expectsControl = parts.some((part) =>
-    ['ctrl', 'cmd', 'meta'].includes(part),
-  );
-  const expectsShift = parts.includes('shift');
-  const expectsAlt = parts.some((part) => ['alt', 'option'].includes(part));
+  const parsed = key
+    ? {
+        key,
+        control: parts.some((part) => ['ctrl', 'cmd', 'meta'].includes(part)),
+        shift: parts.includes('shift'),
+        alt: parts.some((part) => ['alt', 'option'].includes(part)),
+      }
+    : null;
+  if (parsed) parsedShortcuts.set(shortcut, parsed);
+  return parsed;
+}
+
+function matchesPluginShortcut(
+  event: KeyboardEvent,
+  shortcut: string,
+): boolean {
+  const parsed = parsePluginShortcut(shortcut);
+  if (!parsed) return false;
   return (
-    (event.ctrlKey || event.metaKey) === expectsControl &&
-    event.shiftKey === expectsShift &&
-    event.altKey === expectsAlt &&
-    event.key.toLowerCase() === key
+    (event.ctrlKey || event.metaKey) === parsed.control &&
+    event.shiftKey === parsed.shift &&
+    event.altKey === parsed.alt &&
+    event.key.toLowerCase() === parsed.key
   );
 }
 
@@ -544,14 +560,15 @@ function phpCompletion(context: CompletionContext): CompletionResult | null {
 
 function expandDocumentTemplate(view: EditorView, extension: string): boolean {
   if (!['html', 'htm', 'php'].includes(extension)) return false;
-  const document = view.state.doc.toString();
   const selection = view.state.selection.main;
+  const length = view.state.doc.length;
   if (
-    selection.from !== document.length ||
-    selection.to !== document.length ||
-    !/^\s*!\s*$/.test(document)
+    selection.from !== length ||
+    selection.to !== length
   )
     return false;
+  const document = view.state.doc.toString();
+  if (!/^\s*!\s*$/.test(document)) return false;
 
   const phpFile = extension === 'php';
   const phpBlock = phpFile ? '<?php\n\n?>\n' : '';
@@ -634,7 +651,9 @@ async function prettierFormat(
 function makeTree(files: DiskFile[]): TreeNode[] {
   const root: TreeNode[] = [];
   const directories = new Map<string, TreeNode>();
-  const depthOf = (path: string) => path.split('/').length;
+  const depths = new Map<string, number>();
+  for (const file of files) depths.set(file.path, file.path.split('/').length);
+  const depthOf = (path: string) => depths.get(path) ?? path.split('/').length;
   for (const file of [...files].sort((a, b) => {
     const depth = depthOf(a.path) - depthOf(b.path);
     if (depth !== 0) return depth;
@@ -774,7 +793,7 @@ function EditorPane({
   terminals: TerminalSession[];
   files: OpenFile[];
   onActivate: (id: GroupId) => void;
-  onChange: (path: string, content: string) => void;
+  onChange: (path: string, content?: string) => void;
   onClose: (id: GroupId, path: string) => void;
   onDropFile: (id: GroupId, path: string, placement?: SplitPlacement) => void;
   canCreateSplit: boolean;
@@ -839,7 +858,7 @@ function EditorPane({
                 transaction.annotation(externalContentUpdate),
               )
             ) {
-              onChange(file.path, update.state.doc.toString());
+              onChange(file.path);
             }
             if (update.selectionSet || update.docChanged || update.focusChanged)
               onSelectionChangeRef.current?.(file.path);
@@ -871,6 +890,7 @@ function EditorPane({
       });
     }
     return () => {
+      onChange(file.path, editor.state.doc.toString());
       snapshot.current = {
         path: file.path,
         selection: editor.state.selection,
@@ -1267,17 +1287,15 @@ function EditorPane({
               key={session.id}
               className={`terminal-host ${activeTerminal?.id === session.id ? 'active' : ''}`}
             >
-              {activeTerminal?.id === session.id && (
-                <Suspense fallback={<div className="terminal-view" />}>
-                  <TerminalView
-                    session={session}
-                    active
-                    theme={theme}
-                    settings={settings}
-                    onTitleChange={onTerminalTitleChange}
-                  />
-                </Suspense>
-              )}
+              <Suspense fallback={<div className="terminal-view" />}>
+                <TerminalView
+                  session={session}
+                  active={activeTerminal?.id === session.id}
+                  theme={theme}
+                  settings={settings}
+                  onTitleChange={onTerminalTitleChange}
+                />
+              </Suspense>
             </div>
           ))}
         </div>
@@ -1414,6 +1432,9 @@ function App() {
   const [files, setFiles] = useState<DiskFile[]>([]);
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
   const fileContents = useRef(new Map<string, string>());
+  const pendingEditorContent = useRef(new Set<string>());
+  const pendingEditorFrame = useRef<number | null>(null);
+  const selfWritePaths = useRef(new Map<string, number>());
   const [groups, setGroups] = useState<EditorGroup[]>([
     { id: 'group-1', activePath: '', tabs: [] },
   ]);
@@ -1434,6 +1455,7 @@ function App() {
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
   const editorViews = useRef(new Map<string, Map<GroupId, EditorView>>());
   const lastActiveEditorPath = useRef('');
+  const selectionEventAt = useRef(0);
   const [pluginLanguageOverrides, setPluginLanguageOverrides] = useState<
     Record<string, string>
   >({});
@@ -1473,12 +1495,17 @@ function App() {
     startX: number;
     startWidth: number;
     pointerId: number;
+    pendingWidth: number;
   } | null>(null);
+  const viewerDragFrame = useRef<number | null>(null);
+  const fileExplorerRef = useRef<HTMLElement>(null);
   const selectionAnchor = useRef('');
   const trashCounter = useRef(0);
   const scanGeneration = useRef(0);
   const scannedTree = useRef('');
   const treeScrollRef = useRef<HTMLDivElement>(null);
+  const treeScrollFrame = useRef<number | null>(null);
+  const pendingTreeScrollTop = useRef(0);
   const groupCounter = useRef(1);
   const splitCounter = useRef(0);
   const terminalCounter = useRef(0);
@@ -1523,7 +1550,22 @@ function App() {
     DEFAULT_THEME;
   const dynamicThemeCss = useMemo(
     () => themeCss(activeTheme, settings),
-    [activeTheme, settings],
+    [
+      activeTheme,
+      settings.editorGlassEnabled,
+      settings.glassAppTransparency,
+      settings.glassSidebarTransparency,
+      settings.editorGlassTransparency,
+      settings.glassTerminalTransparency,
+      settings.glassTabsTransparency,
+      settings.glassFloatingTransparency,
+      settings.glassSettingsTransparency,
+      settings.glassControlsTransparency,
+      settings.fontFamily,
+      settings.fontSize,
+      settings.lineHeight,
+      settings.tabSize,
+    ],
   );
   const updatePercent = updateProgress.total
     ? Math.min(
@@ -1533,10 +1575,13 @@ function App() {
     : null;
 
   useEffect(() => {
-    localStorage.setItem(
-      'arc.settings',
-      JSON.stringify({ ...settings, version: APP_SETTINGS_VERSION }),
-    );
+    const timer = window.setTimeout(() => {
+      localStorage.setItem(
+        'arc.settings',
+        JSON.stringify({ ...settingsRef.current, version: APP_SETTINGS_VERSION }),
+      );
+    }, 250);
+    return () => window.clearTimeout(timer);
   }, [settings]);
 
   useEffect(() => {
@@ -1743,17 +1788,20 @@ function App() {
     void (async () => {
       const themesPath = await join(await appDataDir(), 'themes');
       const entries = await readDir(themesPath);
-      const loaded: ThemeDefinition[] = [];
-      for (const entry of entries) {
-        if (!entry.isDirectory) continue;
-        try {
-          const path = await join(themesPath, entry.name, 'theme.json');
-          const value: unknown = JSON.parse(await readTextFile(path));
-          if (isThemeDefinition(value)) loaded.push(value);
-        } catch {
-          continue;
-        }
-      }
+      const loaded = (
+        await Promise.all(
+          entries.map(async (entry): Promise<ThemeDefinition | null> => {
+            if (!entry.isDirectory) return null;
+            try {
+              const path = await join(themesPath, entry.name, 'theme.json');
+              const value: unknown = JSON.parse(await readTextFile(path));
+              return isThemeDefinition(value) ? value : null;
+            } catch {
+              return null;
+            }
+          }),
+        )
+      ).filter((theme): theme is ThemeDefinition => theme !== null);
       const merged = new Map(BUILTIN_THEMES.map((theme) => [theme.id, theme]));
       loaded.forEach((theme) => merged.set(theme.id, theme));
       setThemes([...merged.values()]);
@@ -1789,7 +1837,15 @@ function App() {
       startX: event.clientX,
       startWidth: viewerOpen ? settings.sidebarWidth : MIN_VIEWER_WIDTH,
       pointerId: event.pointerId,
+      pendingWidth: viewerOpen ? settings.sidebarWidth : MIN_VIEWER_WIDTH,
     };
+  };
+
+  const applyViewerWidth = (width: number) => {
+    const element = fileExplorerRef.current;
+    if (!element) return;
+    element.style.width = `${width}px`;
+    element.style.flexBasis = `${width}px`;
   };
 
   useEffect(() => {
@@ -1798,19 +1854,26 @@ function App() {
       if (!drag || drag.pointerId !== event.pointerId) return;
       event.preventDefault();
       const width = Math.round(drag.startWidth + event.clientX - drag.startX);
-      if (width < MIN_VIEWER_WIDTH) {
-        setViewerOpen(false);
-        return;
-      }
-      setViewerOpen(true);
-      setSettings((current) => ({
-        ...current,
-        sidebarWidth: Math.min(480, width),
-      }));
+      drag.pendingWidth = Math.max(MIN_VIEWER_WIDTH, Math.min(480, width));
+      if (viewerDragFrame.current !== null) return;
+      viewerDragFrame.current = window.requestAnimationFrame(() => {
+        viewerDragFrame.current = null;
+        if (viewerDrag.current)
+          applyViewerWidth(viewerDrag.current.pendingWidth);
+      });
     };
     const finishResize = (event: PointerEvent) => {
-      if (viewerDrag.current?.pointerId === event.pointerId)
-        viewerDrag.current = null;
+      const drag = viewerDrag.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      viewerDrag.current = null;
+      if (viewerDragFrame.current !== null) {
+        window.cancelAnimationFrame(viewerDragFrame.current);
+        viewerDragFrame.current = null;
+      }
+      applyViewerWidth(drag.pendingWidth);
+      const collapsed = drag.startWidth + event.clientX - drag.startX < MIN_VIEWER_WIDTH;
+      setViewerOpen(!collapsed);
+      if (!collapsed) updateSettings({ sidebarWidth: drag.pendingWidth });
     };
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', finishResize);
@@ -2199,6 +2262,11 @@ function App() {
         (file) => file.path === relativePath,
       );
       if (!open) continue;
+      const selfWriteAt = selfWritePaths.current.get(relativePath);
+      if (selfWriteAt !== undefined && Date.now() - selfWriteAt < 3000) {
+        selfWritePaths.current.delete(relativePath);
+        continue;
+      }
       try {
         const content = await readTextFile(`${root}/${relativePath}`);
         const lastWritten = lastDiskWrite.current.get(relativePath);
@@ -2564,6 +2632,7 @@ function App() {
     sourceWorkspace: string,
     destinationDirectory: string,
     verb: 'Copied' | 'Duplicated' = 'Copied',
+    refresh = true,
   ) => {
     if (!workspace) return;
     if (
@@ -2602,7 +2671,7 @@ function App() {
     const absoluteDestination = `${workspace}/${destination}`;
     try {
       await copyTreeEntry(source, absoluteDestination, entry.kind);
-      await refreshWorkspace(workspace);
+      if (refresh) await refreshWorkspace(workspace);
       setSelectedPath(destination);
       setSelectedPaths(new Set([destination]));
       selectionAnchor.current = destination;
@@ -2653,7 +2722,10 @@ function App() {
         entry,
         fileClipboard.workspace,
         destinationDirectory,
+        'Copied',
+        false,
       );
+    if (workspace) await refreshWorkspace(workspace);
     setContextMenu(null);
   };
 
@@ -2668,11 +2740,17 @@ function App() {
         workspace,
         parentDirectory(selectedEntry.path),
         'Duplicated',
+        false,
       );
+    if (workspace) await refreshWorkspace(workspace);
     setContextMenu(null);
   };
 
-  const moveEntry = async (path: string, destinationDirectory: string) => {
+  const moveEntry = async (
+    path: string,
+    destinationDirectory: string,
+    refresh = true,
+  ) => {
     const entry = files.find((file) => file.path === path);
     if (!entry || !workspace) return;
     if (
@@ -2746,7 +2824,7 @@ function App() {
         setExpanded((current) => new Set([...current, destinationDirectory]));
       setDropTargetPath(null);
       setContextMenu(null);
-      await refreshWorkspace(workspace);
+      if (refresh) await refreshWorkspace(workspace);
       setMessage(`Moved ${entry.name}`);
     } catch (error) {
       setDropTargetPath(null);
@@ -2760,7 +2838,8 @@ function App() {
       files.filter((entry) => requested.has(entry.path)),
     );
     for (const entry of entries)
-      await moveEntry(entry.path, destinationDirectory);
+      await moveEntry(entry.path, destinationDirectory, false);
+    if (workspace) await refreshWorkspace(workspace);
   };
 
   useEffect(() => {
@@ -2894,10 +2973,29 @@ function App() {
     }
   };
 
+  const flushPendingEditorContent = () => {
+    const paths = [...pendingEditorContent.current];
+    pendingEditorContent.current.clear();
+    pendingEditorFrame.current = null;
+    const changed: { path: string; content: string }[] = [];
+    for (const path of paths) {
+      const views = editorViews.current.get(path);
+      const editor = views?.values().next().value;
+      if (!editor) continue;
+      const content = editor.state.doc.toString();
+      if (fileContents.current.get(path) === content) continue;
+      fileContents.current.set(path, content);
+      changed.push({ path, content });
+    }
+    for (const entry of changed)
+      pluginRuntime.emitEvent('editor:changed', entry);
+  };
+
   const saveFile = useCallback(
     async (path: string): Promise<boolean> => {
       const file = openFiles.find((entry) => entry.path === path);
       if (!file || !workspace) return false;
+      if (pendingEditorContent.current.size) flushPendingEditorContent();
       const currentContent = fileContents.current.get(path) ?? '';
       let content: string;
       let formatFailed = false;
@@ -2924,6 +3022,7 @@ function App() {
         await writeTextFile(`${workspace}/${file.path}`, content);
         fileContents.current.set(path, content);
         lastDiskWrite.current.set(path, contentFingerprint(content));
+        selfWritePaths.current.set(path, Date.now());
         setDiskConflicts((current) => {
           if (!current.has(path)) return current;
           const next = new Set(current);
@@ -2966,7 +3065,24 @@ function App() {
   );
 
   const updateFile = useCallback(
-    (path: string, content: string, replace = false) => {
+    (path: string, content?: string, replace = false) => {
+      if (content === undefined) {
+        pendingEditorContent.current.add(path);
+        if (pendingEditorFrame.current === null) {
+          pendingEditorFrame.current = window.requestAnimationFrame(() =>
+            flushPendingEditorContent(),
+          );
+        }
+        setOpenFiles((current) => {
+          const file = current.find((entry) => entry.path === path);
+          if (!file || (file.dirty && !replace)) return current;
+          return current.map((entry) =>
+            entry.path === path ? { ...entry, dirty: true } : entry,
+          );
+        });
+        return;
+      }
+      pendingEditorContent.current.delete(path);
       if (fileContents.current.get(path) === content) return;
       fileContents.current.set(path, content);
       pluginRuntime.emitEvent('editor:changed', { path, content });
@@ -4034,11 +4150,15 @@ function App() {
     </div>
   );
 
-  const createAnchorVisible =
-    Boolean(selectedDirectory) &&
-    visibleTreeNodes.some(
-      ({ node }) => node.kind === 'directory' && node.path === selectedDirectory,
-    );
+  const createAnchorVisible = useMemo(
+    () =>
+      Boolean(selectedDirectory) &&
+      visibleTreeNodes.some(
+        ({ node }) =>
+          node.kind === 'directory' && node.path === selectedDirectory,
+      ),
+    [selectedDirectory, visibleTreeNodes],
+  );
 
   const renderTree = () => (
     <>
@@ -4507,6 +4627,7 @@ function App() {
       run: () => pluginRuntime.languageCommands.signatureHelp(),
     },
   ] : [];
+  const normalizedCommandQuery = commandQuery.toLowerCase();
   const commandItems: (PluginCommandDefinition & {
     pluginId: string;
     pluginName: string;
@@ -4528,7 +4649,7 @@ function App() {
   ].filter((command) =>
     `${command.title} ${command.description ?? ''} ${command.pluginName}`
       .toLowerCase()
-      .includes(commandQuery.toLowerCase()),
+      .includes(normalizedCommandQuery),
   ) : [];
   const runPaletteCommand = async (
     command: PluginCommandDefinition & { pluginId: string; pluginName: string },
@@ -4591,6 +4712,9 @@ function App() {
         pluginGrammarFor={pluginRuntime.getGrammar}
         pluginGrammarVersion={pluginRuntime.grammarVersion}
         onSelectionChange={(path) => {
+          const now = performance.now();
+          if (now - selectionEventAt.current < 80) return;
+          selectionEventAt.current = now;
           const context = getPluginEditorContext(path);
           pluginRuntime.emitEvent('editor:selection-changed', context);
           pluginRuntime.emitEvent('editor:context-changed', context);
@@ -4616,8 +4740,8 @@ function App() {
     );
   };
 
-  if (themeMakerOpen)
-    return (
+  const themeMaker = themeMakerOpen ? (
+    <div className="theme-maker-overlay">
       <Suspense fallback={null}>
         <ThemeMaker
           initialTheme={activeTheme}
@@ -4640,7 +4764,8 @@ function App() {
           }
         />
       </Suspense>
-    );
+    </div>
+  ) : null;
 
   return (
     <main
@@ -4808,6 +4933,7 @@ function App() {
         <>
           {workspace && viewerOpen && (
             <aside
+              ref={fileExplorerRef}
               className="file-explorer"
               style={{
                 width: settings.sidebarWidth,
@@ -4897,11 +5023,15 @@ function App() {
               <div
                 ref={treeScrollRef}
                 className="tree-scroll"
-                onScroll={(event) =>
-                  setTreeScrollTop(
-                    Math.floor(event.currentTarget.scrollTop / 24) * 24,
-                  )
-                }
+                onScroll={(event) => {
+                  pendingTreeScrollTop.current =
+                    Math.floor(event.currentTarget.scrollTop / 24) * 24;
+                  if (treeScrollFrame.current !== null) return;
+                  treeScrollFrame.current = window.requestAnimationFrame(() => {
+                    treeScrollFrame.current = null;
+                    setTreeScrollTop(pendingTreeScrollTop.current);
+                  });
+                }}
                 onDragOver={(event) => {
                   if ((event.target as HTMLElement).closest('.tree-row'))
                     return;
@@ -5350,6 +5480,7 @@ function App() {
           />
         </Suspense>
       )}
+      {themeMaker}
     </main>
   );
 }
