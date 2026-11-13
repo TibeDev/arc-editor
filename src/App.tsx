@@ -1503,6 +1503,21 @@ function App() {
     visibleTreeNodes.length,
     treeWindowStart + Math.ceil(treeViewportHeight / 24) + 16,
   );
+  useEffect(() => {
+    if (!newItemKind) return;
+    const container = treeScrollRef.current;
+    if (!container) return;
+    const index = selectedDirectory
+      ? visibleTreeNodes.findIndex(({ node }) => node.path === selectedDirectory)
+      : -1;
+    const top = Math.max(0, index) * 24;
+    if (
+      top < container.scrollTop ||
+      top + 48 > container.scrollTop + container.clientHeight
+    ) {
+      container.scrollTop = Math.max(0, top - 24);
+    }
+  }, [newItemKind, selectedDirectory, visibleTreeNodes]);
   const activeTheme =
     themes.find((entry) => entry.id === settings.selectedTheme) ??
     DEFAULT_THEME;
@@ -3217,12 +3232,23 @@ function App() {
     void openFile(file, targetGroup);
   };
 
-  const startCreating = (kind: NewItemKind) => {
+  const startCreating = (kind: NewItemKind, directory = selectedDirectory) => {
     if (!workspace) {
       setMessage('Open a folder first.');
       return;
     }
     setViewerOpen(true);
+    if (directory) {
+      setExpanded((current) => {
+        const next = new Set(current);
+        let ancestor = '';
+        for (const segment of directory.split('/')) {
+          ancestor = ancestor ? `${ancestor}/${segment}` : segment;
+          next.add(ancestor);
+        }
+        return next;
+      });
+    }
     setNewItemKind(kind);
     setNewItemName('');
     setContextMenu(null);
@@ -3972,6 +3998,48 @@ function App() {
     </div>
   );
 
+  const renderCreateInput = (kind: NewItemKind, depth = 0) => (
+    <div
+      key={`create-${selectedDirectory}`}
+      className="tree-create-row"
+      style={{ marginLeft: `${21 + depth * 13}px` }}
+    >
+      {kind === 'file' ? (
+        <FilePlus2 size={14} />
+      ) : (
+        <FolderPlus size={14} />
+      )}
+      <input
+        autoFocus
+        aria-label={`New ${kind} name`}
+        placeholder={kind === 'file' ? 'filename.ext' : 'folder name'}
+        value={newItemName}
+        onChange={(event) => setNewItemName(event.target.value)}
+        onBlur={() => {
+          setNewItemKind(null);
+          setNewItemName('');
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            void (kind === 'file'
+              ? createFile(newItemName)
+              : createFolder(newItemName));
+          } else if (event.key === 'Escape') {
+            setNewItemKind(null);
+            setNewItemName('');
+          }
+        }}
+      />
+    </div>
+  );
+
+  const createAnchorVisible =
+    Boolean(selectedDirectory) &&
+    visibleTreeNodes.some(
+      ({ node }) => node.kind === 'directory' && node.path === selectedDirectory,
+    );
+
   const renderTree = () => (
     <>
       <div aria-hidden="true" style={{ height: treeWindowStart * 24 }} />
@@ -3992,7 +4060,7 @@ function App() {
             ) : (
               <FileIcon name={node.name} />
             );
-          return renamingPath === node.path ? (
+          const row = renamingPath === node.path ? (
             <div key={node.path}>{renderRenameInput(node, depth)}</div>
           ) : (
             <button
@@ -4059,11 +4127,18 @@ function App() {
               <span className="tree-label">{node.name}</span>
             </button>
           );
+          return newItemKind &&
+            node.kind === 'directory' &&
+            node.path === selectedDirectory
+            ? [row, renderCreateInput(newItemKind, depth + 1)]
+            : row;
         })}
       <div
         aria-hidden="true"
         style={{
-          height: Math.max(0, visibleTreeNodes.length - treeWindowEnd) * 24,
+          height:
+            Math.max(0, visibleTreeNodes.length - treeWindowEnd) * 24 +
+            (newItemKind && selectedDirectory ? 24 : 0),
         }}
       />
     </>
@@ -4848,7 +4923,11 @@ function App() {
                 onClick={(event) => {
                   // Empty space below the last row selects the workspace
                   // root (VS Code behavior): new files land at the root.
-                  if ((event.target as HTMLElement).closest('.tree-row, input'))
+                  if (
+                    (event.target as HTMLElement).closest(
+                      '.tree-row, .tree-create-row, input',
+                    )
+                  )
                     return;
                   setSelectedPaths(new Set());
                   setSelectedPath('');
@@ -4856,35 +4935,11 @@ function App() {
                   selectionAnchor.current = '';
                 }}
               >
-                {newItemKind && (
-                  <div className="tree-create-row">
-                    {newItemKind === 'file' ? (
-                      <FilePlus2 size={14} />
-                    ) : (
-                      <FolderPlus size={14} />
-                    )}
-                    <input
-                      autoFocus
-                      aria-label={`New ${newItemKind} name`}
-                      placeholder={
-                        newItemKind === 'file' ? 'filename.ext' : 'folder name'
-                      }
-                      value={newItemName}
-                      onChange={(event) => setNewItemName(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          void (newItemKind === 'file'
-                            ? createFile(newItemName)
-                            : createFolder(newItemName));
-                        } else if (event.key === 'Escape') {
-                          setNewItemKind(null);
-                          setNewItemName('');
-                        }
-                      }}
-                    />
-                  </div>
-                )}
+                {newItemKind &&
+                  (deferredFilter.trim() ||
+                    !selectedDirectory ||
+                    !createAnchorVisible) &&
+                  renderCreateInput(newItemKind)}
                 {deferredFilter.trim() ? (
                   filteredFiles.length ? (
                     renderSearchResults()
@@ -5101,6 +5156,33 @@ function App() {
                   {pluginRuntime.contextMenuItems.length === 0 && (
                     <div className="menu-divider" />
                   )}
+                  <button
+                    onClick={() => {
+                      const target = contextMenu.target!;
+                      const directory =
+                        target.kind === 'directory'
+                          ? target.path
+                          : parentDirectory(target.path);
+                      setSelectedDirectory(directory);
+                      startCreating('file', directory);
+                    }}
+                  >
+                    Create File
+                  </button>
+                  <button
+                    onClick={() => {
+                      const target = contextMenu.target!;
+                      const directory =
+                        target.kind === 'directory'
+                          ? target.path
+                          : parentDirectory(target.path);
+                      setSelectedDirectory(directory);
+                      startCreating('folder', directory);
+                    }}
+                  >
+                    Create Folder
+                  </button>
+                  <div className="menu-divider" />
                   <button onClick={() => startRename(contextMenu.target!)}>
                     Rename <kbd>F2</kbd>
                   </button>
