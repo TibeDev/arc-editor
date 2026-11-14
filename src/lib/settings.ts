@@ -224,10 +224,12 @@ export function migrateStorageNamespace(): void {
 
 export function loadSettings(): AppSettings {
   try {
-    const stored = JSON.parse(localStorage.getItem("arc.settings") ?? "null") as (Partial<AppSettings> & { version?: number; editorGlassSaturation?: unknown }) | null;
+    const stored = JSON.parse(localStorage.getItem("arc.settings") ?? "null") as (Partial<AppSettings> & { version?: number; editorGlassSaturation?: unknown; frameRateMode?: unknown; frameRateLimit?: unknown }) | null;
     if (!stored) return DEFAULT_SETTINGS;
     const saved = { ...stored };
     delete saved.editorGlassSaturation;
+    delete saved.frameRateMode;
+    delete saved.frameRateLimit;
     const settings = { ...DEFAULT_SETTINGS, ...saved, appTheme: "classic" as const };
     // The pre-versioned default made the entire app background fully transparent.
     if ((stored.version ?? 0) < 1 && stored.glassAppTransparency === 100) {

@@ -1,3 +1,5 @@
+mod process;
+
 use notify_debouncer_full::{
     new_debouncer,
     notify::{event::EventKind, event::ModifyKind, event::RenameMode, Event, RecommendedWatcher},
@@ -35,6 +37,7 @@ struct PluginProcessState(Mutex<HashMap<String, Arc<PluginProcess>>>);
 struct PluginProcess {
     stdin: Mutex<Option<ChildStdin>>,
     child: Mutex<Child>,
+    managed: Option<u64>,
 }
 
 #[derive(Default)]
@@ -190,6 +193,7 @@ struct TerminalProcess {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
+    managed: Option<u64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -270,6 +274,7 @@ impl Drop for TerminalState {
 fn terminal_spawn(
     app: tauri::AppHandle,
     state: State<'_, TerminalState>,
+    processes: State<'_, process::ProcessManager>,
     id: String,
     cwd: Option<String>,
     command: Option<String>,
@@ -305,11 +310,18 @@ fn terminal_spawn(
     if let Some(directory) = cwd.filter(|path| !path.is_empty()) {
         command_builder.cwd(directory);
     }
-    let child = pair
+    let mut child = pair
         .slave
         .spawn_command(command_builder)
         .map_err(|error| error.to_string())?;
     drop(pair.slave);
+    let managed = child
+        .process_id()
+        .and_then(|pid| processes.register(format!("terminal:{id}"), pid));
+    if child.process_id().is_some() && managed.is_none() {
+        let _ = child.kill();
+        return Err("Application is shutting down.".to_string());
+    }
     let reader = pair
         .master
         .try_clone_reader()
@@ -322,6 +334,7 @@ fn terminal_spawn(
         master: Mutex::new(pair.master),
         writer: Mutex::new(writer),
         child: Mutex::new(child),
+        managed,
     });
     sessions.active.insert(id.clone(), process);
     if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
@@ -383,6 +396,11 @@ fn read_terminal_output(app: tauri::AppHandle, id: String, mut reader: Box<dyn R
             .ok()
             .and_then(|mut sessions| sessions.active.remove(&id));
         if let Some(process) = process {
+            if let Some(managed) = process.managed {
+                if let Some(processes) = app.try_state::<process::ProcessManager>() {
+                    processes.stop(managed, Duration::ZERO);
+                }
+            }
             if let Ok(mut child) = process.child.lock() {
                 if child.try_wait().ok().flatten().is_none() {
                     let _ = child.kill();
@@ -459,7 +477,11 @@ fn terminal_resize(
 }
 
 #[tauri::command(async)]
-fn terminal_close(state: State<'_, TerminalState>, id: String) -> Result<(), String> {
+fn terminal_close(
+    state: State<'_, TerminalState>,
+    processes: State<'_, process::ProcessManager>,
+    id: String,
+) -> Result<(), String> {
     let process = {
         let mut sessions = state.0.lock().map_err(|error| error.to_string())?;
         if !sessions.closed.iter().any(|closed| closed == &id) {
@@ -471,6 +493,9 @@ fn terminal_close(state: State<'_, TerminalState>, id: String) -> Result<(), Str
         sessions.active.remove(&id)
     };
     if let Some(process) = process {
+        if let Some(managed) = process.managed {
+            processes.stop(managed, Duration::ZERO);
+        }
         if let Ok(mut child) = process.child.lock() {
             let _ = child.kill();
             let _ = child.wait();
@@ -688,6 +713,7 @@ fn stream_process_output(
 fn plugin_process_spawn(
     app: tauri::AppHandle,
     state: State<'_, PluginProcessState>,
+    processes: State<'_, process::ProcessManager>,
     plugin_id: String,
     executable: String,
     args: Vec<String>,
@@ -717,18 +743,37 @@ fn plugin_process_spawn(
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not spawn {executable}: {error}"))?;
+    let managed = processes.register(format!("plugin:{executable}"), child.id());
+    if managed.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("Application is shutting down.".to_string());
+    }
     let stdin = child.stdin.take();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let process = Arc::new(PluginProcess {
         stdin: Mutex::new(stdin),
         child: Mutex::new(child),
+        managed,
     });
-    state
-        .0
-        .lock()
-        .map_err(|error| error.to_string())?
-        .insert(id.clone(), process.clone());
+    let insertion = match state.0.lock() {
+        Ok(mut processes) => {
+            processes.insert(id.clone(), process.clone());
+            Ok(())
+        }
+        Err(error) => Err(error.to_string()),
+    };
+    if let Err(error) = insertion {
+        if let Some(managed) = managed {
+            processes.unregister(managed);
+        }
+        if let Ok(mut child) = process.child.lock() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        return Err(error);
+    }
     if let Some(stdout) = stdout {
         let app = app.clone();
         let output_id = id.clone();
@@ -776,6 +821,16 @@ fn plugin_process_spawn(
                         signal: process_exit_signal(&status),
                     },
                 );
+                eprintln!(
+                    "[process] event=exit id={exit_id} code={:?} signal={:?}",
+                    status.code(),
+                    process_exit_signal(&status)
+                );
+                if let Some(managed) = process.managed {
+                    if let Some(processes) = app_exit.try_state::<process::ProcessManager>() {
+                        processes.unregister(managed);
+                    }
+                }
                 if let Some(state) = app_exit.try_state::<PluginProcessState>() {
                     if let Ok(mut processes) = state.0.lock() {
                         processes.remove(&exit_id);
@@ -831,6 +886,7 @@ fn plugin_process_close_stdin(
 #[tauri::command(async)]
 fn plugin_process_stop(
     state: State<'_, PluginProcessState>,
+    processes: State<'_, process::ProcessManager>,
     id: String,
     timeout_ms: Option<u64>,
 ) -> Result<(), String> {
@@ -841,6 +897,10 @@ fn plugin_process_stop(
     let Some(process) = process else {
         return Ok(());
     };
+    let timeout = Duration::from_millis(timeout_ms.unwrap_or(2000));
+    if let Some(managed) = process.managed {
+        processes.stop(managed, timeout);
+    }
     let mut child = process.child.lock().map_err(|error| error.to_string())?;
     if child
         .try_wait()
@@ -849,7 +909,7 @@ fn plugin_process_stop(
     {
         let _ = child.kill();
     }
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms.unwrap_or(2000));
+    let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if child
             .try_wait()
@@ -865,6 +925,7 @@ fn plugin_process_stop(
 
 #[tauri::command(async)]
 fn plugin_process_exec(
+    processes: State<'_, process::ProcessManager>,
     executable: String,
     args: Vec<String>,
     cwd: Option<String>,
@@ -876,16 +937,38 @@ fn plugin_process_exec(
     }
     let _ = timeout_ms;
     let mut command = external_command(&executable);
-    command.args(&args);
+    command
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if let Some(directory) = cwd.filter(|path| !path.is_empty()) {
         command.current_dir(directory);
     }
     for (key, value) in env.unwrap_or_default() {
         command.env(key, value);
     }
-    let output = command
-        .output()
+    let mut child = command
+        .spawn()
         .map_err(|error| format!("Could not run {executable}: {error}"))?;
+    let managed = processes.register(format!("exec:{executable}"), child.id());
+    if managed.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("Application is shutting down.".to_string());
+    }
+    let output = match child.wait_with_output() {
+        Ok(output) => output,
+        Err(error) => {
+            if let Some(managed) = managed {
+                processes.unregister(managed);
+            }
+            return Err(format!("Could not run {executable}: {error}"));
+        }
+    };
+    if let Some(managed) = managed {
+        processes.unregister(managed);
+    }
     Ok(ProcessExecResult {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -1465,6 +1548,7 @@ fn set_native_background_blur(window: tauri::WebviewWindow, enabled: bool) -> Re
 
 fn external_command(program: &str) -> Command {
     let mut command = Command::new(program);
+    process::prepare_command(&mut command);
     #[cfg(target_os = "linux")]
     if let (Some(appdir), Some(library_path)) =
         (env::var_os("APPDIR"), env::var_os("LD_LIBRARY_PATH"))
@@ -3254,7 +3338,8 @@ async fn updater_install(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .manage(process::ProcessManager::default())
         .manage(TerminalState::default())
         .manage(LocalHttpServerState::default())
         .manage(PluginProcessState::default())
@@ -3312,8 +3397,15 @@ pub fn run() {
             updater_check,
             updater_install
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running Arc");
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            if let Some(processes) = app_handle.try_state::<process::ProcessManager>() {
+                processes.shutdown();
+            }
+        }
+    });
 }
 
 #[cfg(test)]
