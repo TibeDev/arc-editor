@@ -1061,6 +1061,11 @@ input:focus-visible {
   inset: 0;
   z-index: 200;
 }
+.app-shell.theme-maker-active > .app-body,
+.app-shell.theme-maker-active > .titlebar,
+.app-shell.theme-maker-active > .update-banner {
+  visibility: hidden;
+}
 .theme-maker-page {
   height: 100vh;
   min-height: 420px;
@@ -1077,6 +1082,7 @@ input:focus-visible {
   overflow: hidden;
 }
 .theme-maker-header {
+  position: relative;
   height: 56px;
   flex: 0 0 56px;
   display: flex;
@@ -1084,6 +1090,11 @@ input:focus-visible {
   gap: 18px;
   padding: 0 16px;
   border-bottom: 1px solid;
+}
+.theme-maker-header .settings-close {
+  left: 8px;
+  right: auto;
+  top: 13px;
 }
 .theme-maker-content {
   min-height: 0;

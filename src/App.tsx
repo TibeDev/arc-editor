@@ -4769,7 +4769,7 @@ function App() {
 
   return (
     <main
-      className={`app-shell ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'}`}
+      className={`app-shell ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''}`}
       style={settings.interfaceFontFamily ? { fontFamily: settings.interfaceFontFamily } : undefined}
       onClick={() => {
         if (contextMenu) setContextMenu(null);
