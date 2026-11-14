@@ -1,6 +1,6 @@
 [package]
 name = "arc"
-version = "0.1.4-beta.2"
+version = "0.1.4-beta.3"
 description = "A focused workspace for building the web"
 authors = ["Arc"]
 edition = "2021"
