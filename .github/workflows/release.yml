@@ -27,12 +27,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Require tag on main and matching version
+      - name: Require tag on matching branch and matching version
         shell: bash
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          git fetch origin main --no-tags
+          case "$RELEASE_TAG" in
+            *-*) BASE_BRANCH=pre-release ;;
+            *)   BASE_BRANCH=main ;;
+          esac
+          git fetch origin "$BASE_BRANCH" --no-tags
           git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD
           node <<'NODE'
           const fs = require('node:fs');
