@@ -85,7 +85,7 @@ jobs:
           generateReleaseNotes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           updaterJsonPreferNsis: true
-          args: ${{ matrix.args }}
+          args: ${{ runner.os == 'Linux' && contains(github.ref_name, '-') && '--ci --bundles deb appimage' || matrix.args }}
 
   channel-pointer:
     needs: build
