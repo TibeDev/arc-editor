@@ -17,10 +17,13 @@ jobs:
         include:
           - os: ubuntu-24.04
             args: --ci --bundles deb rpm appimage
+            prereleaseArgs: --ci --bundles deb appimage
           - os: windows-latest
             args: --ci --bundles msi nsis
+            prereleaseArgs: --ci --bundles nsis
           - os: macos-latest
-            args: --ci --target universal-apple-darwin --bundles dmg
+            args: --ci --target universal-apple-darwin --bundles app dmg
+            prereleaseArgs: --ci --target universal-apple-darwin --bundles app dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -85,7 +88,7 @@ jobs:
           generateReleaseNotes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           updaterJsonPreferNsis: true
-          args: ${{ runner.os == 'Linux' && contains(github.ref_name, '-') && '--ci --bundles deb appimage' || matrix.args }}
+          args: ${{ contains(github.ref_name, '-') && matrix.prereleaseArgs || matrix.args }}
 
   channel-pointer:
     needs: build
