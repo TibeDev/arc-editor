@@ -111,6 +111,7 @@ import { appDataDir, homeDir, join } from '@tauri-apps/api/path';
 import TitleBar from './components/TitleBar';
 import './styles/pluginExtensions.css';
 import './styles/layout-overrides.css';
+import './styles/app-themes.css';
 import { forgetTerminalOutput } from './lib/terminalOutput';
 import {
   usePluginRuntime,
@@ -127,7 +128,9 @@ import {
   APP_SETTINGS_VERSION,
   BUILTIN_THEMES,
   DEFAULT_THEME,
-  isThemeDefinition,
+  normalizeThemeDefinition,
+  resolveEditorFont,
+  resolveInterfaceFont,
   loadSettings,
   themeCss,
   type AppSettings,
@@ -988,12 +991,12 @@ function EditorPane({
           '&': { height: '100%' },
           '.cm-scroller': {
             overflow: 'auto',
-            fontFamily: settings.fontFamily,
+            fontFamily: resolveEditorFont(settings),
             fontSize: `${settings.fontSize}px`,
             lineHeight: String(settings.lineHeight),
           },
           '.cm-tooltip-autocomplete ul': {
-            fontFamily: settings.fontFamily,
+            fontFamily: resolveEditorFont(settings),
             fontSize: '12px',
             maxHeight: '250px',
           },
@@ -1019,6 +1022,7 @@ function EditorPane({
     settings.wordWrap,
     settings.autocomplete,
     settings.fontFamily,
+    settings.appTheme,
     settings.fontSize,
     settings.lineHeight,
   ]);
@@ -1584,6 +1588,7 @@ function App() {
       settings.glassSettingsTransparency,
       settings.glassControlsTransparency,
       settings.fontFamily,
+      settings.appTheme,
       settings.fontSize,
       settings.lineHeight,
       settings.tabSize,
@@ -1787,7 +1792,8 @@ function App() {
             const value: unknown = JSON.parse(
               localStorage.getItem(key) ?? 'null',
             );
-            return isThemeDefinition(value) ? [value] : [];
+            const theme = normalizeThemeDefinition(value);
+            return theme ? [theme] : [];
           } catch {
             return [];
           }
@@ -1817,7 +1823,7 @@ function App() {
             try {
               const path = await join(themesPath, entry.name, 'theme.json');
               const value: unknown = JSON.parse(await readTextFile(path));
-              return isThemeDefinition(value) ? value : null;
+              return normalizeThemeDefinition(value);
             } catch {
               return null;
             }
@@ -4846,8 +4852,8 @@ function App() {
 
   return (
     <main
-      className={`app-shell ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''}`}
-      style={settings.interfaceFontFamily ? { fontFamily: settings.interfaceFontFamily } : undefined}
+      className={`app-shell app-theme-${settings.appTheme} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''}`}
+      style={{ fontFamily: resolveInterfaceFont(settings) }}
       onClick={() => {
         if (contextMenu) setContextMenu(null);
       }}

@@ -4,13 +4,13 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { subscribeTerminalOutput, terminalOutputReady } from "../lib/terminalOutput";
-import { themeColorWithOpacity, type AppSettings, type ThemeDefinition } from "../lib/settings";
+import { resolveTerminalFont, themeColorWithOpacity, type AppSettings, type ThemeDefinition } from "../lib/settings";
 
 type TerminalSession = { id: string; cwd: string; command?: string };
 type TerminalSettings = Pick<AppSettings,
   "terminalFontFamily" | "terminalFontSize" | "terminalCursorStyle" | "terminalCursorBlink"
   | "terminalScrollback" | "terminalPadding" | "terminalScrollbar" | "terminalSelectionColor"
-  | "editorGlassEnabled" | "glassTerminalTransparency"
+  | "editorGlassEnabled" | "glassTerminalTransparency" | "appTheme"
 >;
 
 export default function TerminalView({ session, active, theme, settings, onTitleChange }: {
@@ -35,7 +35,7 @@ export default function TerminalView({ session, active, theme, settings, onTitle
     const xterm = new Terminal({
       cursorBlink: settings.terminalCursorBlink,
       cursorStyle: settings.terminalCursorStyle,
-      fontFamily: settings.terminalFontFamily,
+      fontFamily: resolveTerminalFont(settings),
       fontSize: settings.terminalFontSize,
       scrollback: settings.terminalScrollback,
       theme: {
@@ -114,7 +114,7 @@ export default function TerminalView({ session, active, theme, settings, onTitle
     if (!xterm) return;
     xterm.options.cursorBlink = settings.terminalCursorBlink;
     xterm.options.cursorStyle = settings.terminalCursorStyle;
-    xterm.options.fontFamily = settings.terminalFontFamily;
+    xterm.options.fontFamily = resolveTerminalFont(settings);
     xterm.options.fontSize = settings.terminalFontSize;
     xterm.options.scrollback = settings.terminalScrollback;
     xterm.options.theme = {
@@ -125,7 +125,7 @@ export default function TerminalView({ session, active, theme, settings, onTitle
       cursor: theme.colors.cursor,
       selectionBackground: settings.terminalSelectionColor || theme.colors.selection,
     };
-  }, [settings.terminalCursorBlink, settings.terminalCursorStyle, settings.terminalFontFamily, settings.terminalFontSize, settings.terminalScrollback, settings.terminalSelectionColor, settings.editorGlassEnabled, settings.glassTerminalTransparency, theme]);
+  }, [settings.terminalCursorBlink, settings.terminalCursorStyle, settings.terminalFontFamily, settings.appTheme, settings.terminalFontSize, settings.terminalScrollback, settings.terminalSelectionColor, settings.editorGlassEnabled, settings.glassTerminalTransparency, theme]);
 
   useEffect(() => {
     if (!ready || !active || !host.current || !terminal.current || !fit.current) return;
@@ -156,7 +156,7 @@ export default function TerminalView({ session, active, theme, settings, onTitle
       observer.disconnect();
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [active, ready, session.id, settings.terminalFontFamily, settings.terminalFontSize, settings.terminalPadding]);
+  }, [active, ready, session.id, settings.terminalFontFamily, settings.appTheme, settings.terminalFontSize, settings.terminalPadding]);
 
   return <div
     ref={host}

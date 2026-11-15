@@ -1,6 +1,6 @@
 import { ChevronRight, LoaderCircle, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "../lib/settings";
+import { APP_THEME_OPTIONS, appThemeDefinition, DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "../lib/settings";
 import type { UpdateInfo } from "../lib/updater";
 import type { PluginConfigurationContribution, PluginConfigurationProperty } from "../lib/pluginRuntime";
 import ThemeColorPicker from "./ThemeColorPicker";
@@ -104,14 +104,16 @@ function isFontAvailable(stack: string) {
   return available;
 }
 
-function FontFamilySetting({ label, value, options, fallback, onChange }: {
+function FontFamilySetting({ label, value, options, fallback, themeDefault, onChange }: {
   label: string;
   value: string;
   options: FontOption[];
   fallback: string;
+  themeDefault: string;
   onChange: (value: string) => void;
 }) {
-  const preset = options.find((option) => option.value === value);
+  const allOptions = [{ value: "", label: "App theme default" }, ...options];
+  const preset = allOptions.find((option) => option.value === value);
   const customName = preset ? "" : fontNameFromStack(value);
   const [customDraft, setCustomDraft] = useState(customName);
   useEffect(() => setCustomDraft(customName), [value]);
@@ -120,10 +122,10 @@ function FontFamilySetting({ label, value, options, fallback, onChange }: {
       value={preset ? value : "__custom"}
       options={[
         ...(!preset ? [{ value: "__custom", label: "Custom font name below", disabled: true }] : []),
-        ...options.map((option) => ({ value: option.value, label: option.label })),
+        ...allOptions.map((option) => ({ value: option.value, label: option.label })),
       ]}
       onChange={(next) => {
-        const selected = options.find((option) => option.value === next);
+        const selected = allOptions.find((option) => option.value === next);
         if (selected) onChange(selected.value);
       }}
     /></label>
@@ -131,9 +133,9 @@ function FontFamilySetting({ label, value, options, fallback, onChange }: {
       setCustomDraft(event.target.value);
       if (event.target.value.trim()) onChange(fontStackFromName(event.target.value, fallback));
     }} onBlur={() => {
-      if (!customDraft.trim() && !preset) onChange(options[0]?.value ?? fallback);
+      if (!customDraft.trim() && !preset) onChange("");
     }} /></label>
-    <div className="font-preview" style={{ fontFamily: value || undefined }}>Aa Bb Cc 0123</div>
+    <div className="font-preview" style={{ fontFamily: value || themeDefault }}>Aa Bb Cc 0123</div>
   </>;
 }
 
@@ -350,22 +352,25 @@ export default function SettingsPanel({
             </>}
             {activeCategory === "typography" && <>
               <section className="settings-section" id="settings-section-typography-interface"><h3>App interface</h3>
-                <FontFamilySetting label="Interface font" value={settings.interfaceFontFamily} options={availableFonts.interface} fallback="sans-serif" onChange={(interfaceFontFamily) => onChange({ interfaceFontFamily })} />
-                <div className="setting-note">Custom font names must be installed on your system. Theme default follows Classic app styling.</div>
+                <FontFamilySetting label="Interface font" value={settings.interfaceFontFamily} options={availableFonts.interface} fallback="sans-serif" themeDefault={appThemeDefinition(settings.appTheme).interfaceFont} onChange={(interfaceFontFamily) => onChange({ interfaceFontFamily })} />
+                <div className="setting-note">Custom font names must be installed on your system. App theme default follows the selected app theme.</div>
               </section>
               <section className="settings-section" id="settings-section-typography-editor"><h3>Code editor</h3>
-                <FontFamilySetting label="Editor font" value={settings.fontFamily} options={availableFonts.editor} fallback="monospace" onChange={(fontFamily) => onChange({ fontFamily })} />
+                <FontFamilySetting label="Editor font" value={settings.fontFamily} options={availableFonts.editor} fallback="monospace" themeDefault={appThemeDefinition(settings.appTheme).editorFont} onChange={(fontFamily) => onChange({ fontFamily })} />
                 <label className="setting-field"><span>Font size <b>{settings.fontSize}px</b></span><input type="range" min="10" max="24" step="1" value={settings.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) })} /></label>
                 <label className="setting-field"><span>Line height <b>{settings.lineHeight.toFixed(1)}</b></span><input type="range" min="1.2" max="2.2" step="0.1" value={settings.lineHeight} onChange={(event) => onChange({ lineHeight: Number(event.target.value) })} /></label>
               </section>
               <section className="settings-section" id="settings-section-typography-terminal"><h3>Terminal</h3>
-                <FontFamilySetting label="Terminal font" value={settings.terminalFontFamily} options={availableFonts.terminal} fallback="monospace" onChange={(terminalFontFamily) => onChange({ terminalFontFamily })} />
+                <FontFamilySetting label="Terminal font" value={settings.terminalFontFamily} options={availableFonts.terminal} fallback="monospace" themeDefault={appThemeDefinition(settings.appTheme).terminalFont} onChange={(terminalFontFamily) => onChange({ terminalFontFamily })} />
                 <label className="setting-field"><span>Font size <b>{settings.terminalFontSize}px</b></span><input type="range" min="10" max="24" step="1" value={settings.terminalFontSize} onChange={(event) => onChange({ terminalFontSize: Number(event.target.value) })} /></label>
               </section>
             </>}
             {activeCategory === "appearance" && <>
               <section className="settings-section" id="settings-section-appearance-interface"><h3>Interface</h3>
-                <label className="setting-field"><span>App theme</span><Select value="classic" onChange={(next) => onChange({ appTheme: next as AppSettings["appTheme"] })} options={[{ value: "classic", label: "Classic" }]} /></label>
+                <label className="setting-field"><span>App theme</span><Select value={settings.appTheme} onChange={(next) => {
+                  const appTheme = next as AppSettings["appTheme"];
+                  onChange({ appTheme, selectedTheme: appThemeDefinition(appTheme).defaultColorTheme });
+                }} options={APP_THEME_OPTIONS} /></label>
                 <div className="setting-note">App style and editor color theme are independent.</div>
                 {toggle("titleBarEnabled", "Custom title bar", "Use Arc's title bar. Turn off to use the system window frame.")}
               </section>

@@ -194,17 +194,25 @@ A theme is one JSON file:
     "operator": "#81a1c1",
     "meta": "#5e81ac",
     "invalid": "#ffffff",
-    "invalidBackground": "#bf616a"
+    "invalidBackground": "#bf616a",
+    "accent": "#88c0d0",
+    "accentText": "#2e3440",
+    "input": "#3b4252",
+    "warning": "#ebcb8b",
+    "error": "#bf616a"
   }
 }
 ```
 
-Every key is required. IDs must match `^[a-z0-9]+(?:-[a-z0-9]+)*$`. Do not use built-in theme IDs: `midnight`, `paper`, `ocean`.
+Every key is required. IDs must match `^[a-z0-9]+(?:-[a-z0-9]+)*$`. Do not use built-in theme IDs: `midnight`, `modern`.
 
 Color rules:
 
 - `activeLine` and `selection` may use 8-digit hex with alpha.
 - `invalid` is text on `invalidBackground`.
+- `accent` drives focus, sliders, and primary actions; `accentText` must stay readable on `accent`.
+- `input` is the background for text fields and compact input surfaces.
+- `warning` and `error` are semantic status colors.
 - Keep body text at least 4.5:1 contrast against `background`, `sidebar`, and `editor`.
 - Keep syntax colors readable against `editor`.
 - Derive missing slots from the seed colors in the brief. Keep one coherent palette.

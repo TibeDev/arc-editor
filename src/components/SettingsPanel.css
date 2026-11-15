@@ -471,6 +471,7 @@
 .settings-main .theme-choice {
   min-height: 84px;
   border-radius: 7px;
+  overflow: hidden;
 }
 .settings-main .theme-choice > button:first-child {
   height: 100%;
@@ -480,6 +481,7 @@
   align-items: flex-start;
   justify-content: center;
   gap: 8px;
+  border-radius: inherit;
 }
 .settings-main .theme-choice-name {
   font-size: var(--font-md);
