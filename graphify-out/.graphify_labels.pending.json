@@ -1,0 +1,18 @@
+{
+  "14": "AtomicU64",
+  "17": "PluginPanel.tsx",
+  "19": "Arc IDE — Repository Audit",
+  "21": "Arc Desktop IDE",
+  "26": "handle_local_request",
+  "27": "external_command",
+  "28": "TerminalView.tsx",
+  "30": "ThemeMaker.tsx",
+  "31": "plugin_local_server_start",
+  "32": "@codemirror/state",
+  "33": "react-icons",
+  "35": "@codemirror/language",
+  "36": "@lezer/highlight",
+  "37": "react-dom",
+  "52": "react-markdown",
+  "59": "@tauri-apps/plugin-clipboard-manager"
+}

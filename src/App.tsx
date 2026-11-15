@@ -113,6 +113,7 @@ import './styles/pluginExtensions.css';
 import './styles/layout-overrides.css';
 import './styles/app-themes.css';
 import { forgetTerminalOutput } from './lib/terminalOutput';
+import { showArcDialog } from './lib/dialog';
 import {
   usePluginRuntime,
   type PluginAppSnapshot,
@@ -604,6 +605,40 @@ function contentFingerprint(value: string): string {
     hashB = Math.imul(hashB ^ code, 0x85ebca6b);
   }
   return `${value.length}:${(hashA >>> 0).toString(36)}:${(hashB >>> 0).toString(36)}`;
+}
+
+async function askDirtyChoice(label: string): Promise<'save' | 'discard' | 'cancel'> {
+  if (!isTauri()) {
+    if (window.confirm(`Save changes to ${label} before continuing?`)) return 'save';
+    return window.confirm(`Discard unsaved changes to ${label}?`)
+      ? 'discard'
+      : 'cancel';
+  }
+  const answer = await showArcDialog({
+    title: 'Unsaved changes',
+    message: `Save changes to ${label} before continuing?`,
+    buttons: [
+      { label: 'Save', value: 'save', primary: true },
+      { label: 'Discard', value: 'discard', danger: true },
+      { label: 'Cancel', value: 'cancel' },
+    ],
+  });
+  if (answer === 'save') return 'save';
+  if (answer === 'discard') return 'discard';
+  return 'cancel';
+}
+
+async function confirmDialog(question: string): Promise<boolean> {
+  if (!isTauri()) return window.confirm(question);
+  const answer = await showArcDialog({
+    title: 'Arc',
+    message: question,
+    buttons: [
+      { label: 'OK', value: 'ok', primary: true },
+      { label: 'Cancel', value: 'cancel' },
+    ],
+  });
+  return answer === 'ok';
 }
 
 async function prettierFormat(
@@ -1474,6 +1509,13 @@ function App() {
   const allowedHiddenPaths = useRef(new Set<string>());
   const settingsRef = useRef<AppSettings>(settings);
   const openFilesRef = useRef<OpenFile[]>([]);
+  const openingPaths = useRef(new Set<string>());
+  const dirtyGuardRef = useRef<
+    (matches?: (path: string) => boolean) => Promise<boolean>
+  >(async () => true);
+  const saveDirtyRef = useRef<
+    (matches?: (path: string) => boolean) => Promise<boolean>
+  >(async () => true);
   const groupsRef = useRef<EditorGroup[]>([]);
   const processFsEventsRef = useRef<(events: FsEvent[]) => Promise<void>>(
     async () => undefined,
@@ -1623,11 +1665,9 @@ function App() {
 
   const installUpdate = useCallback(async (automatic = false) => {
     if (!isTauri() || updateInstallingRef.current) return;
-    if (!automatic && openFilesRef.current.some((file) => file.dirty)) {
-      const approved = window.confirm(
-        'Some files have unsaved changes. Install the update and restart Arc now? Unsaved changes will be lost.',
-      );
-      if (!approved) return;
+    if (openFilesRef.current.some((file) => file.dirty)) {
+      if (automatic) return;
+      if (!(await dirtyGuardRef.current())) return;
     }
     updateInstallingRef.current = true;
     setUpdateInstalling(true);
@@ -2941,6 +2981,7 @@ function App() {
         setMessage('Folder access declined.');
         return;
       }
+      if (!(await saveDirtyRef.current())) return;
       await refreshWorkspace(selected);
       localStorage.setItem('arc.lastWorkspace', selected);
       terminals.forEach((terminal) => {
@@ -3013,11 +3054,12 @@ function App() {
       });
       normalizeGroups(nextGroups, targetGroupId);
     };
-    if (existing) {
+    if (existing || openingPaths.current.has(file.path)) {
       assignToGroup();
       setMessage('');
       return;
     }
+    openingPaths.current.add(file.path);
     try {
       const absolutePath = `${workspace}/${file.path}`;
       const metadata = await stat(absolutePath);
@@ -3028,6 +3070,11 @@ function App() {
         )
       )
         return;
+      if (openFilesRef.current.some((entry) => entry.path === file.path)) {
+        assignToGroup();
+        setMessage('');
+        return;
+      }
       const content = await readTextFile(absolutePath);
       fileContents.current.set(file.path, content);
       setOpenFiles((current) => [
@@ -3038,6 +3085,8 @@ function App() {
       setMessage('');
     } catch (error) {
       setMessage(`Could not open ${file.name}: ${String(error)}`);
+    } finally {
+      openingPaths.current.delete(file.path);
     }
   };
 
@@ -3087,7 +3136,15 @@ function App() {
         return false;
       }
       try {
-        await writeTextFile(`${workspace}/${file.path}`, content);
+        const target = `${workspace}/${file.path}`;
+        const temporary = `${target}.${Date.now()}.arc-tmp`;
+        await writeTextFile(temporary, content);
+        try {
+          await rename(temporary, target);
+        } catch (error) {
+          await remove(temporary).catch(() => undefined);
+          throw error;
+        }
         fileContents.current.set(path, content);
         lastDiskWrite.current.set(path, contentFingerprint(content));
         selfWritePaths.current.set(path, Date.now());
@@ -3131,6 +3188,63 @@ function App() {
     },
     [openFiles, settings.prettierOnSave, workspace],
   );
+
+  const saveDirtyFiles = useCallback(
+    async (matches: (path: string) => boolean = () => true): Promise<boolean> => {
+      for (const file of openFilesRef.current)
+        if (
+          file.dirty &&
+          matches(file.path) &&
+          !(await saveFile(file.path))
+        )
+          return false;
+      return true;
+    },
+    [saveFile],
+  );
+
+  const guardDirtyFiles = useCallback(
+    async (matches: (path: string) => boolean = () => true): Promise<boolean> => {
+      const dirty = openFilesRef.current.filter(
+        (file) => file.dirty && matches(file.path),
+      );
+      if (!dirty.length) return true;
+      const label =
+        dirty.length === 1 ? dirty[0].name : `${dirty.length} files`;
+      const choice = await askDirtyChoice(label);
+      if (choice === 'cancel') return false;
+      if (choice === 'save') {
+        for (const file of dirty)
+          if (!(await saveFile(file.path))) return false;
+      }
+      return true;
+    },
+    [saveFile],
+  );
+
+  useEffect(() => {
+    saveDirtyRef.current = saveDirtyFiles;
+    dirtyGuardRef.current = guardDirtyFiles;
+  }, [guardDirtyFiles, saveDirtyFiles]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (await dirtyGuardRef.current()) return;
+        event.preventDefault();
+      })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const updateFile = useCallback(
     (path: string, content?: string, replace = false) => {
@@ -3576,6 +3690,23 @@ function App() {
   const deleteEntries = async (requestedEntries: DiskFile[]) => {
     if (!workspace || !requestedEntries.length) return;
     const entries = removeNestedEntries(requestedEntries);
+    const selected = (path: string) =>
+      entries.some(
+        (entry) =>
+          path === entry.path ||
+          (entry.kind === 'directory' && path.startsWith(`${entry.path}/`)),
+      );
+    if (!(await saveDirtyRef.current(selected))) return;
+    const directoryCount = entries.filter(
+      (entry) => entry.kind === 'directory',
+    ).length;
+    if (
+      directoryCount &&
+      !(await confirmDialog(
+        `Delete ${directoryCount === 1 ? 'this folder' : `${directoryCount} folders`} and everything inside?`,
+      ))
+    )
+      return;
     const batch: DeletedEntry[] = [];
     let failure = '';
     try {

@@ -982,10 +982,28 @@ fn plugin_process_exec(
     env: Option<HashMap<String, String>>,
     timeout_ms: Option<u64>,
 ) -> Result<ProcessExecResult, String> {
+    const MAX_EXEC_OUTPUT: usize = 4 * 1024 * 1024;
+
+    fn read_capped<R: Read>(mut reader: R, cap: usize) -> Vec<u8> {
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(length) => {
+                    let room = cap.saturating_sub(output.len());
+                    if room > 0 {
+                        output.extend_from_slice(&buffer[..length.min(room)]);
+                    }
+                }
+            }
+        }
+        output
+    }
+
     if executable.trim().is_empty() {
         return Err("An executable is required.".to_string());
     }
-    let _ = timeout_ms;
     let mut command = external_command(&executable);
     command
         .args(&args)
@@ -1007,23 +1025,56 @@ fn plugin_process_exec(
         let _ = child.wait();
         return Err("Application is shutting down.".to_string());
     }
-    let output = match child.wait_with_output() {
-        Ok(output) => output,
-        Err(error) => {
-            if let Some(managed) = managed {
-                processes.unregister(managed);
+    let stdout_reader = child
+        .stdout
+        .take()
+        .map(|stdout| thread::spawn(move || read_capped(stdout, MAX_EXEC_OUTPUT)));
+    let stderr_reader = child
+        .stderr
+        .take()
+        .map(|stderr| thread::spawn(move || read_capped(stderr, MAX_EXEC_OUTPUT)));
+    let deadline = timeout_ms
+        .filter(|millis| *millis > 0)
+        .map(|millis| Instant::now() + Duration::from_millis(millis));
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(error) => {
+                if let Some(managed) = managed {
+                    processes.stop(managed, Duration::from_millis(200));
+                }
+                let _ = child.wait();
+                return Err(format!("Could not run {executable}: {error}"));
             }
-            return Err(format!("Could not run {executable}: {error}"));
         }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            timed_out = true;
+            if let Some(managed) = managed {
+                processes.stop(managed, Duration::from_millis(200));
+            }
+            let _ = child.kill();
+            break child.wait().ok();
+        }
+        thread::sleep(Duration::from_millis(20));
     };
-    if let Some(managed) = managed {
-        processes.unregister(managed);
+    if !timed_out {
+        if let Some(managed) = managed {
+            processes.unregister(managed);
+        }
     }
+    let stdout = stdout_reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
     Ok(ProcessExecResult {
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        code: output.status.code(),
-        signal: process_exit_signal(&output.status),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        code: status.as_ref().and_then(|status| status.code()),
+        signal: status.as_ref().and_then(process_exit_signal),
     })
 }
 
@@ -1216,6 +1267,7 @@ fn plugin_socket_close(state: State<'_, PluginSocketState>, id: String) -> Resul
 fn read_http_request(
     stream: &mut TcpStream,
 ) -> Result<(String, String, HashMap<String, String>, Vec<u8>), String> {
+    const MAX_HTTP_BODY: usize = 16 * 1024 * 1024;
     stream
         .set_read_timeout(Some(Duration::from_secs(15)))
         .map_err(|error| error.to_string())?;
@@ -1253,6 +1305,17 @@ fn read_http_request(
         .get("content-length")
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
+    if content_length > MAX_HTTP_BODY {
+        let _ = write_http_response(
+            stream,
+            HttpReply {
+                status: 413,
+                headers: HashMap::from([("content-type".to_string(), "text/plain".to_string())]),
+                body: b"Request body is too large.".to_vec(),
+            },
+        );
+        return Err("Request body is too large.".to_string());
+    }
     let mut body = buffer[header_end..].to_vec();
     while body.len() < content_length {
         let length = stream.read(&mut chunk).map_err(|error| error.to_string())?;
@@ -1265,12 +1328,39 @@ fn read_http_request(
     Ok((method, url, headers, body))
 }
 
+fn http_reason(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        413 => "Payload Too Large",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "OK",
+    }
+}
+
 fn write_http_response(stream: &mut TcpStream, reply: HttpReply) -> Result<(), String> {
     let mut headers = reply.headers;
     headers
         .entry("content-length".to_string())
         .or_insert_with(|| reply.body.len().to_string());
-    let mut response = format!("HTTP/1.1 {} OK\r\n", reply.status);
+    let mut response = format!(
+        "HTTP/1.1 {} {}\r\n",
+        reply.status,
+        http_reason(reply.status)
+    );
     for (key, value) in &headers {
         response.push_str(&format!("{key}: {value}\r\n"));
     }
@@ -2031,6 +2121,43 @@ fn github_stage(root: String, path: String, stage: bool) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
+fn github_stage_all(root: String) -> Result<(), String> {
+    let root = resolve_git_root(Path::new(&root))?;
+    let output = git_command()
+        .args(["add", "-A"])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("Could not run Git: {error}"))?;
+    require_success(output)?;
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn github_unstage_all(root: String) -> Result<(), String> {
+    let root = resolve_git_root(Path::new(&root))?;
+    let output = git_command()
+        .arg("reset")
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("Could not run Git: {error}"))?;
+    require_success(output)?;
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn github_auth_status(root: String) -> Result<bool, String> {
+    let root = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|error| format!("Could not access workspace: {error}"))?;
+    Ok(gh_command()
+        .args(["auth", "status"])
+        .current_dir(root)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false))
+}
+
+#[tauri::command(async)]
 fn github_commit(root: String, message: String, description: Option<String>) -> Result<(), String> {
     let root = resolve_git_root(Path::new(&root))?;
     let message = message.trim();
@@ -2436,7 +2563,7 @@ fn run_local_server_watcher(
 fn run_local_server_poll(stop: Arc<AtomicBool>, generation: Arc<AtomicU64>, root: PathBuf) {
     let mut previous = generation.load(Ordering::Relaxed);
     while !stop.load(Ordering::Relaxed) {
-        thread::sleep(Duration::from_millis(700));
+        thread::sleep(Duration::from_millis(2000));
         if stop.load(Ordering::Relaxed) {
             break;
         }
@@ -3494,6 +3621,9 @@ pub fn run() {
             github_status,
             github_configure_identity,
             github_stage,
+            github_stage_all,
+            github_unstage_all,
+            github_auth_status,
             github_commit,
             github_fetch,
             github_pull,
@@ -3591,6 +3721,39 @@ mod tests {
         assert!(acquire_connection_slot(&active).is_none());
         drop(slots);
         assert!(acquire_connection_slot(&active).is_some());
+    }
+
+    #[test]
+    fn maps_http_reason_phrases() {
+        assert_eq!(http_reason(200), "OK");
+        assert_eq!(http_reason(404), "Not Found");
+        assert_eq!(http_reason(413), "Payload Too Large");
+        assert_eq!(http_reason(500), "Internal Server Error");
+    }
+
+    #[test]
+    fn rejects_oversize_http_bodies_with_413() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let client = thread::spawn(move || {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(
+                stream,
+                "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n",
+                17 * 1024 * 1024
+            )
+            .unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            response
+        });
+        let (mut server, _) = listener.accept().unwrap();
+        assert!(read_http_request(&mut server).is_err());
+        drop(server);
+        assert!(client
+            .join()
+            .unwrap()
+            .starts_with("HTTP/1.1 413 Payload Too Large"));
     }
 
     #[test]

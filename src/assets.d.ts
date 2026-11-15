@@ -4,6 +4,6 @@ declare module "*?raw" {
 }
 
 interface ImportMeta {
-  glob<T>(pattern: string, options: { eager: true; query: string; import: string }): Record<string, T>;
-  glob<T>(pattern: string, options?: { eager?: false; query?: string; import?: string }): Record<string, () => Promise<T>>;
+  glob<T>(pattern: string | string[], options: { eager: true; query: string; import: string }): Record<string, T>;
+  glob<T>(pattern: string | string[], options?: { eager?: false; query?: string; import?: string }): Record<string, () => Promise<T>>;
 }

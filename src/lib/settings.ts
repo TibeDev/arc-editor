@@ -51,15 +51,12 @@ export type AppSettings = {
   autocomplete: boolean;
   autoIndent: boolean;
   showHiddenFiles: boolean;
-  restoreTerminals: boolean;
   sidebarWidth: number;
   terminalFontFamily: string;
   terminalFontSize: number;
   terminalCursorStyle: "block" | "underline" | "bar";
-  terminalCursorBlink: boolean;
   terminalScrollback: number;
   terminalPadding: number;
-  terminalScrollbar: boolean;
   terminalSelectionColor: string;
   terminalShowTitle: boolean;
   interfaceFontFamily: string;
@@ -142,15 +139,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autocomplete: true,
   autoIndent: true,
   showHiddenFiles: false,
-  restoreTerminals: true,
   sidebarWidth: 244,
   terminalFontFamily: "",
   terminalFontSize: 12,
   terminalCursorStyle: "block",
-  terminalCursorBlink: true,
   terminalScrollback: 1000,
   terminalPadding: 8,
-  terminalScrollbar: true,
   terminalSelectionColor: "",
   terminalShowTitle: true,
   interfaceFontFamily: "",

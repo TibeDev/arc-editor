@@ -20,8 +20,12 @@ import * as codeMirrorAutocomplete from "@codemirror/autocomplete";
 import * as codeMirrorHighlight from "@lezer/highlight";
 import type { AppSettings, ThemeDefinition } from "./settings";
 
-const builtinManifestSources = import.meta.glob<string>("../../plugins/*/plugin.json", { eager: true, query: "?raw", import: "default" });
-const builtinPluginSourceLoaders = import.meta.glob<string>("../../plugins/*/main.js", { query: "?raw", import: "default" });
+const builtinManifestSources: Record<string, string> = import.meta.env.PROD
+  ? import.meta.glob<string>(["../../plugins/*/plugin.json", "!../../plugins/api-tester/plugin.json"], { eager: true, query: "?raw", import: "default" })
+  : import.meta.glob<string>("../../plugins/*/plugin.json", { eager: true, query: "?raw", import: "default" });
+const builtinPluginSourceLoaders: Record<string, () => Promise<string>> = import.meta.env.PROD
+  ? import.meta.glob<string>(["../../plugins/*/main.js", "!../../plugins/api-tester/main.js"], { query: "?raw", import: "default" })
+  : import.meta.glob<string>("../../plugins/*/main.js", { query: "?raw", import: "default" });
 
 const disabledStorageKey = "arc.plugins.disabled";
 const builtinsSeededKey = "arc.plugins.builtinsSeeded";

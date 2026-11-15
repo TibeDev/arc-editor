@@ -75,6 +75,27 @@
   background: var(--selected);
   color: var(--text);
 }
+.arc-dialog {
+  width: min(440px, 92vw);
+  gap: 12px;
+}
+.arc-dialog-title {
+  color: var(--text);
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+.arc-dialog-message {
+  color: var(--text);
+  line-height: 1.5;
+}
+.arc-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.arc-dialog-danger {
+  color: var(--ai-danger, #e06c75);
+}
 .arc-plugin-pick-list {
   min-height: 0;
   overflow: auto;

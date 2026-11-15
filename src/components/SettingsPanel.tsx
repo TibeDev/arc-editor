@@ -404,8 +404,6 @@ export default function SettingsPanel({
             </>}
             {activeCategory === "terminal" && <section className="settings-section" id="settings-section-terminal-terminal"><h3>Terminal</h3>
               <label className="setting-field"><span>Cursor shape</span><Select value={settings.terminalCursorStyle} onChange={(next) => onChange({ terminalCursorStyle: next as AppSettings["terminalCursorStyle"] })} options={[{ value: "block", label: "Block" }, { value: "underline", label: "Underline" }, { value: "bar", label: "Bar" }]} /></label>
-              {toggle("terminalCursorBlink", "Blinking cursor", "Blink the terminal cursor.")}
-              {toggle("terminalScrollbar", "Show scrollbar", "Show the terminal's scrollback scrollbar.")}
               {toggle("terminalShowTitle", "Show shell title", "Use the title reported by the running shell in its tab.")}
               <label className="setting-field"><span>Scrollback lines <b>{settings.terminalScrollback}</b></span><input type="range" min="500" max="5000" step="500" value={settings.terminalScrollback} onChange={(event) => onChange({ terminalScrollback: Number(event.target.value) })} /></label>
               <label className="setting-field"><span>Padding <b>{settings.terminalPadding}px</b></span><input type="range" min="0" max="24" step="2" value={settings.terminalPadding} onChange={(event) => onChange({ terminalPadding: Number(event.target.value) })} /></label>
@@ -414,7 +412,6 @@ export default function SettingsPanel({
             </section>}
             {activeCategory === "files" && <section className="settings-section" id="settings-section-files-file-explorer"><h3>File viewer</h3>
               {toggle("showHiddenFiles", "Show hidden files", "Include dotfiles and hidden folders in workspace tree.")}
-              {toggle("restoreTerminals", "Reopen terminals", "Recreate previous terminal tabs when reopening a folder (commands are re-run).")}
             </section>}
             {activeCategory === "ai" && <section className="settings-section" id="settings-section-ai-agent"><h3>Terminal agent</h3>
               <label className="setting-field"><span>Default agent</span><Select value={settings.agentCli} onChange={(next) => onChange({ agentCli: next as AppSettings["agentCli"] })} options={[
