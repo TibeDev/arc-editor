@@ -2328,25 +2328,18 @@ fn run_local_server_watcher(
     while !stop.load(Ordering::Relaxed) {
         match receive.recv_timeout(Duration::from_millis(500)) {
             Ok(Ok(events)) => {
-                generation.fetch_add(1, Ordering::Relaxed);
+                let mut changed = false;
                 for debounced in events {
-                    let created = match &debounced.event.kind {
-                        EventKind::Create(_) => debounced.event.paths.last().cloned(),
-                        EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
-                            debounced.event.paths.last().cloned()
-                        }
-                        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
-                            debounced.event.paths.get(1).cloned()
-                        }
-                        _ => None,
-                    };
-                    let Some(path) = created else { continue };
-                    let Ok(is_dir) = fs::metadata(&path).map(|data| data.is_dir()) else {
+                    let Some(mapped) = map_fs_event(&filter, &root, &debounced.event) else {
                         continue;
                     };
-                    if !is_dir || is_watch_ignored(&filter, &root, &path, true) {
+                    changed = true;
+                    if mapped.kind != "created" || mapped.is_dir != Some(true) {
                         continue;
                     }
+                    let Some(path) = mapped.paths.last().map(PathBuf::from) else {
+                        continue;
+                    };
                     watch_directory_tree(
                         &mut debouncer,
                         &mut watched,
@@ -2355,6 +2348,9 @@ fn run_local_server_watcher(
                         &path,
                         &mut failures,
                     );
+                }
+                if changed {
+                    generation.fetch_add(1, Ordering::Relaxed);
                 }
             }
             Ok(Err(_)) => {}
@@ -3550,7 +3546,7 @@ mod tests {
     #[test]
     fn watcher_maps_events_and_filters_ignore_paths() {
         use notify_debouncer_full::notify as notify_crate;
-        use notify_debouncer_full::notify::event::{CreateKind, DataChange, RemoveKind};
+        use notify_debouncer_full::notify::event::{CreateKind, RemoveKind};
 
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
