@@ -90,6 +90,7 @@ import {
   Search,
   Server,
   Settings as SettingsIcon,
+  WandSparkles,
   Terminal as TerminalIcon,
   X,
 } from 'lucide-react';
@@ -106,7 +107,7 @@ import {
   SiTypescript,
   SiYaml,
 } from 'react-icons/si';
-import { appDataDir, join } from '@tauri-apps/api/path';
+import { appDataDir, homeDir, join } from '@tauri-apps/api/path';
 import TitleBar from './components/TitleBar';
 import './styles/pluginExtensions.css';
 import './styles/layout-overrides.css';
@@ -134,12 +135,15 @@ import {
   type UpdateChannel,
 } from './lib/settings';
 import type { UpdateDownloadEvent, UpdateInfo } from './lib/updater';
+import { AGENT_KIT_FILES, agentCommand, launchPrompt } from './lib/agent/kit';
+import type { BuilderLaunch } from './components/BuildWizard';
 
 const TerminalView = lazy(() => import('./components/TerminalView'));
 const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
 const GithubPanel = lazy(() => import('./components/GithubPanel'));
 const PluginPanel = lazy(() => import('./components/PluginPanel'));
 const ThemeMaker = lazy(() => import('./components/ThemeMaker'));
+const BuildWizard = lazy(() => import('./components/BuildWizard'));
 
 type DiskFile = { name: string; path: string; kind: 'file' | 'directory' };
 type FsEvent = {
@@ -189,6 +193,7 @@ type UndoBatch = { workspace: string; entries: DeletedEntry[] };
 const GITHUB_TAB_KEY = 'internal:github';
 const PLUGIN_TAB_KEY = 'internal:plugins';
 const PLUGIN_VIEW_PREFIX = 'internal:plugin-view:';
+const BUILDER_TAB_KEY = 'internal:builder';
 const MIN_VIEWER_WIDTH = 140;
 
 function PluginViewHost({ panel }: { panel: PluginPanelContribution }) {
@@ -776,6 +781,7 @@ function EditorPane({
   onConflictReload,
   onConflictKeep,
   pluginPanel,
+  builderPanel,
   pluginViews,
   editorViews,
   pluginLanguages,
@@ -804,6 +810,7 @@ function EditorPane({
   onConflictReload?: (path: string) => void;
   onConflictKeep?: (path: string) => void;
   pluginPanel: ReactNode;
+  builderPanel: ReactNode;
   pluginViews: PluginPanelContribution[];
   editorViews: { current: Map<string, Map<GroupId, EditorView>> };
   pluginLanguages: PluginLanguageContribution[];
@@ -1133,6 +1140,7 @@ function EditorPane({
           terminal: terminalsByKey.get(key),
           github: key === GITHUB_TAB_KEY,
           plugins: key === PLUGIN_TAB_KEY,
+          builder: key === BUILDER_TAB_KEY,
           pluginView: pluginViewsByKey.get(key),
         }))
         .filter(
@@ -1141,6 +1149,7 @@ function EditorPane({
             entry.terminal ||
             entry.github ||
             entry.plugins ||
+            entry.builder ||
             entry.pluginView,
         ),
     [filesByPath, group.tabs, pluginViewsByKey, terminalsByKey],
@@ -1202,7 +1211,7 @@ function EditorPane({
         }}
       >
         {tabItems.map(
-          ({ key, file: tab, terminal, github, plugins, pluginView }) => (
+          ({ key, file: tab, terminal, github, plugins, builder, pluginView }) => (
             <button
               key={key}
               className={`editor-tab ${key === group.activePath ? 'active' : ''}`}
@@ -1217,6 +1226,8 @@ function EditorPane({
                 <TerminalIcon size={14} className="file-icon" />
               ) : github ? (
                 <Github size={14} className="file-icon" />
+              ) : builder ? (
+                <WandSparkles size={14} className="file-icon" />
               ) : plugins || pluginView ? (
                 <Puzzle size={14} className="file-icon" />
               ) : (
@@ -1231,7 +1242,9 @@ function EditorPane({
                     ? 'GitHub'
                     : plugins
                       ? 'Plugins'
-                      : pluginView
+                      : builder
+                        ? 'Build'
+                        : pluginView
                         ? pluginView.title
                         : tab!.name}
               </span>
@@ -1270,10 +1283,19 @@ function EditorPane({
       {pluginViewsByKey.has(group.activePath) && (
         <PluginViewHost panel={pluginViewsByKey.get(group.activePath)!} />
       )}
+      {group.tabs.includes(BUILDER_TAB_KEY) && (
+        <div
+          className={`builder-host ${group.activePath === BUILDER_TAB_KEY ? 'active' : ''}`}
+          aria-hidden={group.activePath !== BUILDER_TAB_KEY}
+        >
+          {builderPanel}
+        </div>
+      )}
       {!file &&
         !activeTerminal &&
         group.activePath !== GITHUB_TAB_KEY &&
         group.activePath !== PLUGIN_TAB_KEY &&
+        group.activePath !== BUILDER_TAB_KEY &&
         !pluginViewsByKey.has(group.activePath) && (
           <div className="editor-empty">
             <span>Choose a file to begin.</span>
@@ -2389,7 +2411,7 @@ function App() {
     );
   }, []);
 
-  const openTerminal = (command?: string): string | null => {
+  const openTerminal = (command?: string, title = 'Terminal', cwd = workspace): string | null => {
     if (!isTauri()) {
       setMessage('Terminal sessions are available in Arc desktop.');
       return null;
@@ -2398,8 +2420,8 @@ function App() {
     const session = {
       id,
       key: `terminal:${id}`,
-      cwd: workspace,
-      title: 'Terminal',
+      cwd,
+      title,
       command,
     };
     setTerminals((current) => [...current, session]);
@@ -2462,6 +2484,46 @@ function App() {
     setSettingsOpen(false);
     setThemeMakerOpen(false);
     setMessage('');
+  };
+
+  const openBuilderPanel = () => {
+    setGroups((current) =>
+      current.map((group) =>
+        group.id === activeGroupId
+          ? {
+              ...group,
+              activePath: BUILDER_TAB_KEY,
+              tabs: group.tabs.includes(BUILDER_TAB_KEY)
+                ? group.tabs
+                : [...group.tabs, BUILDER_TAB_KEY],
+            }
+          : group,
+      ),
+    );
+    setSettingsOpen(false);
+    setThemeMakerOpen(false);
+    setMessage('');
+  };
+
+  const launchBuilderAgent = async ({ target, id, brief }: BuilderLaunch) => {
+    if (!isTauri()) throw new Error('Terminal sessions are available in Arc desktop.');
+    const buildDir = await join(await homeDir(), 'Arc Builds', `${target}-${id}`);
+    await mkdir(buildDir, { recursive: true });
+    await writeTextFile(await join(buildDir, 'brief.md'), brief);
+    await Promise.all(
+      Object.entries(AGENT_KIT_FILES).map(async ([name, content]) =>
+        writeTextFile(await join(buildDir, name), content),
+      ),
+    );
+    const command = agentCommand(
+      settings.agentCli,
+      settings.agentCommand,
+      launchPrompt(target),
+    );
+    if (!openTerminal(command, 'Arc Agent', buildDir)) {
+      throw new Error('Terminal sessions are available in Arc desktop.');
+    }
+    setMessage(`Building in ${buildDir}`);
   };
 
   const resizeSplit = (splitId: string, ratio: number) => {
@@ -3306,7 +3368,12 @@ function App() {
     placement?: SplitPlacement,
   ) => {
     const terminal = terminals.find((entry) => entry.key === path);
-    if (terminal || path === GITHUB_TAB_KEY || path === PLUGIN_TAB_KEY) {
+    if (
+      terminal ||
+      path === GITHUB_TAB_KEY ||
+      path === PLUGIN_TAB_KEY ||
+      path === BUILDER_TAB_KEY
+    ) {
       const targetGroup = placement
         ? createSplitGroup(groupId, placement)
         : groupId;
@@ -4569,6 +4636,7 @@ function App() {
       run: () => setSettingsOpen(true),
     },
     { id: 'open-plugins', title: 'Open Plugins', run: openPluginPanel },
+    { id: 'open-builder', title: 'Create Plugin or Theme', run: openBuilderPanel },
     { id: 'open-github', title: 'Open GitHub', run: openGithubPanel },
     {
       id: 'save-file',
@@ -4719,6 +4787,15 @@ function App() {
           pluginRuntime.emitEvent('editor:selection-changed', context);
           pluginRuntime.emitEvent('editor:context-changed', context);
         }}
+        builderPanel={
+          <Suspense fallback={<div className="editor-empty" />}>
+            <BuildWizard
+              settings={settings}
+              onLaunch={launchBuilderAgent}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+          </Suspense>
+        }
         pluginPanel={
           <Suspense fallback={<div className="editor-empty" />}>
             <PluginPanel
@@ -4816,7 +4893,10 @@ function App() {
       <div className="app-body">
       {!workspace &&
       terminals.length === 0 &&
-      !groups.some((group) => group.tabs.includes(PLUGIN_TAB_KEY)) ? (
+      !groups.some(
+        (group) =>
+          group.tabs.includes(PLUGIN_TAB_KEY) || group.tabs.includes(BUILDER_TAB_KEY),
+      ) ? (
         <section className="welcome-screen">
           <div className="welcome-tools">
             <button
@@ -5202,6 +5282,14 @@ function App() {
                 onClick={() => openGithubPanel()}
               >
                 <Github size={15} />
+              </button>
+              <button
+                className="settings-launch"
+                aria-label="Create plugin or theme"
+                title="Create plugin or theme"
+                onClick={openBuilderPanel}
+              >
+                <WandSparkles size={15} />
               </button>
               <button
                 className="settings-launch"

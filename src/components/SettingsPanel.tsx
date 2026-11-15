@@ -14,6 +14,7 @@ const settingsCategories = [
   { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes.", sections: [{ id: "interface", label: "Interface" }, { id: "editor-colors", label: "Editor colors" }, { id: "transparency", label: "Transparency and blur" }] },
   { id: "terminal", label: "Terminal", description: "Cursor and scrollback behavior.", sections: [{ id: "terminal", label: "Terminal" }] },
   { id: "files", label: "Files", description: "Workspace browsing preferences.", sections: [{ id: "file-explorer", label: "File viewer" }] },
+  { id: "ai", label: "AI", description: "Default terminal agent for building plugins and themes.", sections: [{ id: "agent", label: "Terminal agent" }] },
   { id: "updates", label: "Updates", description: "Release channel and automatic updates.", sections: [{ id: "channel", label: "Release channel" }, { id: "behavior", label: "Automatic updates" }] },
   { id: "plugins", label: "Plugins", description: "Settings contributed by installed plugins.", sections: [] },
 ] as const;
@@ -409,6 +410,19 @@ export default function SettingsPanel({
             {activeCategory === "files" && <section className="settings-section" id="settings-section-files-file-explorer"><h3>File viewer</h3>
               {toggle("showHiddenFiles", "Show hidden files", "Include dotfiles and hidden folders in workspace tree.")}
               {toggle("restoreTerminals", "Reopen terminals", "Recreate previous terminal tabs when reopening a folder (commands are re-run).")}
+            </section>}
+            {activeCategory === "ai" && <section className="settings-section" id="settings-section-ai-agent"><h3>Terminal agent</h3>
+              <label className="setting-field"><span>Default agent</span><Select value={settings.agentCli} onChange={(next) => onChange({ agentCli: next as AppSettings["agentCli"] })} options={[
+                { value: "opencode", label: "OpenCode" },
+                { value: "claude", label: "Claude Code" },
+                { value: "codex", label: "Codex" },
+                { value: "custom", label: "Custom command" },
+              ]} /></label>
+              <div className="setting-note">The Build tab opens this agent in a terminal. The command must be installed and available on PATH.</div>
+              {settings.agentCli === "custom" && <>
+                <label className="setting-field"><span>Command template</span><input type="text" value={settings.agentCommand} placeholder={'my-agent --prompt "{prompt}"'} onChange={(event) => onChange({ agentCommand: event.target.value })} /></label>
+                <div className="setting-note">Use <kbd>{"{prompt}"}</kbd> where the prompt should go. Without it, Arc appends the prompt.</div>
+              </>}
             </section>}
             {activeCategory === "updates" && <>
               <section className="settings-section" id="settings-section-updates-channel"><h3>Release channel</h3>

@@ -1,3 +1,5 @@
+import type { AgentCli } from "./agent/kit";
+
 export type UpdateChannel = "stable" | "beta";
 
 export type AppSettings = {
@@ -44,6 +46,8 @@ export type AppSettings = {
   updateChannel: UpdateChannel;
   autoCheckUpdates: boolean;
   autoInstallUpdates: boolean;
+  agentCli: AgentCli;
+  agentCommand: string;
 };
 
 export const APP_SETTINGS_VERSION = 2;
@@ -128,6 +132,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updateChannel: "stable",
   autoCheckUpdates: true,
   autoInstallUpdates: false,
+  agentCli: "opencode",
+  agentCommand: "",
 };
 
 export const DEFAULT_THEME: ThemeDefinition = {
@@ -244,6 +250,12 @@ export function loadSettings(): AppSettings {
     if (typeof settings.autoInstallUpdates !== "boolean") {
       settings.autoInstallUpdates = DEFAULT_SETTINGS.autoInstallUpdates;
     }
+    if (!["opencode", "claude", "codex", "custom"].includes(settings.agentCli)) {
+      settings.agentCli = DEFAULT_SETTINGS.agentCli;
+    }
+    settings.agentCommand = typeof settings.agentCommand === "string"
+      ? settings.agentCommand.slice(0, 500)
+      : DEFAULT_SETTINGS.agentCommand;
     return settings;
   } catch {
     return DEFAULT_SETTINGS;

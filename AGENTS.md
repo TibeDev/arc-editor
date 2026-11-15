@@ -95,6 +95,7 @@ There is **no frontend test runner**; `npm run build` doubles as the typecheck g
 | --- | --- |
 | `README.md` | User-facing overview, shortcuts, install |
 | `PLUGIN_API.md` | Full plugin API reference (keep in sync when changing the plugin API) |
+| `ARC_AGENT_KIT.md` | Agent-facing contract for the Build tab wizard (plugin + theme generation, install handshake). Keep in sync with plugin and theme formats |
 | `FILE_WATCHER.md` | Spec + notes for live file watching (notify-debouncer-full → `fs-changed` events → tree reducer). **Implemented**: `watch_project`/`unwatch_project` in `src-tauri/src/lib.rs`, listener + delta reducer in `src/App.tsx` |
 | `apple-design.md` | Design direction: Apple/Xcode-inspired, layered translucent surfaces, content-first, minimal borders. Follow for UI work |
 
