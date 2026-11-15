@@ -1312,12 +1312,14 @@ input:focus-visible {
 }
 .theme-list {
   display: grid;
-  gap: 3px;
-  max-height: 150px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  max-height: 200px;
   overflow: auto;
 }
 .theme-choice {
-  min-height: 39px;
+  position: relative;
+  min-height: 84px;
   display: flex;
   align-items: center;
   border: 1px solid transparent;
@@ -1330,12 +1332,13 @@ input:focus-visible {
 .theme-choice > button:first-child {
   min-width: 0;
   flex: 1;
-  height: 36px;
+  height: 100%;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding: 0 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 11px;
   background: transparent;
   color: #c6cdd5;
   text-align: left;
@@ -1346,6 +1349,8 @@ input:focus-visible {
 .theme-choice-name {
   display: grid;
   gap: 2px;
+  max-width: 100%;
+  padding-right: 22px;
   font-size: var(--font-sm);
 }
 .theme-choice-name small {
@@ -1357,18 +1362,19 @@ input:focus-visible {
   gap: 3px;
 }
 .theme-swatches i {
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 14px;
   border: 1px solid #ffffff30;
-  border-radius: 50%;
+  border-radius: 4px;
 }
 .theme-remove {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
-  margin-right: 3px;
   border-radius: var(--radius-xs);
   background: transparent;
   color: #828c97;

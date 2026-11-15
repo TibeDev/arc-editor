@@ -23,8 +23,6 @@ export const PLUGIN_NEEDS = [
 
 export const THEME_BASES = [
   { id: "midnight", label: "Midnight" },
-  { id: "paper", label: "Paper" },
-  { id: "ocean", label: "Deep Ocean" },
 ] as const;
 
 export type PluginAnswers = {

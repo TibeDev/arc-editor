@@ -174,34 +174,6 @@ export const DEFAULT_THEME: ThemeDefinition = {
 
 export const BUILTIN_THEMES: ThemeDefinition[] = [
   DEFAULT_THEME,
-  {
-    id: "paper",
-    name: "Paper",
-    colors: {
-      background: "#f5f3ee", sidebar: "#ebe8e0", editor: "#f8f6f0", raised: "#e5e1d8",
-      border: "#d5d0c5", text: "#34342f", secondaryText: "#5e5d56", muted: "#88867d",
-      selected: "#dcd8ce", hover: "#e5e1d8", lineNumber: "#99958a", activeLine: "#00000008",
-      cursor: "#292923", selection: "#a9c6e880", indentGuide: "#d2cec3", keyword: "#8b3fa3",
-      control: "#b13d47", string: "#477c39", number: "#a45b1d", function: "#276c9c",
-      type: "#936c16", property: "#a45b1d", tag: "#b13d47", attribute: "#477c39",
-      comment: "#89867d", operator: "#55544e", meta: "#287e82", invalid: "#ffffff",
-      invalidBackground: "#b13d47",
-    },
-  },
-  {
-    id: "ocean",
-    name: "Deep Ocean",
-    colors: {
-      background: "#101a24", sidebar: "#14212d", editor: "#101a24", raised: "#1a2b39",
-      border: "#263b4a", text: "#d4e2ec", secondaryText: "#a0b8c9", muted: "#6f899b",
-      selected: "#243746", hover: "#1b2c39", lineNumber: "#7890a0", activeLine: "#8bc8ed0c",
-      cursor: "#c5efff", selection: "#3078a480", indentGuide: "#294255", keyword: "#d38cff",
-      control: "#ff7d8c", string: "#a8d783", number: "#ffb86c", function: "#65c6ff",
-      type: "#ffd479", property: "#83d4c3", tag: "#ff7d8c", attribute: "#a8d783",
-      comment: "#6c8495", operator: "#abc2d1", meta: "#51d1d7", invalid: "#ffffff",
-      invalidBackground: "#d64b62",
-    },
-  },
 ];
 
 export const THEME_COLOR_GROUPS: { name: string; keys: (keyof ThemeColors)[] }[] = [

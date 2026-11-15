@@ -464,15 +464,22 @@
   font-size: var(--font-lg);
 }
 .settings-main .theme-list {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
   max-height: 260px;
 }
 .settings-main .theme-choice {
-  min-height: 44px;
+  min-height: 84px;
   border-radius: 7px;
 }
 .settings-main .theme-choice > button:first-child {
-  height: 41px;
-  padding: 0 11px;
+  height: 100%;
+  min-height: 82px;
+  padding: 10px 11px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
 }
 .settings-main .theme-choice-name {
   font-size: var(--font-md);
