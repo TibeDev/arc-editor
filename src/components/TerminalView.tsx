@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { defaultTheme, open, type RioTermHandle, type Theme } from "rioterm";
+import { ColorResolver, defaultTheme, open, type RioTermHandle, type Theme } from "rioterm";
 import { subscribeTerminalOutput, terminalOutputReady } from "../lib/terminalOutput";
 import { resolveTerminalFont, themeColorWithOpacity, type AppSettings, type ThemeDefinition } from "../lib/settings";
 
@@ -10,6 +10,40 @@ type TerminalSettings = Pick<AppSettings,
   | "terminalScrollback" | "terminalPadding" | "terminalSelectionColor"
   | "editorGlassEnabled" | "glassTerminalTransparency" | "appTheme"
 >;
+
+function backgroundAlpha(color: string): number {
+  const match = /^rgba\([^)]*,\s*([\d.]+)\)$/i.exec(color);
+  return match ? Number(match[1]) : 1;
+}
+
+function colorChannels(color: string): [number, number, number] | undefined {
+  const hex = /^#([\da-f]{6})(?:[\da-f]{2})?$/i.exec(color)?.[1];
+  if (hex) return [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16)) as [number, number, number];
+  const rgb = /^rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color);
+  return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : undefined;
+}
+
+function withCellAlpha(color: string, alpha: number): string {
+  if (alpha >= 1) return color;
+  const channels = colorChannels(color);
+  if (!channels) return color;
+  const hex = channels.map((value) => value.toString(16).padStart(2, "0")).join("");
+  return `#${hex}${Math.round(alpha * 255).toString(16).padStart(2, "0")}`;
+}
+
+function isDark(color: string): boolean {
+  const channels = colorChannels(color);
+  return channels !== undefined && Math.max(...channels) < 96;
+}
+
+const resolveCellColor = ColorResolver.prototype.resolve;
+ColorResolver.prototype.resolve = function (this: ColorResolver, packed: number, isForeground: boolean) {
+  const color = resolveCellColor.call(this, packed, isForeground);
+  const alpha = backgroundAlpha(this.theme.background);
+  if (alpha >= 1) return color;
+  if (!isForeground) return withCellAlpha(color, alpha);
+  return isDark(this.theme.background) && isDark(color) ? withCellAlpha(color, alpha) : color;
+};
 
 function terminalTheme(theme: ThemeDefinition, settings: TerminalSettings): Theme {
   return {
@@ -95,6 +129,7 @@ export default function TerminalView({ session, active, theme, settings, onTitle
         };
 
         const renderer = opened.renderer;
+        if (transparent) renderer.element.style.backgroundColor = "transparent";
         const baseCellWidth = renderer.cellWidth;
         const baseCellHeight = renderer.cellHeight;
         let fitFrame: number | null = null;
