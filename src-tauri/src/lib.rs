@@ -299,7 +299,7 @@ fn terminal_spawn(
     #[cfg(target_os = "windows")]
     let shell = env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
     #[cfg(not(target_os = "windows"))]
-    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let shell = CommandBuilder::new_default_prog().get_shell();
     let mut command_builder = CommandBuilder::new(&shell);
     #[cfg(target_os = "windows")]
     command_builder.arg("/Q");
@@ -307,6 +307,17 @@ fn terminal_spawn(
     command_builder.arg("-i");
     command_builder.env("TERM", "xterm-256color");
     command_builder.env("COLORTERM", "truecolor");
+    #[cfg(target_os = "linux")]
+    for (key, value) in appimage_env() {
+        match value {
+            Some(value) => {
+                command_builder.env(key, value);
+            }
+            None => {
+                command_builder.env_remove(key);
+            }
+        }
+    }
     if let Some(directory) = cwd.filter(|path| !path.is_empty()) {
         command_builder.cwd(directory);
     }
@@ -1585,20 +1596,82 @@ fn set_native_background_blur(window: tauri::WebviewWindow, enabled: bool) -> Re
     }
 }
 
+#[cfg(target_os = "linux")]
+const APPIMAGE_ENV_REMOVE: &[&str] = &[
+    "APPDIR",
+    "APPIMAGE",
+    "APPIMAGE_EXTRACT_AND_RUN",
+    "APPIMAGE_GTK_THEME",
+    "ARGV0",
+    "OWD",
+    "GTK_THEME",
+];
+
+#[cfg(target_os = "linux")]
+const APPIMAGE_PATH_LISTS: &[&str] = &[
+    "PATH",
+    "LD_LIBRARY_PATH",
+    "XDG_DATA_DIRS",
+    "PERLLIB",
+    "PYTHONPATH",
+    "QT_PLUGIN_PATH",
+    "GI_TYPELIB_PATH",
+    "GST_PLUGIN_SYSTEM_PATH",
+    "GST_PLUGIN_SYSTEM_PATH_1_0",
+];
+
+/// Remove AppImage-only paths from env vars so child processes use the host system.
+#[cfg(target_os = "linux")]
+fn appimage_env_edits(
+    appdir: &Path,
+    vars: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> {
+    let appdir_text = appdir.to_string_lossy();
+    let mut edits = Vec::new();
+    for (key, value) in vars {
+        let Some(name) = key.to_str() else { continue };
+        if APPIMAGE_ENV_REMOVE.contains(&name) {
+            edits.push((key, None));
+            continue;
+        }
+        if !value.to_string_lossy().contains(&*appdir_text) {
+            continue;
+        }
+        if APPIMAGE_PATH_LISTS.contains(&name) {
+            let kept: Vec<PathBuf> = env::split_paths(&value)
+                .filter(|path| !path.starts_with(appdir))
+                .collect();
+            if kept.is_empty() {
+                edits.push((key, None));
+            } else if let Ok(joined) = env::join_paths(kept) {
+                edits.push((key, Some(joined)));
+            }
+        } else {
+            edits.push((key, None));
+        }
+    }
+    edits
+}
+
+#[cfg(target_os = "linux")]
+fn appimage_env() -> Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> {
+    match env::var_os("APPDIR") {
+        Some(appdir) => appimage_env_edits(Path::new(&appdir), env::vars_os()),
+        None => Vec::new(),
+    }
+}
+
 fn external_command(program: &str) -> Command {
     let mut command = Command::new(program);
     process::prepare_command(&mut command);
     #[cfg(target_os = "linux")]
-    if let (Some(appdir), Some(library_path)) =
-        (env::var_os("APPDIR"), env::var_os("LD_LIBRARY_PATH"))
-    {
-        let appdir = PathBuf::from(appdir);
-        let host_paths = env::split_paths(&library_path).filter(|path| !path.starts_with(&appdir));
-        if let Ok(host_paths) = env::join_paths(host_paths) {
-            if host_paths.is_empty() {
-                command.env_remove("LD_LIBRARY_PATH");
-            } else {
-                command.env("LD_LIBRARY_PATH", host_paths);
+    for (key, value) in appimage_env() {
+        match value {
+            Some(value) => {
+                command.env(key, value);
+            }
+            None => {
+                command.env_remove(key);
             }
         }
     }
@@ -3458,6 +3531,55 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         response
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn strips_appimage_environment_for_child_processes() {
+        use std::ffi::OsString;
+
+        let appdir = Path::new("/tmp/.mount_Arc123");
+        let vars = vec![
+            (
+                OsString::from("APPDIR"),
+                OsString::from("/tmp/.mount_Arc123"),
+            ),
+            (
+                OsString::from("APPIMAGE"),
+                OsString::from("/home/user/Arc.AppImage"),
+            ),
+            (
+                OsString::from("PATH"),
+                OsString::from("/tmp/.mount_Arc123/usr/bin:/usr/bin:/tmp/.mount_Arc123/bin"),
+            ),
+            (
+                OsString::from("PYTHONHOME"),
+                OsString::from("/tmp/.mount_Arc123/usr/"),
+            ),
+            (
+                OsString::from("LD_LIBRARY_PATH"),
+                OsString::from("/tmp/.mount_Arc123/usr/lib"),
+            ),
+            (OsString::from("HOME"), OsString::from("/home/user")),
+        ];
+
+        let edits: std::collections::HashMap<_, _> =
+            appimage_env_edits(appdir, vars).into_iter().collect();
+        assert!(matches!(edits.get(&OsString::from("APPDIR")), Some(None)));
+        assert!(matches!(edits.get(&OsString::from("APPIMAGE")), Some(None)));
+        assert!(matches!(
+            edits.get(&OsString::from("PYTHONHOME")),
+            Some(None)
+        ));
+        assert!(matches!(
+            edits.get(&OsString::from("LD_LIBRARY_PATH")),
+            Some(None)
+        ));
+        assert_eq!(
+            edits.get(&OsString::from("PATH")),
+            Some(&Some(OsString::from("/usr/bin")))
+        );
+        assert!(!edits.contains_key(&OsString::from("HOME")));
     }
 
     #[test]
