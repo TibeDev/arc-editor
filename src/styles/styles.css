@@ -1671,11 +1671,16 @@ input:focus-visible {
   height: 100%;
   padding: 8px 10px;
 }
-.terminal-view .xterm {
+.terminal-surface {
+  width: 100%;
   height: 100%;
+  overflow: hidden;
 }
-.terminal-view .xterm-viewport {
-  overflow-y: auto !important;
+/* rioterm DOM spans only paint the font box; fill the cell so transparent backgrounds show no row seams. */
+.terminal-surface span {
+  display: inline-block;
+  height: 100%;
+  vertical-align: top;
 }
 .welcome-tools {
   position: absolute;
@@ -1711,12 +1716,6 @@ input:focus-visible {
   border: 2px solid var(--settings-muted, #808995);
   background: rgba(128, 137, 149, 0.08);
   pointer-events: none;
-}
-.terminal-view.hide-scrollbar .xterm-viewport {
-  scrollbar-width: none !important;
-}
-.terminal-view.hide-scrollbar .xterm-viewport::-webkit-scrollbar {
-  display: none;
 }
 .app-shell.editor-glass-enabled .file-explorer,
 .app-shell.editor-glass-enabled .editor-pane,
@@ -1823,8 +1822,6 @@ input,
 textarea,
 [contenteditable="true"],
 .cm-content,
-.xterm,
-.xterm-screen,
 .plugin-view-host,
 .arc-plugin-output,
 .message,

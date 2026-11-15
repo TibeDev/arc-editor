@@ -503,7 +503,6 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
     .cm-tooltip-autocomplete .cm-completionLabel { color:${c.text}!important; }
     .cm-tooltip-autocomplete .cm-completionDetail { color:${c.muted}!important; }
     .cm-tooltip-autocomplete ul { font-family:${editorFont}; }
-    .xterm,.xterm-viewport,.xterm-screen { background-color:${editorBackground}!important; }
     .settings-header span { color:${c.muted}; }
     .settings-action,.settings-reset,.welcome-open { border-color:${c.border}; }
   `;

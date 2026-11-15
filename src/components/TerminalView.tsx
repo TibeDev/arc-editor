@@ -1,17 +1,27 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
-import "@xterm/xterm/css/xterm.css";
+import { defaultTheme, open, type RioTermHandle, type Theme } from "rioterm";
 import { subscribeTerminalOutput, terminalOutputReady } from "../lib/terminalOutput";
 import { resolveTerminalFont, themeColorWithOpacity, type AppSettings, type ThemeDefinition } from "../lib/settings";
 
 type TerminalSession = { id: string; cwd: string; command?: string };
 type TerminalSettings = Pick<AppSettings,
-  "terminalFontFamily" | "terminalFontSize" | "terminalCursorStyle" | "terminalCursorBlink"
-  | "terminalScrollback" | "terminalPadding" | "terminalScrollbar" | "terminalSelectionColor"
+  "terminalFontFamily" | "terminalFontSize" | "terminalCursorStyle"
+  | "terminalScrollback" | "terminalPadding" | "terminalSelectionColor"
   | "editorGlassEnabled" | "glassTerminalTransparency" | "appTheme"
 >;
+
+function terminalTheme(theme: ThemeDefinition, settings: TerminalSettings): Theme {
+  return {
+    ...defaultTheme,
+    background: settings.editorGlassEnabled
+      ? themeColorWithOpacity(theme.colors.editor, 1 - settings.glassTerminalTransparency / 100)
+      : theme.colors.editor,
+    foreground: theme.colors.text,
+    cursor: theme.colors.cursor,
+    selectionBackground: settings.terminalSelectionColor || theme.colors.selection,
+  };
+}
 
 export default function TerminalView({ session, active, theme, settings, onTitleChange }: {
   session: TerminalSession;
@@ -21,147 +31,177 @@ export default function TerminalView({ session, active, theme, settings, onTitle
   onTitleChange: (id: string, title: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
-  const terminal = useRef<Terminal | null>(null);
-  const fit = useRef<FitAddon | null>(null);
-  const writeFrame = useRef<number | null>(null);
-  const writeBuffer = useRef("");
-  const inputTimer = useRef<number | null>(null);
-  const inputBuffer = useRef("");
-  const lastSize = useRef("");
-  const [ready, setReady] = useState(false);
+  const handle = useRef<RioTermHandle | null>(null);
+  const activeRef = useRef(active);
+  const fontFamily = resolveTerminalFont(settings);
+  const transparent = settings.editorGlassEnabled && settings.glassTerminalTransparency > 0;
 
   useEffect(() => {
-    if (!host.current) return;
-    const xterm = new Terminal({
-      cursorBlink: settings.terminalCursorBlink,
-      cursorStyle: settings.terminalCursorStyle,
-      fontFamily: resolveTerminalFont(settings),
-      fontSize: settings.terminalFontSize,
-      scrollback: settings.terminalScrollback,
-      theme: {
-        background: settings.editorGlassEnabled
-          ? themeColorWithOpacity(theme.colors.editor, 1 - settings.glassTerminalTransparency / 100)
-          : theme.colors.editor,
-        foreground: theme.colors.text,
-        cursor: theme.colors.cursor,
-        selectionBackground: settings.terminalSelectionColor || theme.colors.selection,
-      },
-    });
-    const fitAddon = new FitAddon();
-    xterm.loadAddon(fitAddon);
-    xterm.open(host.current);
-    const titleChange = xterm.onTitleChange((title) => onTitleChange(session.id, title.trim() || "Terminal"));
-    terminal.current = xterm;
-    fit.current = fitAddon;
+    activeRef.current = active;
+    if (active) handle.current?.focus();
+  }, [active]);
 
+  useEffect(() => {
+    const element = host.current;
+    if (!element) return;
     let disposed = false;
-    let input: { dispose: () => void } | undefined;
-    const queueWrite = (data: string) => {
-      writeBuffer.current += data;
-      if (writeFrame.current !== null) return;
-      writeFrame.current = window.requestAnimationFrame(() => {
-        writeFrame.current = null;
-        const pending = writeBuffer.current;
-        writeBuffer.current = "";
-        if (pending) xterm.write(pending);
-      });
-    };
-    const flushInput = () => {
-      inputTimer.current = null;
-      const pending = inputBuffer.current;
-      inputBuffer.current = "";
-      if (!pending) return;
-      void invoke("terminal_write", { id: session.id, data: pending }).catch((error) =>
-        xterm.write(`\r\nTerminal input failed: ${String(error)}\r\n`),
-      );
-    };
-    const unsubscribe = subscribeTerminalOutput(session.id, queueWrite);
-    void terminalOutputReady().then(() => invoke("terminal_spawn", { id: session.id, cwd: session.cwd || null, command: session.command ?? null }))
-      .then(() => {
+    let cleanupSession: (() => void) | undefined;
+
+    const start = async () => {
+      try {
+        await terminalOutputReady();
         if (disposed) return;
-        input = xterm.onData((data) => {
-          inputBuffer.current += data;
-          if (inputTimer.current === null)
-            inputTimer.current = window.setTimeout(flushInput, 8);
+        const opened = await open(element, {
+          renderer: transparent ? "dom" : "canvas",
+          autoFocus: false,
+          fit: false,
+          scrollback: settings.terminalScrollback,
+          fontSize: settings.terminalFontSize,
+          fontFamily,
+          cursorStyle: settings.terminalCursorStyle,
+          theme: terminalTheme(theme, settings),
         });
-        setReady(true);
-      })
-      .catch((error) => xterm.write(`Terminal failed to start: ${String(error)}\r\n`));
+        if (disposed) {
+          opened.dispose();
+          return;
+        }
+        handle.current = opened;
+        const term = opened.terminal;
+        const decoder = new TextDecoder();
+        let suppressInput = false;
+        let inputBuffer = "";
+        let inputTimer: number | null = null;
+        let lastSize = "";
+
+        const flushInput = () => {
+          inputTimer = null;
+          if (!inputBuffer) return;
+          const pending = inputBuffer;
+          inputBuffer = "";
+          void invoke("terminal_write", { id: session.id, data: pending }).catch((error) => {
+            if (!disposed) term.write(`\r\nTerminal input failed: ${String(error)}\r\n`);
+          });
+        };
+
+        const syncSize = (force = false) => {
+          const size = `${term.options.cols}x${term.options.rows}`;
+          if (!force && size === lastSize) return;
+          lastSize = size;
+          void invoke("terminal_resize", {
+            id: session.id,
+            cols: term.options.cols,
+            rows: term.options.rows,
+          }).catch(() => undefined);
+        };
+
+        const renderer = opened.renderer;
+        const baseCellWidth = renderer.cellWidth;
+        const baseCellHeight = renderer.cellHeight;
+        let fitFrame: number | null = null;
+        const fitToSurface = () => {
+          const width = element.clientWidth;
+          const height = element.clientHeight;
+          if (!width || !height || !baseCellWidth || !baseCellHeight) return;
+          const cols = Math.max(2, Math.floor(width / baseCellWidth));
+          const rows = Math.max(2, Math.floor(height / baseCellHeight));
+          const cellWidth = width / cols;
+          (renderer as unknown as { cellWidth: number }).cellWidth = cellWidth;
+          term.setCellSize(cellWidth, baseCellHeight);
+          if (cols !== term.options.cols || rows !== term.options.rows) term.resize(cols, rows);
+          if (renderer.element instanceof HTMLCanvasElement) {
+            renderer.schedule();
+          } else {
+            renderer.element.style.letterSpacing = `${cellWidth - baseCellWidth}px`;
+          }
+        };
+        const fitObserver = new ResizeObserver(() => {
+          if (fitFrame !== null) return;
+          fitFrame = window.requestAnimationFrame(() => {
+            fitFrame = null;
+            if (!disposed) fitToSurface();
+          });
+        });
+        fitObserver.observe(element);
+        fitToSurface();
+
+        const disposables = [
+          term.onUpdate(() => syncSize()),
+          term.onTitleChange((title) => onTitleChange(session.id, title.trim() || "Terminal")),
+          term.onData((bytes) => {
+            if (suppressInput || disposed) return;
+            inputBuffer += decoder.decode(bytes);
+            if (inputTimer === null) inputTimer = window.setTimeout(flushInput, 8);
+          }),
+        ];
+
+        const unsubscribe = subscribeTerminalOutput(session.id, (data, replay) => {
+          if (replay) suppressInput = true;
+          try {
+            term.write(data);
+          } finally {
+            if (replay) suppressInput = false;
+          }
+        });
+
+        if (activeRef.current) opened.focus();
+
+        cleanupSession = () => {
+          unsubscribe();
+          fitObserver.disconnect();
+          if (fitFrame !== null) {
+            window.cancelAnimationFrame(fitFrame);
+            fitFrame = null;
+          }
+          for (const disposable of disposables) disposable.dispose();
+          if (inputTimer !== null) {
+            window.clearTimeout(inputTimer);
+            inputTimer = null;
+          }
+        };
+
+        await invoke("terminal_spawn", {
+          id: session.id,
+          cwd: session.cwd || null,
+          command: session.command ?? null,
+        });
+        if (!disposed) syncSize(true);
+      } catch (error) {
+        if (!disposed && host.current) {
+          host.current.textContent = `Terminal failed to start: ${String(error)}`;
+        }
+      }
+    };
+
+    void start();
 
     return () => {
       disposed = true;
-      unsubscribe();
-      input?.dispose();
-      if (inputTimer.current !== null) {
-        window.clearTimeout(inputTimer.current);
-        flushInput();
-      }
-      if (writeFrame.current !== null) {
-        window.cancelAnimationFrame(writeFrame.current);
-        writeFrame.current = null;
-      }
-      writeBuffer.current = "";
-      titleChange.dispose();
-      xterm.dispose();
-      terminal.current = null;
-      fit.current = null;
-      setReady(false);
+      cleanupSession?.();
+      handle.current?.dispose();
+      handle.current = null;
     };
-  }, [session.id, session.cwd, session.command, onTitleChange]);
+  }, [
+    session.id,
+    session.cwd,
+    session.command,
+    onTitleChange,
+    fontFamily,
+    settings.terminalFontSize,
+    settings.terminalScrollback,
+    settings.terminalCursorStyle,
+    settings.terminalSelectionColor,
+    settings.editorGlassEnabled,
+    settings.glassTerminalTransparency,
+    theme,
+  ]);
 
-  useEffect(() => {
-    const xterm = terminal.current;
-    if (!xterm) return;
-    xterm.options.cursorBlink = settings.terminalCursorBlink;
-    xterm.options.cursorStyle = settings.terminalCursorStyle;
-    xterm.options.fontFamily = resolveTerminalFont(settings);
-    xterm.options.fontSize = settings.terminalFontSize;
-    xterm.options.scrollback = settings.terminalScrollback;
-    xterm.options.theme = {
-      background: settings.editorGlassEnabled
-        ? themeColorWithOpacity(theme.colors.editor, 1 - settings.glassTerminalTransparency / 100)
-        : theme.colors.editor,
-      foreground: theme.colors.text,
-      cursor: theme.colors.cursor,
-      selectionBackground: settings.terminalSelectionColor || theme.colors.selection,
-    };
-  }, [settings.terminalCursorBlink, settings.terminalCursorStyle, settings.terminalFontFamily, settings.appTheme, settings.terminalFontSize, settings.terminalScrollback, settings.terminalSelectionColor, settings.editorGlassEnabled, settings.glassTerminalTransparency, theme]);
-
-  useEffect(() => {
-    if (!ready || !active || !host.current || !terminal.current || !fit.current) return;
-    let frame: number | null = null;
-    const resize = () => {
-      if (frame !== null) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = null;
-        const xterm = terminal.current;
-        const fitAddon = fit.current;
-        if (!active || !host.current?.clientWidth || !host.current.clientHeight || !xterm || !fitAddon) return;
-        try {
-          fitAddon.fit();
-          const size = `${xterm.cols}x${xterm.rows}`;
-          if (size === lastSize.current) return;
-          lastSize.current = size;
-          void invoke("terminal_resize", { id: session.id, cols: xterm.cols, rows: xterm.rows });
-        } catch { /* Terminal may not have measurable dimensions yet. */ }
-      });
-    };
-    const observer = new ResizeObserver(resize);
-    observer.observe(host.current);
-    requestAnimationFrame(() => {
-      resize();
-      terminal.current?.focus();
-    });
-    return () => {
-      observer.disconnect();
-      if (frame !== null) window.cancelAnimationFrame(frame);
-    };
-  }, [active, ready, session.id, settings.terminalFontFamily, settings.appTheme, settings.terminalFontSize, settings.terminalPadding]);
-
-  return <div
-    ref={host}
-    className={`terminal-view ${settings.terminalScrollbar ? "" : "hide-scrollbar"}`}
-    style={{ padding: settings.terminalPadding }}
-    aria-label="Terminal"
-  />;
+  return (
+    <div
+      className="terminal-view"
+      style={{ padding: settings.terminalPadding }}
+      aria-label="Terminal"
+    >
+      <div ref={host} className="terminal-surface" />
+    </div>
+  );
 }

@@ -4,11 +4,11 @@ Guide for AI coding agents working on Arc. Read this before exploring the codeba
 
 ## What this project is
 
-**Arc** is a desktop workspace for web development: file browser, code editor (CodeMirror 6), terminal (xterm + PTY), GitHub panel (git/gh integration), and a JavaScript plugin system, in one Tauri window.
+**Arc** is a desktop workspace for web development: file browser, code editor (CodeMirror 6), terminal (rioterm + PTY), GitHub panel (git/gh integration), and a JavaScript plugin system, in one Tauri window.
 
 - Package name: `arc-ide`, version `0.1.2`, identifier `dev.arc.ide`
 - Stack: **Tauri 2** (Rust backend) + **React 19** + **TypeScript** (strict) + **Vite 6** frontend
-- Editor: **CodeMirror 6**. Terminal: **xterm** + **portable-pty**. Formatting: **Prettier 3** embedded in the app
+- Editor: **CodeMirror 6**. Terminal: **rioterm** (WASM) + **portable-pty**. Formatting: **Prettier 3** embedded in the app
 - Primary dev/target platform: **Linux (Omarchy/Arch)**. Release builds also target Windows and macOS via CI
 - No router, no state library, no test framework on the frontend. Backend has Rust unit tests inside `src-tauri/src/lib.rs`
 
@@ -41,7 +41,7 @@ dist/                    Build output (gitignored)
 | `components/GithubPanel.tsx` | GitHub panel UI (calls `github_*` Tauri commands) |
 | `components/PluginPanel.tsx` | Plugin manager UI (install/enable/disable/remove) |
 | `components/ThemeMaker.tsx`, `components/ThemeColorPicker.tsx` | Custom theme editor |
-| `components/TerminalView.tsx` | xterm terminal component (lazy loaded) |
+| `components/TerminalView.tsx` | rioterm terminal component (lazy loaded) |
 | `lib/terminalOutput.ts` | Global `terminal-output` event buffer (2 MB cap/session) so terminals survive tab switches |
 | `main.tsx` | React root |
 | `styles/` | Global styles and shared controls |

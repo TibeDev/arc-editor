@@ -162,8 +162,7 @@
   padding: 10px 12px;
 }
 .app-theme-modern .cm-scroller,
-.app-theme-modern .cm-tooltip-autocomplete ul,
-.app-theme-modern .xterm {
+.app-theme-modern .cm-tooltip-autocomplete ul {
   letter-spacing: normal;
 }
 .app-theme-modern .cm-scroller,
