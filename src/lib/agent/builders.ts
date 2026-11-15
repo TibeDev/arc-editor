@@ -33,12 +33,12 @@ export type PluginAnswers = {
   behavior: string;
   surfaces: string[];
   needs: string[];
+  needsAuto: boolean;
   networkUrl: string;
   commands: string;
   panelDetails: string;
   files: string;
   acceptance: string;
-  example: string;
 };
 
 export type ThemeAnswers = {
@@ -67,12 +67,12 @@ export function emptyPluginAnswers(): PluginAnswers {
     behavior: "",
     surfaces: [],
     needs: [],
+    needsAuto: false,
     networkUrl: "",
     commands: "",
     panelDetails: "",
     files: "",
     acceptance: "",
-    example: "",
   };
 }
 
@@ -126,6 +126,9 @@ export function pluginBrief(answers: PluginAnswers, id: string): string {
   const needs = answers.needs.map(
     (need) => PLUGIN_NEEDS.find((entry) => entry.id === need)?.label ?? need,
   );
+  const needsSection = answers.needsAuto
+    ? "Agent chooses the capabilities from the required behavior."
+    : list(needs);
   const details = [
     answers.needs.includes("network") && answers.networkUrl.trim()
       ? `Network endpoint or service: ${answers.networkUrl.trim()}`
@@ -156,9 +159,8 @@ ${section("Required behavior", answers.behavior)}
 ${list(surfaces)}
 ## Capabilities needed
 
-${list(needs)}
+${needsSection}
 ${details.length ? `## Capability details\n\n${list(details)}\n` : ""}${section("Acceptance criteria", answers.acceptance)}
-${section("Example workflow", answers.example)}
 ## Build instructions
 
 1. Read \`kit.md\` and \`plugin-api.md\` before writing code.

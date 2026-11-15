@@ -522,6 +522,45 @@ async fn workspace_pick(app: tauri::AppHandle) -> Result<Option<String>, String>
         .transpose()
 }
 
+static SAVE_PROMPT_BUSY: AtomicBool = AtomicBool::new(false);
+
+struct SavePromptGuard;
+
+impl Drop for SavePromptGuard {
+    fn drop(&mut self) {
+        SAVE_PROMPT_BUSY.store(false, Ordering::Release);
+    }
+}
+
+#[tauri::command]
+async fn save_builder_prompt(
+    app: tauri::AppHandle,
+    file_name: String,
+    content: String,
+) -> Result<Option<String>, String> {
+    if SAVE_PROMPT_BUSY.swap(true, Ordering::AcqRel) {
+        return Err("A save dialog is already open.".into());
+    }
+    let _guard = SavePromptGuard;
+    let dialog = app
+        .dialog()
+        .file()
+        .set_title("Save Arc build prompt")
+        .set_file_name(&file_name)
+        .add_filter("Markdown", &["md"]);
+    let selected = if let Some(window) = app.get_webview_window("main") {
+        dialog.set_parent(&window).blocking_save_file()
+    } else {
+        dialog.blocking_save_file()
+    };
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let path = selected.into_path().map_err(|error| error.to_string())?;
+    std::fs::write(&path, content).map_err(|error| format!("Could not save prompt: {error}"))?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
 #[tauri::command]
 fn workspace_access_allowed(app: tauri::AppHandle, root: String) -> Result<bool, String> {
     let root = PathBuf::from(root)
@@ -3354,6 +3393,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             workspace_pick,
+            save_builder_prompt,
             workspace_access_allowed,
             workspace_grant_access,
             workspace_allow_hidden_paths,

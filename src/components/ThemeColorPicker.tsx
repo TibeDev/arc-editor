@@ -38,7 +38,7 @@ function hexWithRgb(hex: string, rgb: number[]) {
   return `#${rgb.map((channel) => Math.round(Math.max(0, Math.min(255, channel))).toString(16).padStart(2, "0")).join("")}${hex.length === 9 ? hex.slice(7) : ""}`;
 }
 
-export default function ThemeColorPicker({ label, value, onChange, onOpenChange }: { label: string; value: string; onChange: (value: string) => void; onOpenChange?: (open: boolean) => void }) {
+export default function ThemeColorPicker({ label, value, onChange, onOpenChange, disabled = false }: { label: string; value: string; onChange: (value: string) => void; onOpenChange?: (open: boolean) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const [opensAbove, setOpensAbove] = useState(false);
   const [hexDraft, setHexDraft] = useState(value.slice(0, 7));
@@ -51,7 +51,7 @@ export default function ThemeColorPicker({ label, value, onChange, onOpenChange 
   }, [value]);
   useLayoutEffect(() => {
     if (!open || !anchor.current || !popover.current) return;
-    const scrollContainer = anchor.current.closest<HTMLElement>(".settings-scroll, .theme-controls");
+    const scrollContainer = anchor.current.closest<HTMLElement>(".settings-scroll, .theme-controls, .bw-scroll");
     if (!scrollContainer) return;
     const updatePlacement = () => {
       const anchorElement = anchor.current;
@@ -94,8 +94,8 @@ export default function ThemeColorPicker({ label, value, onChange, onOpenChange 
 
   return <div className="theme-color-picker">
     <div ref={anchor} className={`theme-color-anchor ${opensAbove ? "opens-above" : ""}`} onMouseLeave={() => changeOpen(false)}>
-      <button type="button" className="theme-color-swatch" aria-label={`Change ${label} color`} aria-expanded={open} title={`${label}: ${value}`} style={{ backgroundColor: value.slice(0, 7), borderColor: "#ffffff70" }} onClick={() => changeOpen(!open)} />
-      {open && <div ref={popover} className="theme-color-popover">
+      <button type="button" className="theme-color-swatch" aria-label={`Change ${label} color`} aria-expanded={open} title={`${label}: ${value}`} disabled={disabled} style={{ backgroundColor: value.slice(0, 7), borderColor: "#ffffff70" }} onClick={() => changeOpen(!open)} />
+      {open && !disabled && <div ref={popover} className="theme-color-popover">
       <strong>{label}</strong>
       <label className="theme-picker-hex">Hex<input value={hexDraft} spellCheck={false} onChange={(event) => {
         setHexDraft(event.target.value);
