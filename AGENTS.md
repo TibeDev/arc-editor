@@ -4,11 +4,11 @@ Guide for AI coding agents working on Arc. Read this before exploring the codeba
 
 ## What this project is
 
-**Arc** is a desktop workspace for web development: file browser, code editor (CodeMirror 6), terminal (rioterm + PTY), GitHub panel (git/gh integration), and a JavaScript plugin system, in one Tauri window.
+**Arc** is a desktop workspace for web development: file browser, code editor (Monaco Editor), terminal (rioterm + PTY), GitHub panel (git/gh integration), and a JavaScript plugin system, in one Tauri window.
 
 - Package name: `arc-ide`, version `0.1.2`, identifier `dev.arc.ide`
 - Stack: **Tauri 2** (Rust backend) + **React 19** + **TypeScript** (strict) + **Vite 6** frontend
-- Editor: **CodeMirror 6**. Terminal: **rioterm** (WASM) + **portable-pty**. Formatting: **Prettier 3** embedded in the app
+- Editor: **Monaco Editor 0.57**. Terminal: **rioterm** (WASM) + **portable-pty**. Formatting: **Prettier 3** embedded in the app
 - Primary dev/target platform: **Linux (Omarchy/Arch)**. Release builds also target Windows and macOS via CI
 - No router, no state library, no test framework on the frontend. Backend has Rust unit tests inside `src-tauri/src/lib.rs`
 

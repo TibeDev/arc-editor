@@ -416,7 +416,6 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
   const floatingBackground = glass(c.raised, settings.glassFloatingTransparency);
   const settingsBackground = c.background;
   const controlsBackground = glass(c.raised, settings.glassControlsTransparency);
-  const editorFont = resolveEditorFont(settings);
   const overlayAlpha = settings.editorGlassEnabled
     ? 0.5 * (1 - transparency(settings.glassFloatingTransparency) / 100)
     : 0.55;
@@ -470,33 +469,13 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
     .settings-launch { color:${c.muted}; }
     .settings-launch:hover { color:${c.text}; }
     .editor-root,.editor-empty { background:${appBackground}; color:${c.secondaryText}; }
-    .cm-editor { background:${editorBackground}!important; color:${c.text}!important; }
-    .cm-scroller { font-family:${editorFont}; font-size:${settings.fontSize}px; line-height:${settings.lineHeight}; tab-size:${settings.tabSize}; }
-    .cm-gutters { color:${c.lineNumber}!important; }
-    .cm-activeLine { background:${c.activeLine}!important; }
-    .cm-activeLineGutter { color:${c.secondaryText}!important; background-color:${c.activeLine}!important; }
-    .cm-cursor,.cm-cursor-primary { border-left-color:${c.cursor}!important; }
-    .cm-content { caret-color:${c.cursor}!important; }
-    .cm-selectionBackground,.cm-focused .cm-selectionBackground,::selection { background:${c.selection}!important; }
-    .cm-indent-guide { background-image:linear-gradient(to right,transparent calc(${settings.tabSize}ch - 1px),${c.indentGuide} calc(${settings.tabSize}ch - 1px) ${settings.tabSize}ch)!important; background-size:${settings.tabSize}ch 100%!important; }
-    .cm-keyword { color:${c.keyword}!important; }
-    .cm-controlKeyword,.cm-definitionKeyword { color:${c.control}!important; }
-    .cm-string { color:${c.string}!important; }
-    .cm-number,.cm-bool,.cm-null { color:${c.number}!important; }
-    .cm-function { color:${c.function}!important; }
-    .cm-typeName,.cm-className,.cm-namespace { color:${c.type}!important; }
-    .cm-propertyName,.cm-attributeName { color:${c.property}!important; }
-    .cm-tagName { color:${c.tag}!important; }
-    .cm-attributeValue { color:${c.attribute}!important; }
-    .cm-comment { color:${c.comment}!important; font-style:italic; }
-    .cm-operator,.cm-punctuation,.cm-separator { color:${c.operator}!important; }
-    .cm-meta { color:${c.meta}!important; }
-    .cm-invalid { color:${c.invalid}!important; background:${c.invalidBackground}!important; }
-    .cm-tooltip-autocomplete { border-color:${c.border}!important; background:${floatingBackground}!important; color:${c.text}!important; }
-    .cm-tooltip-autocomplete ul li[aria-selected] { background:${glass(c.selected, settings.glassFloatingTransparency)}!important; color:${c.text}!important; }
-    .cm-tooltip-autocomplete .cm-completionLabel { color:${c.text}!important; }
-    .cm-tooltip-autocomplete .cm-completionDetail { color:${c.muted}!important; }
-    .cm-tooltip-autocomplete ul { font-family:${editorFont}; }
+    .monaco-editor, .monaco-editor .margin, .monaco-editor .monaco-scrollable-element { background:${editorBackground}!important; }
+    .monaco-editor { color:${c.text}!important; }
+    .monaco-editor .suggest-widget, .monaco-editor .monaco-hover { border-color:${c.border}!important; background:${floatingBackground}!important; color:${c.text}!important; }
+    .monaco-editor .suggest-widget .monaco-list-row.focused { background:${glass(c.selected, settings.glassFloatingTransparency)}!important; color:${c.text}!important; }
+    .monaco-editor .suggest-widget .details-label, .monaco-editor .suggest-widget .monaco-icon-label-description-container { color:${c.muted}!important; }
+    .monaco-editor .suggest-widget .monaco-list-row .label-name { color:${c.text}!important; }
+    .monaco-editor .suggest-widget .monaco-list-row .codicon { color:${c.secondaryText}!important; }
     .settings-header span { color:${c.muted}; }
     .settings-action,.settings-reset,.welcome-open { border-color:${c.border}; }
   `;

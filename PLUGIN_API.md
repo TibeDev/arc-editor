@@ -50,7 +50,6 @@ Install the folder from **Plugins → Install from folder**. `activate(api)` run
 | `api.events` | Subscribe to app events or publish plugin-scoped events |
 | `api.storage` | Persistent key/value storage scoped to this plugin |
 | `api.localServer` | Start and stop plugin-owned local HTTP server |
-| `api.codemirror` | Shared CodeMirror/Lezer modules for language plugins |
 | `api.languages`, `api.diagnostics` | Register languages, providers, grammars, and diagnostic collections |
 | `api.paths`, `api.workspaceFolders`, `api.workspaceTrust` | Path helpers and workspace metadata |
 | `api.process`, `api.pty`, `api.ipc`, `api.net` | Owned processes, terminals, sockets, HTTP servers, fetch, WebSockets, downloads |
@@ -491,13 +490,13 @@ Provider behavior:
 | codeAction | `Ctrl/Cmd+.` and the **Show Code Actions** command. |
 | signatureHelp | `Ctrl+Shift+Space` and the **Show Signature Help** command. |
 | documentSymbol / workspaceSymbol | Command palette entries. |
-| codeLens / inlayHints / semanticTokens | Rendered in the editor. |
+| codeLens / inlayHints / semanticTokens | Registered for editor integration. |
 | selectionRange | `Shift+Alt+Right` expands the selection. |
 | grammar | Combined with the registered language extension. |
 
 Language providers may return results synchronously or as promises. A failing provider is isolated and does not disable other providers. `api.languages.startServer` returns an LSP-shaped handle with `request`, `notify`, `onNotification`, `onRequest`, and `shutdown` in addition to process methods.
 
-All language provider registrations return disposables. `api.codemirror` exposes Arc's own `language`, `view`, `state`, `autocomplete`, and `highlight` modules so plugins do not bundle duplicate CodeMirror or Lezer instances.
+All language provider registrations return disposables. `api.languages.attachServer({ handle, language, documentSelector })` connects an LSP-shaped process handle to Monaco and returns a disposer. Providers use editor-neutral payloads; plugins do not receive raw editor-engine objects.
 
 ### Files, workspace, and paths
 

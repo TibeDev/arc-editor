@@ -1,6 +1,6 @@
 # Arc Agent Kit
 
-You are building an extension for **Arc**, a desktop workspace for web development (Tauri 2 + React 19 + CodeMirror 6). This kit is authoritative. Do not research Arc from scratch. Read the brief, build the artifact, validate it, then ask before installing.
+You are building an extension for **Arc**, a desktop workspace for web development (Tauri 2 + React 19 + Monaco Editor). This kit is authoritative. Do not research Arc from scratch. Read the brief, build the artifact, validate it, then ask before installing.
 
 Full plugin API reference is next to this file as `plugin-api.md`. Read it when a task touches an API this kit only summarizes.
 
@@ -82,7 +82,7 @@ Use these namespaces. All registrations are removed when the plugin disables.
 - `api.events`: app events and plugin-scoped events.
 - `api.storage`: persistent key/value storage scoped to the plugin.
 - `api.localServer`: start/stop a plugin-owned local HTTP server.
-- `api.codemirror`, `api.languages`, `api.diagnostics`: language support.
+- `api.languages`, `api.diagnostics`: language support, including Monaco providers and `attachServer` for LSP processes.
 - `api.paths`, `api.workspaceFolders`, `api.workspaceTrust`.
 - `api.process`, `api.pty`, `api.ipc`, `api.net`: owned processes, terminals, sockets, HTTP, WebSocket, downloads.
 - `api.icons`, `api.assets`.

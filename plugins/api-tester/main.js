@@ -243,11 +243,10 @@ cat`;
       worker.terminate();
       return "worker created and terminated";
     });
-    await test("api.codemirror modules", () => {
-      const modules = [api.codemirror.language, api.codemirror.view, api.codemirror.state, api.codemirror.autocomplete, api.codemirror.highlight];
-      expect(modules.every(Boolean), "one or more CodeMirror modules missing");
-      expect(typeof api.codemirror.state.EditorState === "function", "EditorState missing");
-      return "shared modules available";
+    await test("api.languages registry", () => {
+      expect(api.languages && typeof api.languages.register === "function", "language registry missing");
+      expect(typeof api.languages.registerGrammar === "function", "grammar registration missing");
+      return "language registry available";
     });
     await test("api.paths join/resolve/relative/toUri/fromUri/basename/dirname/extname/normalize", async () => {
       const joined = api.paths.join("a", "b", "c.txt");
@@ -1342,20 +1341,7 @@ cat`;
     name: "API Test Language",
     extensions: ["apitest"],
     filenames: ["apitest.conf"],
-    load: () => {
-      const { StreamLanguage, LanguageSupport } = api.codemirror.language;
-      const language = StreamLanguage.define({
-        name: "apitest",
-        token(stream) {
-          if (stream.match(/^#.*/)) return "comment";
-          if (stream.match(/^[a-zA-Z_][\w-]*/)) return "keyword";
-          stream.next();
-          return null;
-        },
-        languageData: { commentTokens: { line: "#" } },
-      });
-      return new LanguageSupport(language);
-    },
+    load: () => {},
   });
   disposables.push(disposeLanguage);
 
@@ -1405,7 +1391,11 @@ cat`;
     api.languages.registerSelectionRangeProvider({ language: "apitest" }, {
       provideRanges: () => [{ from: 0, to: 20 }],
     }),
-    api.languages.registerGrammar("apitest", { load: () => [] }),
+    api.languages.registerGrammar("apitest", {
+      load: () => {},
+      configuration: { comments: { lineComment: "#" }, brackets: [["(", ")"], ["[", "]"]], autoClosingPairs: [{ open: "(", close: ")" }, { open: "[", close: "]" }] },
+      language: { tokenizer: { root: [[/#.*/, "comment"], [/[a-zA-Z_]\w*/, "keyword"]] } },
+    }),
   ];
   disposables.push(...providerDisposers);
 

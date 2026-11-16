@@ -4,7 +4,7 @@ Read-only audit. No application code was changed.
 
 ## What this repo does
 
-Arc is a local desktop IDE (Tauri 2 + React 19 + TypeScript, CodeMirror 6, rioterm terminal, git/gh CLI, sandboxed-ish JS plugins) for one developer on one machine.
+Arc is a local desktop IDE (Tauri 2 + React 19 + TypeScript, Monaco Editor, rioterm terminal, git/gh CLI, sandboxed-ish JS plugins) for one developer on one machine.
 
 Assumed load: one app instance, one workspace at a time, trees of a few thousand files, local plugins trusted, GitHub/live-server calls local and occasional.
 

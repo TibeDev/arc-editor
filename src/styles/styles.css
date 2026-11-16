@@ -426,10 +426,10 @@ input:focus-visible {
   overflow: hidden;
   padding: 0;
 }
-.cm-editor {
+.editor-host > .monaco-editor {
   height: 100%;
 }
-.cm-scroller {
+.monaco-editor .monaco-scrollable-element {
   scrollbar-color: #393d42 transparent;
   scrollbar-width: thin;
 }
@@ -533,39 +533,28 @@ input:focus-visible {
   background: var(--settings-accent, #8ba5c2);
   transition: width 0.2s ease;
 }
-.cm-tooltip-autocomplete {
+.monaco-editor .suggest-widget {
   min-width: 190px;
   border: 1px solid #3a3e43 !important;
   background: #181a1d !important;
   color: #d8dce1 !important;
   box-shadow: none !important;
   border-radius: 0 !important;
-}
-.cm-tooltip-autocomplete ul {
   font-family: "JetBrains Mono", monospace;
   font-size: var(--font-md);
 }
-.cm-tooltip-autocomplete ul li {
+.monaco-editor .suggest-widget .monaco-list-row {
   height: 25px;
-  padding: 4px 8px !important;
+  padding: 0 8px !important;
 }
-.cm-tooltip-autocomplete ul li[aria-selected] {
+.monaco-editor .suggest-widget .monaco-list-row.focused {
   background: #30343a !important;
   color: #f0f1f3 !important;
 }
-.cm-tooltip-autocomplete .cm-completionIcon {
-  display: none;
-}
-.cm-tooltip-autocomplete .cm-completionLabel {
-  color: #d8dce1;
-}
-.cm-tooltip-autocomplete .cm-completionDetail {
-  margin-left: 12px;
-  color: #858b92;
+.monaco-editor .suggest-widget .monaco-icon-label-description-container,
+.monaco-editor .suggest-widget .details-label {
+  color: #858b92 !important;
   font-style: normal;
-}
-.cm-tooltip.cm-tooltip-autocomplete:before {
-  display: none;
 }
 @media (max-width: 760px) {
   .editor-tab {
@@ -706,19 +695,7 @@ input:focus-visible {
 .tree-create-row input::placeholder {
   color: #70777f;
 }
-.cm-indent-guide {
-  padding-right: 0.45ch;
-  background-image: linear-gradient(
-    to right,
-    transparent calc(2ch - 1px),
-    #343a43 calc(2ch - 1px) 2ch
-  );
-  background-repeat: repeat;
-  background-size: 2ch 100%;
-}
-.cm-scroller {
-  tab-size: 2;
-}
+
 /* Menus and command palette */
 .context-menu {
   position: fixed;
@@ -1728,7 +1705,7 @@ input:focus-visible {
 .app-shell.editor-glass-enabled .settings-reset,
 .app-shell.editor-glass-enabled .welcome-open,
 .app-shell.editor-glass-enabled .tree-create-row,
-.app-shell.editor-glass-enabled .cm-tooltip-autocomplete {
+.app-shell.editor-glass-enabled .monaco-editor .suggest-widget {
   backdrop-filter: var(--glass-surface-filter);
   -webkit-backdrop-filter: var(--glass-surface-filter);
 }
@@ -1821,7 +1798,7 @@ body,
 input,
 textarea,
 [contenteditable="true"],
-.cm-content,
+.monaco-editor .inputarea,
 .plugin-view-host,
 .arc-plugin-output,
 .message,

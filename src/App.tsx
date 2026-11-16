@@ -13,46 +13,15 @@ import {
   type ReactNode,
 } from 'react';
 import {
-  Decoration,
-  EditorView,
-  highlightActiveLine,
-  highlightActiveLineGutter,
-  keymap,
-  lineNumbers,
-  ViewPlugin,
-  type DecorationSet,
-} from '@codemirror/view';
-import {
-  Annotation,
-  Compartment,
-  EditorSelection,
-  EditorState,
-  RangeSetBuilder,
-  Transaction,
-  type Extension,
-} from '@codemirror/state';
-import {
-  defaultKeymap,
-  history,
-  historyKeymap,
-  indentWithTab,
-} from '@codemirror/commands';
-import {
-  bracketMatching,
-  HighlightStyle,
-  indentOnInput,
-  indentUnit,
-  syntaxHighlighting,
-} from '@codemirror/language';
-import {
-  autocompletion,
-  closeBrackets,
-  closeBracketsKeymap,
-  type CompletionContext,
-  type CompletionResult,
-} from '@codemirror/autocomplete';
-import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
-import { tags } from '@lezer/highlight';
+  monaco,
+  type EditorViewHandle,
+  acquireModel,
+  releaseModel,
+  applyArcTheme,
+  expandDocumentTemplate,
+  registerPhpCompletion,
+} from './lib/editor/monaco';
+import { languageForFileName } from './lib/languages/registry';
 import { invoke, isTauri, Channel } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
@@ -339,260 +308,6 @@ function resizeLayout(
   };
 }
 
-function buildCodeHighlighting(theme: ThemeDefinition) {
-  const c = theme.colors;
-  return HighlightStyle.define([
-    { tag: tags.keyword, color: c.keyword },
-    { tag: [tags.controlKeyword, tags.definitionKeyword], color: c.control },
-    { tag: [tags.string, tags.special(tags.string)], color: c.string },
-    { tag: [tags.number, tags.bool, tags.null], color: c.number },
-    {
-      tag: [tags.function(tags.variableName), tags.function(tags.propertyName)],
-      color: c.function,
-    },
-    { tag: [tags.typeName, tags.className, tags.namespace], color: c.type },
-    { tag: [tags.propertyName, tags.attributeName], color: c.property },
-    { tag: [tags.tagName, tags.self], color: c.tag },
-    { tag: tags.attributeValue, color: c.attribute },
-    {
-      tag: [tags.operator, tags.punctuation, tags.separator],
-      color: c.operator,
-    },
-    { tag: tags.comment, color: c.comment, fontStyle: 'italic' },
-    { tag: tags.meta, color: c.meta },
-    {
-      tag: tags.invalid,
-      color: c.invalid,
-      backgroundColor: c.invalidBackground,
-    },
-  ]);
-}
-
-const externalContentUpdate = Annotation.define<boolean>();
-
-const indentGuideMark = Decoration.mark({ class: 'cm-indent-guide' });
-const leadingIndentation = /^[\t ]+/;
-
-function buildIndentGuides(view: EditorView, tabSize: number): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const visible of view.visibleRanges) {
-    let position = visible.from;
-    while (position <= visible.to) {
-      const line = view.state.doc.lineAt(position);
-      const indentation = leadingIndentation.exec(line.text)?.[0] ?? '';
-      if (indentation.length >= tabSize)
-        builder.add(line.from, line.from + indentation.length, indentGuideMark);
-      if (line.to >= visible.to) break;
-      position = line.to + 1;
-    }
-  }
-  return builder.finish();
-}
-
-function indentationGuides(tabSize: number) {
-  return ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet;
-
-      constructor(view: EditorView) {
-        this.decorations = buildIndentGuides(view, tabSize);
-      }
-
-      update(update: {
-        docChanged: boolean;
-        viewportChanged: boolean;
-        view: EditorView;
-      }) {
-        if (update.docChanged || update.viewportChanged)
-          this.decorations = buildIndentGuides(update.view, tabSize);
-      }
-    },
-    { decorations: (plugin) => plugin.decorations },
-  );
-}
-
-const phpCompletions = [
-  { label: '<?php', type: 'keyword', detail: 'Start PHP code' },
-  { label: 'echo', type: 'keyword', detail: 'Output text' },
-  { label: 'function', type: 'keyword', detail: 'Declare a function' },
-  { label: 'class', type: 'keyword', detail: 'Declare a class' },
-  { label: 'public', type: 'keyword', detail: 'Public visibility' },
-  { label: 'private', type: 'keyword', detail: 'Private visibility' },
-  { label: 'protected', type: 'keyword', detail: 'Protected visibility' },
-  { label: 'static', type: 'keyword', detail: 'Static declaration' },
-  { label: 'new', type: 'keyword', detail: 'Create an object' },
-  { label: 'return', type: 'keyword', detail: 'Return from a function' },
-  { label: 'if', type: 'keyword', detail: 'Conditional statement' },
-  { label: 'elseif', type: 'keyword', detail: 'Additional conditional branch' },
-  { label: 'else', type: 'keyword', detail: 'Fallback conditional branch' },
-  { label: 'foreach', type: 'keyword', detail: 'Iterate over an array' },
-  { label: 'for', type: 'keyword', detail: 'For loop' },
-  { label: 'while', type: 'keyword', detail: 'While loop' },
-  { label: 'try', type: 'keyword', detail: 'Start exception handling' },
-  { label: 'catch', type: 'keyword', detail: 'Handle an exception' },
-  { label: 'throw', type: 'keyword', detail: 'Throw an exception' },
-  { label: 'use', type: 'keyword', detail: 'Import a namespace or trait' },
-  { label: 'namespace', type: 'keyword', detail: 'Declare a namespace' },
-  { label: 'interface', type: 'keyword', detail: 'Declare an interface' },
-  { label: 'trait', type: 'keyword', detail: 'Declare a trait' },
-  { label: 'extends', type: 'keyword', detail: 'Extend a class' },
-  { label: 'implements', type: 'keyword', detail: 'Implement an interface' },
-  { label: 'include', type: 'keyword', detail: 'Include a PHP file' },
-  { label: 'require', type: 'keyword', detail: 'Require a PHP file' },
-  {
-    label: 'count',
-    type: 'function',
-    detail: 'Count items in an array or Countable',
-  },
-  {
-    label: 'array_map',
-    type: 'function',
-    detail: 'Apply a callback to array values',
-  },
-  {
-    label: 'array_filter',
-    type: 'function',
-    detail: 'Filter array values using a callback',
-  },
-  {
-    label: 'array_merge',
-    type: 'function',
-    detail: 'Merge one or more arrays',
-  },
-  {
-    label: 'in_array',
-    type: 'function',
-    detail: 'Check whether a value exists in an array',
-  },
-  {
-    label: 'isset',
-    type: 'function',
-    detail: 'Check whether a variable is set',
-  },
-  {
-    label: 'empty',
-    type: 'function',
-    detail: 'Check whether a value is empty',
-  },
-  { label: 'strlen', type: 'function', detail: 'Get string length' },
-  {
-    label: 'str_replace',
-    type: 'function',
-    detail: 'Replace text in a string',
-  },
-  {
-    label: 'explode',
-    type: 'function',
-    detail: 'Split a string into an array',
-  },
-  {
-    label: 'implode',
-    type: 'function',
-    detail: 'Join array values into a string',
-  },
-  {
-    label: 'trim',
-    type: 'function',
-    detail: 'Remove whitespace from a string',
-  },
-  {
-    label: 'htmlspecialchars',
-    type: 'function',
-    detail: 'Escape HTML special characters',
-  },
-  { label: 'json_encode', type: 'function', detail: 'Encode a value as JSON' },
-  { label: 'json_decode', type: 'function', detail: 'Decode a JSON string' },
-  {
-    label: 'preg_match',
-    type: 'function',
-    detail: 'Perform a regular-expression match',
-  },
-  { label: 'filter_var', type: 'function', detail: 'Filter a value' },
-  { label: 'header', type: 'function', detail: 'Send an HTTP response header' },
-  {
-    label: 'http_response_code',
-    type: 'function',
-    detail: 'Get or set HTTP response code',
-  },
-  {
-    label: 'password_hash',
-    type: 'function',
-    detail: 'Create a password hash',
-  },
-  {
-    label: 'password_verify',
-    type: 'function',
-    detail: 'Verify a password against a hash',
-  },
-  {
-    label: 'file_get_contents',
-    type: 'function',
-    detail: 'Read a file into a string',
-  },
-  {
-    label: 'file_put_contents',
-    type: 'function',
-    detail: 'Write data to a file',
-  },
-  { label: 'var_dump', type: 'function', detail: 'Inspect a value' },
-  {
-    label: 'print_r',
-    type: 'function',
-    detail: 'Display structured information',
-  },
-  { label: 'DateTime', type: 'class', detail: 'Date and time representation' },
-  { label: 'Exception', type: 'class', detail: 'Base exception class' },
-  { label: '$this', type: 'variable', detail: 'Current object' },
-  { label: '$_GET', type: 'variable', detail: 'Query-string values' },
-  { label: '$_POST', type: 'variable', detail: 'Submitted form values' },
-  { label: '$_REQUEST', type: 'variable', detail: 'Request values' },
-  {
-    label: '$_SERVER',
-    type: 'variable',
-    detail: 'Server and request information',
-  },
-  { label: '$_SESSION', type: 'variable', detail: 'Session values' },
-  { label: '$_COOKIE', type: 'variable', detail: 'Cookie values' },
-  { label: '$_FILES', type: 'variable', detail: 'Uploaded files' },
-  { label: '$_ENV', type: 'variable', detail: 'Environment values' },
-];
-
-function phpCompletion(context: CompletionContext): CompletionResult | null {
-  const word = context.matchBefore(/[$A-Za-z_][\w$]*/);
-  if (!word && !context.explicit) return null;
-  return {
-    from: word?.from ?? context.pos,
-    options: phpCompletions,
-    validFor: /^[$A-Za-z_][\w$]*$/,
-  };
-}
-
-function expandDocumentTemplate(view: EditorView, extension: string): boolean {
-  if (!['html', 'htm', 'php'].includes(extension)) return false;
-  const selection = view.state.selection.main;
-  const length = view.state.doc.length;
-  if (
-    selection.from !== length ||
-    selection.to !== length
-  )
-    return false;
-  const document = view.state.doc.toString();
-  if (!/^\s*!\s*$/.test(document)) return false;
-
-  const phpFile = extension === 'php';
-  const phpBlock = phpFile ? '<?php\n\n?>\n' : '';
-  const template = `${phpBlock}<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n  <title>Document</title>\n</head>\n<body>\n\n</body>\n</html>`;
-  const cursor = phpFile
-    ? '<?php\n'.length
-    : template.indexOf('<body>\n') + '<body>\n'.length;
-  view.dispatch({
-    changes: { from: 0, to: document.length, insert: template },
-    selection: { anchor: cursor },
-    scrollIntoView: true,
-  });
-  return true;
-}
-
 const extensionOf = (name: string) =>
   name.split('.').pop()?.toLowerCase() ?? '';
 
@@ -767,40 +482,6 @@ function PluginToolbarIcon({ name, svg }: { name?: string; svg?: string }) {
   return <Puzzle size={15} />;
 }
 
-async function loadCodeLanguage(extension: string): Promise<Extension> {
-  const aliases: Record<string, string> = {
-    html: 'html',
-    css: 'css',
-    scss: 'scss',
-    javascript: 'js',
-    typescript: 'ts',
-    json: 'json',
-    jsonc: 'jsonc',
-    markdown: 'md',
-    php: 'php',
-  };
-  extension = aliases[extension] ?? extension;
-  if (['html', 'htm', 'svg'].includes(extension))
-    return (await import('@codemirror/lang-html')).html();
-  if (extension === 'php') {
-    const { php, phpLanguage } = await import('@codemirror/lang-php');
-    return [php(), phpLanguage.data.of({ autocomplete: phpCompletion })];
-  }
-  if (['css', 'scss'].includes(extension))
-    return (await import('@codemirror/lang-css')).css();
-  if (['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx'].includes(extension)) {
-    return (await import('@codemirror/lang-javascript')).javascript({
-      jsx: true,
-      typescript: ['ts', 'tsx'].includes(extension),
-    });
-  }
-  if (['json', 'jsonc'].includes(extension))
-    return (await import('@codemirror/lang-json')).json();
-  if (['md', 'mdx'].includes(extension))
-    return (await import('@codemirror/lang-markdown')).markdown();
-  return [];
-}
-
 function EditorPane({
   group,
   file,
@@ -824,9 +505,6 @@ function EditorPane({
   editorViews,
   pluginLanguages,
   pluginLanguageOverrides,
-  pluginEditorExtensions,
-  pluginGrammarFor,
-  pluginGrammarVersion,
   onSelectionChange,
   settings,
   theme,
@@ -850,99 +528,95 @@ function EditorPane({
   pluginPanel: ReactNode;
   builderPanel: ReactNode;
   pluginViews: PluginPanelContribution[];
-  editorViews: { current: Map<string, Map<GroupId, EditorView>> };
+  editorViews: { current: Map<string, Map<GroupId, EditorViewHandle>> };
   pluginLanguages: PluginLanguageContribution[];
   pluginLanguageOverrides: Record<string, string>;
-  pluginEditorExtensions: Extension;
-  pluginGrammarFor: (languageId: string) => Extension | Promise<Extension> | undefined;
-  pluginGrammarVersion: number;
   onSelectionChange?: (path: string) => void;
   settings: AppSettings;
   theme: ThemeDefinition;
 }) {
   const host = useRef<HTMLDivElement>(null);
-  const view = useRef<EditorView | null>(null);
+  const view = useRef<EditorViewHandle | null>(null);
   const onSelectionChangeRef = useRef(onSelectionChange);
   onSelectionChangeRef.current = onSelectionChange;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const syncing = useRef(false);
   const snapshot = useRef<{
     path: string;
-    selection: EditorSelection;
-    scrollTop: number;
-    scrollLeft: number;
+    viewState: monaco.editor.ICodeEditorViewState | null;
   } | null>(null);
-  const [compartments] = useState(() => ({
-    settings: new Compartment(),
-    theme: new Compartment(),
-    language: new Compartment(),
-  }));
   const [dragActive, setDragActive] = useState(false);
+
+  const extension = extensionOf(file?.name ?? '');
 
   useEffect(() => {
     if (!file || !host.current) {
-      view.current?.destroy();
+      view.current?.dispose();
       view.current = null;
       return;
     }
 
-    view.current?.destroy();
-    const editor = new EditorView({
-      parent: host.current,
-      state: EditorState.create({
-        doc: file.content,
-        extensions: [
-          history(),
-          highlightSelectionMatches(),
-          compartments.settings.of([]),
-          compartments.theme.of([]),
-          compartments.language.of([]),
-          pluginEditorExtensions,
-          EditorView.updateListener.of((update) => {
-            if (
-              update.docChanged &&
-              !update.transactions.some((transaction) =>
-                transaction.annotation(externalContentUpdate),
-              )
-            ) {
-              onChange(file.path);
-            }
-            if (update.selectionSet || update.docChanged || update.focusChanged)
-              onSelectionChangeRef.current?.(file.path);
-          }),
-          EditorView.domEventHandlers({
-            focus: () => {
-              onActivate(group.id);
-              return false;
-            },
-          }),
-        ],
-        selection:
-          snapshot.current?.path === file.path
-            ? snapshot.current.selection
-            : undefined,
-      }),
+    applyArcTheme(theme);
+    registerPhpCompletion();
+    const languageId = pluginLanguageOverrides[file.path] ?? languageForFileName(file.name);
+    const model = acquireModel(file.path, file.content, languageId);
+    const editor = monaco.editor.create(host.current, {
+      model,
+      theme: `arc-${theme.id}`,
+      automaticLayout: true,
+      fontFamily: resolveEditorFont(settingsRef.current),
+      fontSize: settingsRef.current.fontSize,
+      lineHeight: Math.round(settingsRef.current.fontSize * settingsRef.current.lineHeight),
+      tabSize: settingsRef.current.tabSize,
+      insertSpaces: true,
+      lineNumbers: settingsRef.current.lineNumbers ? 'on' : 'off',
+      wordWrap: settingsRef.current.wordWrap ? 'on' : 'off',
+      renderLineHighlight: settingsRef.current.activeLine ? 'all' : 'none',
+      guides: { indentation: settingsRef.current.indentGuides && !['css', 'scss'].includes(extension) },
+      autoClosingBrackets: settingsRef.current.autoCloseBrackets ? 'languageDefined' : 'never',
+      autoIndent: settingsRef.current.autoIndent ? 'full' : 'none',
+      suggestOnTriggerCharacters: settingsRef.current.autocomplete,
+      quickSuggestions: settingsRef.current.autocomplete,
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      smoothScrolling: true,
+      padding: { top: 8, bottom: 8 },
+      fixedOverflowWidgets: true,
     });
     view.current = editor;
-    const views = editorViews.current.get(file.path) ?? new Map<GroupId, EditorView>();
+    const views = editorViews.current.get(file.path) ?? new Map<GroupId, EditorViewHandle>();
     views.set(group.id, editor);
     editorViews.current.set(file.path, views);
-    if (snapshot.current?.path === file.path) {
-      const previous = snapshot.current;
-      requestAnimationFrame(() => {
-        if (view.current === editor) {
-          editor.scrollDOM.scrollTop = previous.scrollTop;
-          editor.scrollDOM.scrollLeft = previous.scrollLeft;
-        }
-      });
+
+    editor.addCommand(monaco.KeyCode.Tab, () => {
+      if (expandDocumentTemplate(editor, extension)) return;
+      const selection = editor.getSelection();
+      if (!selection) return;
+      editor.executeEdits('arc-tab', [{ range: selection, text: ' '.repeat(settingsRef.current.tabSize) }]);
+    });
+
+    const contentListener = editor.onDidChangeModelContent(() => {
+      if (!syncing.current) onChange(file.path);
+    });
+    const selectionListener = editor.onDidChangeCursorSelection(() => {
+      onSelectionChangeRef.current?.(file.path);
+    });
+    const focusListener = editor.onDidFocusEditorText(() => {
+      onActivate(group.id);
+    });
+
+    if (snapshot.current?.path === file.path && snapshot.current.viewState) {
+      editor.restoreViewState(snapshot.current.viewState);
     }
+
     return () => {
-      onChange(file.path, editor.state.doc.toString());
-      snapshot.current = {
-        path: file.path,
-        selection: editor.state.selection,
-        scrollTop: editor.scrollDOM.scrollTop,
-        scrollLeft: editor.scrollDOM.scrollLeft,
-      };
-      editor.destroy();
+      contentListener.dispose();
+      selectionListener.dispose();
+      focusListener.dispose();
+      onChange(file.path, model.getValue());
+      snapshot.current = { path: file.path, viewState: editor.saveViewState() };
+      editor.dispose();
       const views = editorViews.current.get(file.path);
       if (views?.get(group.id) === editor) {
         views.delete(group.id);
@@ -950,208 +624,71 @@ function EditorPane({
       }
       if (view.current === editor) view.current = null;
     };
-  }, [editorViews, file?.path, group.id, onActivate, onChange, pluginEditorExtensions]);
+  }, [editorViews, file?.path, extension, group.id, onActivate, onChange, pluginLanguageOverrides, theme.id]);
 
   useEffect(() => {
     const editor = view.current;
-    if (!file || !editor) return;
+    const model = editor?.getModel();
+    if (!file || !editor || !model) return;
     let cancelled = false;
-    const extension = extensionOf(file.name);
     const override = pluginLanguageOverrides[file.path];
     const contribution =
       pluginLanguages.find((entry) => entry.id === override) ??
       pluginLanguages.find(
         (entry) =>
-          (entry.extensions ?? []).some(
-            (value) => value.toLowerCase() === extension,
-          ) ||
-          (entry.filenames ?? []).some(
-            (value) => value.toLowerCase() === file.name.toLowerCase(),
-          ),
+          (entry.extensions ?? []).some((value) => value.toLowerCase() === extension) ||
+          (entry.filenames ?? []).some((value) => value.toLowerCase() === file.name.toLowerCase()),
       );
     void (async () => {
-      const language = contribution
-        ? await Promise.resolve(contribution.load())
-        : await loadCodeLanguage(override ?? extension);
-      const grammarIds = [contribution?.id, contribution?.id.split(':').at(-1), override, extension].filter((value): value is string => Boolean(value));
-      const grammar = grammarIds.map((id) => pluginGrammarFor(id)).find(Boolean);
-      const resolvedGrammar = grammar ? await Promise.resolve(grammar) : undefined;
-      return resolvedGrammar ? [language, resolvedGrammar] : language;
-    })()
-      .then((language) => {
-        if (!cancelled && view.current === editor)
-          editor.dispatch({
-            effects: compartments.language.reconfigure(language),
-          });
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [compartments.language, file?.path, file?.name, pluginLanguageOverrides, pluginLanguages, pluginGrammarFor, pluginGrammarVersion]);
+      if (contribution) {
+        await Promise.resolve(contribution.load());
+        if (!monaco.languages.getLanguages().some((language) => language.id === contribution.id)) {
+          monaco.languages.register({ id: contribution.id, extensions: contribution.extensions, aliases: contribution.aliases });
+        }
+      }
+      return contribution?.id ?? languageForFileName(file.name, override);
+    })().then((languageId) => {
+      if (!cancelled && view.current === editor) monaco.editor.setModelLanguage(model, languageId);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [file?.path, file?.name, extension, pluginLanguageOverrides, pluginLanguages]);
 
   useEffect(() => {
     const editor = view.current;
     if (!file || !editor) return;
-    const extension = extensionOf(file.name);
     const isCss = ['css', 'scss'].includes(extension);
-    editor.dispatch({
-      effects: compartments.settings.reconfigure([
-        EditorState.tabSize.of(settings.tabSize),
-        indentUnit.of(' '.repeat(settings.tabSize)),
-        ...(settings.lineNumbers ? [lineNumbers()] : []),
-        keymap.of([
-          ...(settings.autoCloseBrackets ? closeBracketsKeymap : []),
-          {
-            key: 'Tab',
-            run: (view) => expandDocumentTemplate(view, extension),
-          },
-          ...defaultKeymap,
-          ...searchKeymap,
-          ...historyKeymap,
-          indentWithTab,
-        ]),
-        ...(settings.bracketMatching ? [bracketMatching()] : []),
-        ...(settings.autoCloseBrackets ? [closeBrackets()] : []),
-        ...(settings.autoIndent ? [indentOnInput()] : []),
-        ...(settings.activeLine
-          ? [highlightActiveLine(), highlightActiveLineGutter()]
-          : []),
-        ...(settings.indentGuides && !isCss
-          ? [indentationGuides(settings.tabSize)]
-          : []),
-        ...(settings.wordWrap ? [EditorView.lineWrapping] : []),
-        ...(settings.autocomplete ? [autocompletion()] : []),
-        EditorView.theme({
-          '&': { height: '100%' },
-          '.cm-scroller': {
-            overflow: 'auto',
-            fontFamily: resolveEditorFont(settings),
-            fontSize: `${settings.fontSize}px`,
-            lineHeight: String(settings.lineHeight),
-          },
-          '.cm-tooltip-autocomplete ul': {
-            fontFamily: resolveEditorFont(settings),
-            fontSize: '12px',
-            maxHeight: '250px',
-          },
-          '.cm-tooltip-autocomplete ul li': {
-            padding: '3px 8px',
-            lineHeight: '20px',
-          },
-          '.cm-focused': { outline: 'none' },
-        }),
-      ]),
+    editor.updateOptions({
+      fontFamily: resolveEditorFont(settings),
+      fontSize: settings.fontSize,
+      lineHeight: Math.round(settings.fontSize * settings.lineHeight),
+      tabSize: settings.tabSize,
+      insertSpaces: true,
+      lineNumbers: settings.lineNumbers ? 'on' : 'off',
+      wordWrap: settings.wordWrap ? 'on' : 'off',
+      renderLineHighlight: settings.activeLine ? 'all' : 'none',
+      guides: { indentation: settings.indentGuides && !isCss },
+      autoClosingBrackets: settings.autoCloseBrackets ? 'languageDefined' : 'never',
+      autoIndent: settings.autoIndent ? 'full' : 'none',
+      suggestOnTriggerCharacters: settings.autocomplete,
+      quickSuggestions: settings.autocomplete,
     });
-  }, [
-    compartments.settings,
-    file?.path,
-    file?.name,
-    settings.tabSize,
-    settings.lineNumbers,
-    settings.autoCloseBrackets,
-    settings.bracketMatching,
-    settings.autoIndent,
-    settings.activeLine,
-    settings.indentGuides,
-    settings.wordWrap,
-    settings.autocomplete,
-    settings.fontFamily,
-    settings.appTheme,
-    settings.fontSize,
-    settings.lineHeight,
-  ]);
-
-  useEffect(() => {
-    const editor = view.current;
-    if (!file || !editor) return;
-    editor.dispatch({
-      effects: compartments.theme.reconfigure([
-        syntaxHighlighting(buildCodeHighlighting(theme)),
-        EditorView.theme({
-          '&': {
-            backgroundColor: theme.colors.editor,
-            color: theme.colors.text,
-          },
-          '.cm-gutters': {
-            backgroundColor: 'transparent',
-            color: theme.colors.lineNumber,
-            border: 'none',
-            paddingRight: '13px',
-          },
-          '.cm-activeLineGutter': {
-            color: theme.colors.secondaryText,
-            backgroundColor: theme.colors.activeLine,
-          },
-          '.cm-activeLine': { backgroundColor: theme.colors.activeLine },
-          '.cm-cursor': {
-            borderLeftColor: `${theme.colors.cursor} !important`,
-            borderLeftWidth: '2px',
-            opacity: '1',
-            filter: `drop-shadow(0 0 2px ${theme.colors.cursor})`,
-          },
-          '&.cm-focused .cm-cursor': {
-            borderLeftColor: `${theme.colors.cursor} !important`,
-            borderLeftWidth: '2px',
-            opacity: '1',
-          },
-          '.cm-selectionBackground, ::selection': {
-            backgroundColor: `${theme.colors.selection} !important`,
-          },
-          '.cm-tooltip': {
-            border: `1px solid ${theme.colors.border}`,
-            backgroundColor: theme.colors.raised,
-            color: theme.colors.text,
-            boxShadow: 'none',
-          },
-          '.cm-tooltip-autocomplete ul li[aria-selected]': {
-            backgroundColor: theme.colors.selected,
-            color: theme.colors.text,
-          },
-          '.cm-completionIcon': { display: 'none' },
-          '.cm-completionLabel': { color: theme.colors.text },
-          '.cm-completionDetail': {
-            color: theme.colors.muted,
-            fontStyle: 'normal',
-            marginLeft: '12px',
-          },
-        }),
-      ]),
-    });
-  }, [compartments.theme, file?.path, theme]);
+  }, [extension, file?.path, settings]);
 
   useEffect(() => {
     if (!file || !view.current) return;
+    applyArcTheme(theme);
+  }, [file?.path, theme]);
+
+  useEffect(() => {
     const editor = view.current;
-    const current = editor.state.doc.toString();
-    if (current !== file.content) {
-      const scrollTop = editor.scrollDOM.scrollTop;
-      const scrollLeft = editor.scrollDOM.scrollLeft;
-      const length = file.content.length;
-      const selection = EditorSelection.create(
-        editor.state.selection.ranges.map((range) =>
-          EditorSelection.range(
-            Math.min(range.anchor, length),
-            Math.min(range.head, length),
-          ),
-        ),
-        editor.state.selection.mainIndex,
-      );
-      editor.dispatch({
-        changes: { from: 0, to: current.length, insert: file.content },
-        selection,
-        annotations: [
-          externalContentUpdate.of(true),
-          Transaction.addToHistory.of(false),
-        ],
-      });
-      const restoreScroll = () => {
-        if (view.current !== editor) return;
-        editor.scrollDOM.scrollTop = scrollTop;
-        editor.scrollDOM.scrollLeft = scrollLeft;
-      };
-      restoreScroll();
-      requestAnimationFrame(restoreScroll);
+    const model = editor?.getModel();
+    if (!file || !editor || !model) return;
+    if (model.getValue() !== file.content) {
+      const state = editor.saveViewState();
+      syncing.current = true;
+      model.setValue(file.content);
+      syncing.current = false;
+      if (state) editor.restoreViewState(state);
     }
   }, [file?.path, file?.revision]);
 
@@ -1521,7 +1058,7 @@ function App() {
     async () => undefined,
   );
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
-  const editorViews = useRef(new Map<string, Map<GroupId, EditorView>>());
+  const editorViews = useRef(new Map<string, Map<GroupId, EditorViewHandle>>());
   const lastActiveEditorPath = useRef('');
   const selectionEventAt = useRef(0);
   const [pluginLanguageOverrides, setPluginLanguageOverrides] = useState<
@@ -2224,6 +1761,7 @@ function App() {
       for (const path of doomed) {
         fileContents.current.delete(path);
         lastDiskWrite.current.delete(path);
+        releaseModel(path);
       }
       setOpenFiles((current) =>
         current.filter((file) => !doomed.has(file.path)),
@@ -2991,6 +2529,7 @@ function App() {
       setTerminals([]);
       setWorkspace(selected);
       setOpenFiles([]);
+      for (const path of fileContents.current.keys()) releaseModel(path);
       fileContents.current.clear();
       lastDiskWrite.current.clear();
       allowedHiddenPaths.current.clear();
@@ -3099,7 +2638,7 @@ function App() {
       const views = editorViews.current.get(path);
       const editor = views?.values().next().value;
       if (!editor) continue;
-      const content = editor.state.doc.toString();
+      const content = editor.getModel()?.getValue() ?? '';
       if (fileContents.current.get(path) === content) continue;
       fileContents.current.set(path, content);
       changed.push({ path, content });
@@ -3393,6 +2932,7 @@ function App() {
       if (!otherGroupsStillUseFile && !terminal) {
         fileContents.current.delete(path);
         lastDiskWrite.current.delete(path);
+        releaseModel(path);
         setDiskConflicts((current) => {
           if (!current.has(path)) return current;
           const next = new Set(current);
@@ -3754,6 +3294,7 @@ function App() {
       if (affected(path)) {
         fileContents.current.delete(path);
         lastDiskWrite.current.delete(path);
+        releaseModel(path);
       }
     setOpenFiles((current) => current.filter((file) => !affected(file.path)));
     const nextGroups = groups.map((group) => {
@@ -4512,13 +4053,17 @@ function App() {
     const file = openFiles.find((entry) => entry.path === activePath);
     if (!file) return null;
     const editor = editorViewForPath(activePath);
-    const selection = editor?.state.selection.main;
+    const model = editor?.getModel();
+    const selection = editor?.getSelection();
     return {
       path: activePath,
       name: file.name,
-      text: fileContents.current.get(activePath) ?? '',
+      text: model?.getValue() ?? fileContents.current.get(activePath) ?? '',
       dirty: file.dirty,
-      selection: { from: selection?.from ?? 0, to: selection?.to ?? 0 },
+      selection: {
+        from: selection ? model?.getOffsetAt(selection.getStartPosition()) ?? 0 : 0,
+        to: selection ? model?.getOffsetAt(selection.getEndPosition()) ?? 0 : 0,
+      },
     };
   };
 
@@ -4526,15 +4071,14 @@ function App() {
     const snapshot = getPluginEditorSnapshot(path);
     if (!snapshot) return null;
     const editor = editorViewForPath(snapshot.path);
-    const line = editor
-      ? editor.state.doc.lineAt(editor.state.selection.main.head)
-      : null;
-    const visibleRanges = editor
-      ? editor.visibleRanges.map((range) => ({
-          from: range.from,
-          to: range.to,
-        }))
-      : [];
+    const model = editor?.getModel();
+    const selection = editor?.getSelection();
+    const offset = selection ? model?.getOffsetAt(selection.getPosition()) ?? 0 : snapshot.selection.from;
+    const position = model?.getPositionAt(offset) ?? { lineNumber: 1, column: 1 };
+    const visibleRanges = editor?.getVisibleRanges().map((range) => ({
+      from: model?.getOffsetAt(range.getStartPosition()) ?? 0,
+      to: model?.getOffsetAt(range.getEndPosition()) ?? 0,
+    })) ?? [];
     const languageId =
       pluginLanguageOverrides[snapshot.path] ??
       pluginRuntime.languages.find(
@@ -4552,23 +4096,19 @@ function App() {
       uri: `file://${snapshot.path.split('/').map(encodeURIComponent).join('/')}`,
       name: snapshot.name,
       language: languageId,
-      version: editor?.state.doc.length ?? snapshot.text.length,
+      version: model?.getValueLength() ?? snapshot.text.length,
       cursor: {
-        line: line?.number ?? 1,
-        column: line
-          ? (editor?.state.selection.main.head ?? line.from) - line.from + 1
-          : 1,
-        offset: editor?.state.selection.main.head ?? snapshot.selection.from,
+        line: position.lineNumber,
+        column: position.column,
+        offset,
       },
       selection: snapshot.selection,
-      selections: editor
-        ? editor.state.selection.ranges.map((range) => ({
-            from: range.from,
-            to: range.to,
-          }))
-        : [snapshot.selection],
+      selections: editor?.getSelections()?.map((range) => ({
+        from: model?.getOffsetAt(range.getStartPosition()) ?? 0,
+        to: model?.getOffsetAt(range.getEndPosition()) ?? 0,
+      })) ?? [snapshot.selection],
       dirty: snapshot.dirty,
-      focused: editor?.hasFocus ?? false,
+      focused: editor?.hasTextFocus() ?? false,
       visibleRanges,
     };
   };
@@ -4688,9 +4228,7 @@ function App() {
       const relativePath = normalizePluginPath(path);
       const editor = editorViewForPath(relativePath);
       if (editor)
-        editor.dispatch({
-          changes: { from: 0, to: editor.state.doc.length, insert: text },
-        });
+        editor.getModel()?.setValue(text);
       else if (openFiles.some((file) => file.path === relativePath))
         updateFile(relativePath, text, true);
       else throw new Error(`No open editor matches ${relativePath}.`);
@@ -4913,9 +4451,6 @@ function App() {
         editorViews={editorViews}
         pluginLanguages={pluginRuntime.languages}
         pluginLanguageOverrides={pluginLanguageOverrides}
-        pluginEditorExtensions={pluginRuntime.editorExtensions}
-        pluginGrammarFor={pluginRuntime.getGrammar}
-        pluginGrammarVersion={pluginRuntime.grammarVersion}
         onSelectionChange={(path) => {
           const now = performance.now();
           if (now - selectionEventAt.current < 80) return;

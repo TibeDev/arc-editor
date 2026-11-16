@@ -51,6 +51,6 @@ On macOS, replace `Ctrl` with `Command`. `Alt+Shift+F` uses `Option+Shift+F`.
 
 ## Editor and plugins
 
-Arc provides HTML-tag and PHP completion. It does not include language-server support yet. Prettier formatting supports HTML, SVG, Vue, CSS, SCSS, JavaScript, TypeScript, JSON, Markdown, and YAML.
+Arc provides HTML-tag and PHP completion, Monaco-powered syntax support, and an LSP bridge that plugins can attach to language servers. Built-in language servers are not bundled. Prettier formatting supports HTML, SVG, Vue, CSS, SCSS, JavaScript, TypeScript, JSON, Markdown, and YAML.
 
 Install a plugin from **Plugins → Install from folder**. A plugin folder needs `plugin.json` and a self-contained `main.js`. Plugins can access Arc and workspace APIs, so install them only from sources you trust. See [`PLUGIN_API.md`](PLUGIN_API.md) for the API.

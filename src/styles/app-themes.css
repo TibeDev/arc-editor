@@ -161,12 +161,9 @@
 .app-theme-modern .terminal-view {
   padding: 10px 12px;
 }
-.app-theme-modern .cm-scroller,
-.app-theme-modern .cm-tooltip-autocomplete ul {
+.app-theme-modern .monaco-editor,
+.app-theme-modern .monaco-editor .suggest-widget {
   letter-spacing: normal;
-}
-.app-theme-modern .cm-scroller,
-.app-theme-modern .cm-tooltip-autocomplete ul {
   font-feature-settings: "calt" 0;
 }
 

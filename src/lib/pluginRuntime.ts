@@ -8,16 +8,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { readText as readClipboardText, writeHtml as writeClipboardHtml, writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import { copyFile, exists, mkdir, open as openFsFile, readDir, readFile, readTextFile, remove, rename as renameFile, stat as statFile, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { EditorState, type Extension, type Range } from "@codemirror/state";
-import { Decoration, EditorView as CodeMirrorView, ViewPlugin, WidgetType, keymap, type EditorView, type DecorationSet, type ViewUpdate } from "@codemirror/view";
-import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-import { foldService } from "@codemirror/language";
-import { hoverTooltip } from "@codemirror/view";
-import * as codeMirrorLanguage from "@codemirror/language";
-import * as codeMirrorView from "@codemirror/view";
-import * as codeMirrorState from "@codemirror/state";
-import * as codeMirrorAutocomplete from "@codemirror/autocomplete";
-import * as codeMirrorHighlight from "@lezer/highlight";
+import { monaco, pathFromUri, modelForPath, setEditorDecorations, type EditorViewHandle } from "./editor/monaco";
+import { connectLanguageServer } from "./languages/lsp";
 import type { AppSettings, ThemeDefinition } from "./settings";
 
 const builtinManifestSources: Record<string, string> = import.meta.env.PROD
@@ -199,9 +191,19 @@ export type PluginLanguageDefinition = {
   filenames?: string[];
   aliases?: string[];
   configuration?: Record<string, unknown>;
-  load: () => Extension | Promise<Extension>;
+  load: () => void | Promise<void>;
 };
 export type PluginLanguageContribution = PluginLanguageDefinition & { pluginId: string; pluginName: string };
+export type PluginCompletionItem = {
+  label: string;
+  kind?: unknown;
+  detail?: string;
+  documentation?: unknown;
+  insertText?: string;
+  sortText?: string;
+  filterText?: string;
+};
+type Completion = PluginCompletionItem;
 export type PluginCompletionProvider = {
   provideCompletionItems: (context: { path: string; language: string; text: string; offset: number; line: string; from: number; to: number }) => Completion[] | Promise<Completion[]>;
   resolveCompletionItem?: (item: Completion) => Completion | Promise<Completion>;
@@ -222,7 +224,11 @@ export type PluginFormattingProvider = {
 export type PluginFoldingProvider = {
   provideFoldingRange: (context: { path: string; language: string; text: string; line: number }) => PluginRange | null;
 };
-export type PluginGrammar = { load: () => Extension | Promise<Extension> };
+export type PluginGrammar = {
+  load?: () => void | Promise<void>;
+  language?: monaco.languages.IMonarchLanguage;
+  configuration?: monaco.languages.LanguageConfiguration;
+};
 export type PluginDiagnosticsCollection = {
   set: (uri: string, items: unknown[]) => void;
   delete: (uri: string) => void;
@@ -306,13 +312,6 @@ export type PluginApi = {
     clearInterval: (id: number) => void;
   };
   workers: { create: (scriptPath: string) => Worker };
-  codemirror: {
-    language: typeof codeMirrorLanguage;
-    view: typeof codeMirrorView;
-    state: typeof codeMirrorState;
-    autocomplete: typeof codeMirrorAutocomplete;
-    highlight: typeof codeMirrorHighlight;
-  };
   app: {
     getState: () => PluginAppSnapshot;
     openWorkspace: () => Promise<void>;
@@ -416,6 +415,7 @@ export type PluginApi = {
     registerSelectionRangeProvider: (selector: PluginLanguageSelector, provider: PluginRangeProvider) => () => void;
     registerGrammar: (languageId: string, grammar: PluginGrammar) => () => void;
     startServer: (options: { command: string; args?: string[]; cwd?: string; env?: Record<string, string>; language?: string; initializationOptions?: unknown }) => Promise<PluginLanguageServerHandle>;
+    attachServer: (options: { handle: PluginLanguageServerHandle; language: string; documentSelector?: string[] }) => () => void;
   };
   diagnostics: { createCollection: (name: string) => PluginDiagnosticsCollection };
   terminal: {
@@ -659,7 +659,7 @@ type PluginHostActions = {
   renameFile: (path: string, name: string) => Promise<void>;
   saveFile: (path: string) => Promise<boolean>;
   formatFile: (path: string) => Promise<void>;
-  getEditor: (path?: string) => EditorView | null;
+  getEditor: (path?: string) => EditorViewHandle | null;
   getEditorSnapshot: (path?: string) => PluginEditorSnapshot | null;
   getEditorContext: (path?: string) => PluginEditorContext | null;
   getLastActiveContext: () => PluginEditorContext | null;
@@ -769,7 +769,7 @@ export function usePluginRuntime(
   pluginsRef.current = plugins;
   const languagesRef = useRef<PluginLanguageContribution[]>([]);
   languagesRef.current = languages;
-  const grammars = useRef(new Map<string, Extension | Promise<Extension>>());
+  const grammars = useRef(new Map<string, unknown>());
   const activeModules = useRef(new Map<string, ActivePlugin>());
   const listeners = useRef(new Map<string, Set<(payload: unknown) => void>>());
   const commandRef = useRef(new Map<string, PluginCommand>());
@@ -992,12 +992,14 @@ export function usePluginRuntime(
           };
           const registerGrammar = (languageId: string, grammar: PluginGrammar) => {
             if (!active.active || activeModules.current.get(plugin.id) !== active) return () => undefined;
-            if (!languageId.trim() || typeof grammar.load !== "function") throw new Error(`Plugin ${plugin.name} registered an invalid grammar.`);
-            const loaded = grammar.load();
-            grammars.current.set(languageId, loaded);
+            if (!languageId.trim()) throw new Error(`Plugin ${plugin.name} registered an invalid grammar.`);
+            if (grammar.language) monaco.languages.setMonarchTokensProvider(languageId, grammar.language);
+            if (grammar.configuration) monaco.languages.setLanguageConfiguration(languageId, grammar.configuration);
+            void grammar.load?.();
+            grammars.current.set(languageId, grammar);
             setGrammarVersion((version) => version + 1);
             const dispose = () => {
-              if (grammars.current.get(languageId) !== loaded) return;
+              if (grammars.current.get(languageId) !== grammar) return;
               grammars.current.delete(languageId);
               setGrammarVersion((version) => version + 1);
             };
@@ -1008,20 +1010,24 @@ export function usePluginRuntime(
             const diagnostics = new Map<string, unknown[]>();
             const dispose = () => {
               diagnostics.clear();
+              setPluginDiagnostics(name, null, []);
               emitEvent("diagnostics:changed", { name, uri: null, items: [] });
             };
             active.disposables.push(dispose);
             return {
               set: (uri, items) => {
                 diagnostics.set(uri, items);
+                setPluginDiagnostics(name, uri, items);
                 emitEvent("diagnostics:changed", { name, uri, items });
               },
               delete: (uri) => {
                 diagnostics.delete(uri);
+                setPluginDiagnostics(name, uri, []);
                 emitEvent("diagnostics:changed", { name, uri, items: null });
               },
               clear: () => {
                 diagnostics.clear();
+                setPluginDiagnostics(name, null, []);
                 emitEvent("diagnostics:changed", { name, uri: null, items: null });
               },
               dispose,
@@ -1055,29 +1061,19 @@ export function usePluginRuntime(
             }
           };
           pluginCommandRunner = runCommand;
-          activeLanguageBase = () => {
-            const context = hostActionsRef.current.getEditorContext();
-            return context
-              ? { path: context.path, language: context.language }
-              : null;
-          };
-          let cachedTextDoc: unknown = null;
-          let cachedText = "";
           activeLanguageContext = () => {
             const context = hostActionsRef.current.getEditorContext();
             if (!context) return null;
             const editor = hostActionsRef.current.getEditor(context.path);
-            if (!editor) return null;
-            const offset = editor.state.selection.main.head;
-            const line = editor.state.doc.lineAt(offset);
-            const doc = editor.state.doc;
-            if (cachedTextDoc !== doc) {
-              cachedTextDoc = doc;
-              cachedText = doc.toString();
-            }
-            const text = cachedText;
-            const word = /[A-Za-z0-9_$-]*$/.exec(line.text.slice(0, offset - line.from))?.[0] ?? "";
-            return { path: context.path, language: context.language, text, offset, line: line.text, lineFrom: line.from, lineTo: line.to, word };
+            const model = editor?.getModel();
+            const position = editor?.getPosition();
+            if (!editor || !model || !position) return null;
+            const offset = model.getOffsetAt(position);
+            const line = position.lineNumber;
+            const lineFrom = model.getOffsetAt({ lineNumber: line, column: 1 });
+            const lineTo = model.getOffsetAt({ lineNumber: line, column: model.getLineMaxColumn(line) });
+            const word = model.getWordUntilPosition(position).word;
+            return { path: context.path, language: context.language, text: model.getValue(), offset, line: model.getLineContent(line), lineFrom, lineTo, word };
           };
           const outputChannels = new Map<string, PluginOutputChannel>();
           const makeOutputChannel = (name: string): PluginOutputChannel => {
@@ -1227,13 +1223,6 @@ export function usePluginRuntime(
                 };
                 return worker;
               },
-            },
-            codemirror: {
-              language: codeMirrorLanguage,
-              view: codeMirrorView,
-              state: codeMirrorState,
-              autocomplete: codeMirrorAutocomplete,
-              highlight: codeMirrorHighlight,
             },
             app: {
               getState: () => hostActionsRef.current.getAppState(),
@@ -1464,7 +1453,7 @@ export function usePluginRuntime(
               getCursor: (path) => hostActionsRef.current.getEditorContext(path)?.cursor ?? null,
               getSelections: (path) => hostActionsRef.current.getEditorContext(path)?.selections ?? [],
               getVisibleRanges: (path) => hostActionsRef.current.getEditorContext(path)?.visibleRanges ?? [],
-              getText: (path) => getEditor(path)?.state.doc.toString() ?? hostActionsRef.current.getEditorSnapshot(path)?.text ?? null,
+              getText: (path) => getEditor(path)?.getModel()?.getValue() ?? hostActionsRef.current.getEditorSnapshot(path)?.text ?? null,
               setText: (text, path) => {
                 const snapshot = hostActionsRef.current.getEditorSnapshot(path);
                 if (!snapshot) throw new Error("No open editor matches that path.");
@@ -1473,8 +1462,7 @@ export function usePluginRuntime(
               insertText: (text, path) => {
                 const editor = getEditor(path);
                 if (editor) {
-                  const range = editor.state.selection.main;
-                  editor.dispatch({ changes: { from: range.from, to: range.to, insert: text }, selection: { anchor: range.from + text.length } });
+                  editor.executeEdits("plugin", [{ range: editor.getSelection() ?? new monaco.Range(1, 1, 1, 1), text }]);
                   editor.focus();
                   return;
                 }
@@ -1485,31 +1473,47 @@ export function usePluginRuntime(
               },
               getSelection: (path) => {
                 const editor = getEditor(path);
-                if (!editor) return null;
-                const range = editor.state.selection.main;
-                return { from: range.from, to: range.to };
+                const model = editor?.getModel();
+                const selection = editor?.getSelection();
+                if (!editor || !model || !selection) return null;
+                return {
+                  from: model.getOffsetAt(selection.getStartPosition()),
+                  to: model.getOffsetAt(selection.getEndPosition()),
+                };
               },
               setSelection: (from, to = from, path) => {
                 const editor = getEditor(path);
-                if (!editor) throw new Error("No open editor matches that path.");
-                editor.dispatch({ selection: { anchor: from, head: to } });
+                const model = editor?.getModel();
+                if (!editor || !model) throw new Error("No open editor matches that path.");
+                const start = model.getPositionAt(from);
+                const end = model.getPositionAt(to);
+                editor.setSelection(new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column));
                 editor.focus();
               },
               replaceRange: (range, text, path) => {
                 const editor = getEditor(path);
-                if (!editor) throw new Error("No open editor matches that path.");
-                editor.dispatch({ changes: { from: range.from, to: range.to, insert: text }, selection: { anchor: range.from + text.length } });
+                const model = editor?.getModel();
+                if (!editor || !model) throw new Error("No open editor matches that path.");
+                const start = model.getPositionAt(range.from);
+                const end = model.getPositionAt(range.to);
+                editor.executeEdits("plugin", [{ range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column), text }]);
               },
               applyEdits: (edits, path, expectedVersion) => {
                 const editor = getEditor(path);
                 if (!editor) throw new Error("No open editor matches that path.");
-                if (expectedVersion !== undefined && editor.state.doc.length !== expectedVersion && expectedVersion !== hostActionsRef.current.getEditorContext(path)?.version) {
+                const model = editor.getModel();
+                if (!model) throw new Error("No open editor matches that path.");
+                if (expectedVersion !== undefined && model.getValueLength() !== expectedVersion && expectedVersion !== hostActionsRef.current.getEditorContext(path)?.version) {
                   throw new Error("Editor document version does not match expectedVersion.");
                 }
                 const changes = [...edits]
                   .sort((a, b) => b.range.from - a.range.from)
-                  .map((edit) => ({ from: edit.range.from, to: edit.range.to, insert: edit.text }));
-                editor.dispatch({ changes });
+                  .map((edit) => {
+                    const start = model.getPositionAt(edit.range.from);
+                    const end = model.getPositionAt(edit.range.to);
+                    return { range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column), text: edit.text };
+                  });
+                editor.executeEdits("plugin", changes);
               },
               applyWorkspaceEdit: async (edit) => {
                 const entries: { path: string; edits: PluginEdit[]; version?: number }[] = [];
@@ -1522,25 +1526,40 @@ export function usePluginRuntime(
                 }
                 for (const entry of entries) {
                   const editor = getEditor(entry.path);
-                  if (!editor) throw new Error(`No open editor matches ${entry.path}.`);
+                  const model = editor?.getModel();
+                  if (!editor || !model) throw new Error(`No open editor matches ${entry.path}.`);
                   const changes = [...entry.edits]
                     .sort((a, b) => b.range.from - a.range.from)
-                    .map((item) => ({ from: item.range.from, to: item.range.to, insert: item.text }));
-                  editor.dispatch({ changes });
+                    .map((item) => {
+                      const start = model.getPositionAt(item.range.from);
+                      const end = model.getPositionAt(item.range.to);
+                      return { range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column), text: item.text };
+                    });
+                  editor.executeEdits("plugin", changes);
                 }
               },
               insertSnippet: (snippet, range, path) => {
                 const editor = getEditor(path);
-                if (!editor) throw new Error("No open editor matches that path.");
-                const target = range ?? editor.state.selection.main;
+                const model = editor?.getModel();
+                if (!editor || !model) throw new Error("No open editor matches that path.");
+                const selection = editor.getSelection();
+                const from = range?.from ?? (selection ? model.getOffsetAt(selection.getStartPosition()) : 0);
+                const to = range?.to ?? (selection ? model.getOffsetAt(selection.getEndPosition()) : from);
                 const parsed = parseSnippet(snippet);
-                editor.dispatch({ changes: { from: target.from, to: target.to, insert: parsed.text }, selection: { anchor: target.from + parsed.cursor } });
+                const start = model.getPositionAt(from);
+                const end = model.getPositionAt(to);
+                editor.executeEdits("plugin", [{ range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column), text: parsed.text }]);
+                const cursor = model.getPositionAt(from + parsed.cursor);
+                editor.setPosition(cursor);
                 editor.focus();
               },
               revealRange: (range, path) => {
                 const editor = getEditor(path);
-                if (!editor) throw new Error("No open editor matches that path.");
-                editor.dispatch({ effects: CodeMirrorView.scrollIntoView(range.from, { y: "center" }) });
+                const model = editor?.getModel();
+                if (!editor || !model) throw new Error("No open editor matches that path.");
+                const start = model.getPositionAt(range.from);
+                const end = model.getPositionAt(range.to);
+                editor.revealRangeInCenter(new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column));
                 editor.focus();
               },
               openAt: async (path, line, column = 1) => {
@@ -1548,10 +1567,11 @@ export function usePluginRuntime(
                 await hostActionsRef.current.openFile(path);
                 await new Promise((resolve) => window.setTimeout(resolve, 40));
                 const editor = getEditor(path) ?? getEditor(hostActionsRef.current.getEditorContext(path)?.path);
-                if (!editor) return;
-                const lineInfo = editor.state.doc.line(Math.max(1, Math.min(line, editor.state.doc.lines)));
-                const offset = Math.min(lineInfo.to, lineInfo.from + Math.max(0, column - 1));
-                editor.dispatch({ selection: { anchor: offset }, effects: CodeMirrorView.scrollIntoView(offset, { y: "center" }) });
+                const model = editor?.getModel();
+                if (!editor || !model) return;
+                const target = { lineNumber: Math.max(1, Math.min(line, model.getLineCount())), column: Math.max(1, column) };
+                editor.setPosition(target);
+                editor.revealPositionInCenter(target);
                 editor.focus();
               },
               setLanguage: (languageId, path) => {
@@ -1561,8 +1581,20 @@ export function usePluginRuntime(
               },
               registerDecorationType: (options) => {
                 const typeId = `${plugin.id}:decoration-${++decorationCounter}`;
-                decorationTypes.set(typeId, options);
-                const dispose = () => decorationTypes.delete(typeId);
+                let styleElement: HTMLStyleElement | null = null;
+                let normalized = options;
+                if (options.style) {
+                  const className = `arc-plugin-decoration-${decorationCounter}`;
+                  styleElement = document.createElement("style");
+                  styleElement.textContent = `.${className}{${options.style}}`;
+                  document.head.append(styleElement);
+                  normalized = { ...options, className };
+                }
+                decorationTypes.set(typeId, normalized);
+                const dispose = () => {
+                  decorationTypes.delete(typeId);
+                  styleElement?.remove();
+                };
                 active.disposables.push(dispose);
                 return typeId;
               },
@@ -1572,7 +1604,8 @@ export function usePluginRuntime(
                 if (!context) throw new Error("No open editor matches that path.");
                 const editor = getEditor(context.path);
                 if (!editor) throw new Error("No open editor matches that path.");
-                editor.dispatch({ effects: setPluginDecorations.of({ path: context.path, type, ranges }) });
+                const options = decorationTypes.get(type) ?? {};
+                setEditorDecorations(editor, type, ranges, options);
               },
               openDiff: (leftUri, rightUri, title) => showDiffOverlay(leftUri, rightUri, title),
               registerContentProvider: (scheme, provider) => {
@@ -1637,6 +1670,11 @@ export function usePluginRuntime(
                 const server = await startPluginLanguageServer(invoke, plugin.id, options);
                 active.disposables.push(() => { void server.shutdown().catch(() => undefined); });
                 return server;
+              },
+              attachServer: (options) => {
+                const dispose = connectLanguageServer(options);
+                active.disposables.push(dispose);
+                return dispose;
               },
             },
             diagnostics: { createCollection },
@@ -2640,7 +2678,6 @@ export function usePluginRuntime(
     },
     keybindings,
     icons: iconRegistry,
-    editorExtensions: pluginEditorExtensions,
     emitEvent,
     pluginDirectory,
     availableBuiltins,
@@ -2783,53 +2820,6 @@ const debugAdapters = new Map<string, unknown>();
 const authProviders = new Map<string, { getSessions?: (scopes: string[]) => unknown; createSession?: (scopes: string[]) => unknown; removeSession?: (sessionId: string) => unknown }>();
 const linkHandlers = new Map<string, { pluginId: string; handler: (uri: string) => void }>();
 
-const setPluginDecorations = codeMirrorState.StateEffect.define<{ path: string; type: string; ranges: PluginRange[] }>();
-
-const pluginDecorationField = codeMirrorState.StateField.define<Map<string, DecorationSet>>({
-  create: () => new Map(),
-  update(value, transaction) {
-    let next = value;
-    if (transaction.docChanged) {
-      const mapped = new Map<string, DecorationSet>();
-      value.forEach((set, key) => {
-        mapped.set(key, set.map(transaction.changes));
-      });
-      next = mapped;
-    }
-    for (const effect of transaction.effects) {
-      if (!effect.is(setPluginDecorations)) continue;
-      const { path, type, ranges } = effect.value;
-      next = new Map(next);
-      const existing = next.get(`${path}:${type}`);
-      const options = decorationTypes.get(type);
-      if (!options) continue;
-      const marks = ranges.map((range) => Decoration.mark({
-        class: options.className ?? "arc-plugin-decoration",
-        attributes: options.style ? { style: options.style } : undefined,
-      }).range(range.from, range.to));
-      if (existing) next.set(`${path}:${type}`, existing.update({ filter: () => false, add: marks, sort: true }));
-      else next.set(`${path}:${type}`, Decoration.set(marks, true));
-    }
-    return next;
-  },
-  provide: (field) => CodeMirrorView.decorations.from(field, (value) => {
-    if (!value.size) return Decoration.none;
-    const all: ReturnType<Decoration["range"]>[] = [];
-    value.forEach((set) => {
-      const cursor = set.iter();
-      let node = cursor.value;
-      while (node) {
-        all.push(node.range(cursor.from, cursor.to));
-        cursor.next();
-        node = cursor.value;
-      }
-    });
-    return Decoration.set(all, true);
-  }),
-});
-
-const pluginDecorationExtensions = pluginDecorationField.extension;
-
 type PluginLanguageContext = {
   path: string;
   language: string;
@@ -2843,7 +2833,6 @@ type PluginLanguageContext = {
 
 type PluginLanguageBase = { path: string; language: string };
 
-let activeLanguageBase: () => PluginLanguageBase | null = () => null;
 let activeLanguageContext: () => PluginLanguageContext | null = () => null;
 
 function pluginProviders(kind: PluginLanguageProviderKind, context: PluginLanguageBase): unknown[] {
@@ -2894,7 +2883,7 @@ function normalizeLocationList(value: unknown): PluginLocationLike[] {
   return values.map((entry) => normalizeLocation(entry as PluginLocationLike)).filter((entry): entry is PluginLocationLike => Boolean(entry));
 }
 
-async function waitForPluginEditor(path: string, attempts = 30): Promise<EditorView | null> {
+async function waitForPluginEditor(path: string, attempts = 30): Promise<EditorViewHandle | null> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const editor = pluginHostActions?.getEditor(path);
     if (editor) return editor;
@@ -2910,15 +2899,24 @@ async function openPluginLocation(location: PluginLocationLike): Promise<boolean
   await pluginHostActions.openFile(path);
   const editor = await waitForPluginEditor(path);
   if (!editor) return false;
+  const model = editor.getModel();
+  if (!model) return false;
   let offset = location.from;
   if (offset === undefined && location.line !== undefined) {
-    const line = editor.state.doc.line(Math.max(1, Math.min(location.line, editor.state.doc.lines)));
-    offset = Math.min(line.to, line.from + Math.max(0, (location.column ?? 1) - 1));
+    const line = Math.max(1, Math.min(location.line, model.getLineCount()));
+    offset = model.getOffsetAt({ lineNumber: line, column: Math.max(1, location.column ?? 1) });
   }
   if (offset !== undefined) {
-    const anchor = Math.max(0, Math.min(offset, editor.state.doc.length));
-    const head = location.to === undefined ? anchor : Math.max(anchor, Math.min(location.to, editor.state.doc.length));
-    editor.dispatch({ selection: { anchor, head }, effects: CodeMirrorView.scrollIntoView(anchor, { y: "center" }) });
+    const anchor = Math.max(0, Math.min(offset, model.getValueLength()));
+    const head = location.to === undefined ? anchor : Math.max(anchor, Math.min(location.to, model.getValueLength()));
+    const range = new monaco.Range(
+      model.getPositionAt(anchor).lineNumber,
+      model.getPositionAt(anchor).column,
+      model.getPositionAt(head).lineNumber,
+      model.getPositionAt(head).column,
+    );
+    editor.setSelection(range);
+    editor.revealRangeInCenter(range);
     editor.focus();
   }
   return true;
@@ -2992,8 +2990,16 @@ async function applyPluginWorkspaceEdit(value: unknown): Promise<boolean> {
       editor = await waitForPluginEditor(entry.path);
     }
     if (!editor) continue;
-    const changes = [...entry.edits].sort((left, right) => right.from - left.from).map((edit) => ({ from: edit.from, to: edit.to ?? edit.from, insert: edit.text }));
-    editor.dispatch({ changes });
+    const model = editor.getModel();
+    if (!model) continue;
+    const edits = [...entry.edits]
+      .sort((left, right) => right.from - left.from)
+      .map((edit) => {
+        const from = model.getPositionAt(Math.max(0, Math.min(edit.from, model.getValueLength())));
+        const to = model.getPositionAt(Math.max(0, Math.min(edit.to ?? edit.from, model.getValueLength())));
+        return { range: new monaco.Range(from.lineNumber, from.column, to.lineNumber, to.column), text: edit.text };
+      });
+    editor.executeEdits("plugin", edits);
   }
   return true;
 }
@@ -3024,13 +3030,16 @@ export async function pluginRenameSymbol(): Promise<void> {
           if (!editor) continue;
           let from = location.from;
           let to = location.to;
+          const model = editor.getModel();
+          if (!model) continue;
           if (from === undefined && location.line !== undefined) {
-            const line = editor.state.doc.line(Math.max(1, Math.min(location.line, editor.state.doc.lines)));
-            from = Math.min(line.to, line.from + Math.max(0, (location.column ?? 1) - 1));
+            from = model.getOffsetAt({ lineNumber: Math.max(1, Math.min(location.line, model.getLineCount())), column: Math.max(1, location.column ?? 1) });
             to = from + context.word.length;
           }
           if (from === undefined) continue;
-          editor.dispatch({ changes: { from, to: to ?? from, insert: nextName } });
+          const start = model.getPositionAt(Math.max(0, Math.min(from, model.getValueLength())));
+          const end = model.getPositionAt(Math.max(0, Math.min(to ?? from, model.getValueLength())));
+          editor.executeEdits("plugin-rename", [{ range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column), text: nextName }]);
         }
         return;
       }
@@ -3125,15 +3134,19 @@ export async function pluginSignatureHelp(): Promise<void> {
   if (labels.length) await showQuickPickModal(labels.map((label) => ({ label })), { placeHolder: "Signatures" });
 }
 
-export function pluginExpandSelection(view: EditorView): boolean {
+export function pluginExpandSelection(view: EditorViewHandle): boolean {
   const context = pluginProviderContext();
   if (!context) return false;
   const providers = pluginProviders("selectionRange", context) as PluginRangeProvider[];
   if (!providers.length) return false;
-  const selection = view.state.selection.main;
+  const model = view.getModel();
+  const selection = view.getSelection();
+  if (!model || !selection) return false;
+  const from = model.getOffsetAt(selection.getStartPosition());
+  const to = model.getOffsetAt(selection.getEndPosition());
   let result: unknown;
   try {
-    result = providers[0].provideRanges({ path: context.path, language: context.language, text: context.text, offset: selection.head });
+    result = providers[0].provideRanges({ path: context.path, language: context.language, text: context.text, offset: model.getOffsetAt(selection.getPosition()) });
   } catch {
     return false;
   }
@@ -3141,10 +3154,13 @@ export function pluginExpandSelection(view: EditorView): boolean {
     const ranges = (Array.isArray(value) ? value : value == null ? [] : [value])
       .map((entry) => entry as { from?: number; to?: number; range?: { from?: number; to?: number } })
       .map((entry) => ({ from: entry.from ?? entry.range?.from ?? 0, to: entry.to ?? entry.range?.to ?? 0 }))
-      .filter((range) => range.from <= selection.from && range.to >= selection.to && (range.from < selection.from || range.to > selection.to))
+      .filter((range) => range.from <= from && range.to >= to && (range.from < from || range.to > to))
       .sort((left, right) => (left.to - left.from) - (right.to - right.from));
     if (!ranges.length) return false;
-    view.dispatch({ selection: { anchor: ranges[0].from, head: ranges[0].to } });
+    const start = model.getPositionAt(ranges[0].from);
+    const end = model.getPositionAt(ranges[0].to);
+    view.setSelection(new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column));
+    view.revealRangeInCenter(new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column));
     return true;
   };
   if (result && typeof (result as Promise<unknown>).then === "function") {
@@ -3154,226 +3170,322 @@ export function pluginExpandSelection(view: EditorView): boolean {
   return apply(result);
 }
 
-class PluginInlineWidget extends WidgetType {
-  constructor(private readonly text: string, private readonly className: string, private readonly onClick?: () => void) { super(); }
-  eq(other: PluginInlineWidget) { return other.text === this.text && other.className === this.className; }
-  toDOM() {
-    const element = document.createElement(this.onClick ? "button" : "span");
-    element.className = this.className;
-    element.textContent = this.text;
-    if (this.onClick) {
-      (element as HTMLButtonElement).type = "button";
-      element.addEventListener("click", (event) => { event.preventDefault(); this.onClick?.(); });
-    }
-    return element;
-  }
-  ignoreEvent() { return false; }
+function pluginModelPath(model: monaco.editor.ITextModel): string {
+  return pathFromUri(model.uri.toString());
 }
 
-function pluginLensWidgets(value: unknown, type: "codeLens" | "inlayHints", docLength: number): DecorationSet {
-  const wrapper = value as { tokens?: unknown[]; data?: unknown[]; items?: unknown[] } | null;
-  const values = Array.isArray(value) ? value : Array.isArray(wrapper?.tokens) ? wrapper.tokens : Array.isArray(wrapper?.data) ? wrapper.data : Array.isArray(wrapper?.items) ? wrapper.items : value == null ? [] : [value];
-  const decorations: Range<Decoration>[] = [];
-  for (const entry of values) {
-    const item = entry as { from?: number; position?: number | { line?: number; character?: number }; offset?: number; to?: number; range?: { from?: number }; label?: string; title?: string; text?: string; command?: { id?: string; title?: string; run?: () => unknown } };
-    const from = item.from ?? item.range?.from ?? item.offset ?? (typeof item.position === "number" ? item.position : undefined);
-    if (from === undefined) continue;
-    const label = item.label ?? item.title ?? item.text ?? item.command?.title;
-    if (!label) continue;
-    const onClick = type === "codeLens" ? () => { if (item.command?.run) void item.command.run(); else if (item.command?.id) void pluginCommandRunner?.(item.command.id); } : undefined;
-    decorations.push(Decoration.widget({ widget: new PluginInlineWidget(String(label), type === "codeLens" ? "arc-plugin-code-lens" : "arc-plugin-inlay-hint", onClick), side: type === "codeLens" ? -1 : 1 }).range(Math.max(0, Math.min(from, docLength))));
-  }
-  return Decoration.set(decorations, true);
-}
-
-function pluginSemanticDecorations(value: unknown, docLength: number): DecorationSet {
-  const wrapper = value as { tokens?: unknown[]; data?: unknown[]; items?: unknown[] } | null;
-  const values = Array.isArray(value) ? value : Array.isArray(wrapper?.tokens) ? wrapper.tokens : Array.isArray(wrapper?.data) ? wrapper.data : Array.isArray(wrapper?.items) ? wrapper.items : value == null ? [] : [value];
-  const decorations: Range<Decoration>[] = [];
-  for (const entry of values) {
-    const item = entry as { from?: number; to?: number; length?: number; type?: string; tag?: string };
-    const from = Math.max(0, item.from ?? 0);
-    const to = Math.min(docLength, item.to ?? (from + (item.length ?? 0)));
-    if (to <= from) continue;
-    const kind = (item.type ?? item.tag ?? "token").replace(/[^a-zA-Z0-9_-]+/g, "-");
-    decorations.push(Decoration.mark({ class: `arc-semantic-token arc-semantic-${kind}` }).range(from, to));
-  }
-  return Decoration.set(decorations, true);
-}
-
-function pluginViewPlugin(kind: "codeLens" | "inlayHints" | "semanticTokens") {
-  return ViewPlugin.fromClass(class {
-    decorations: DecorationSet = Decoration.none;
-    private generation = 0;
-    private timer: number | null = null;
-    constructor(view: EditorView) { this.refresh(view); }
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet) this.schedule(update.view);
-    }
-    destroy() {
-      this.generation += 1;
-      if (this.timer !== null) window.clearTimeout(this.timer);
-    }
-    private schedule(view: EditorView) {
-      if (this.timer !== null) window.clearTimeout(this.timer);
-      this.timer = window.setTimeout(() => {
-        this.timer = null;
-        this.refresh(view);
-      }, 80);
-    }
-    private refresh(view: EditorView) {
-      if (!languageProvidersForKind(kind).length) { this.decorations = Decoration.none; return; }
-      const base = activeLanguageBase();
-      if (!base) { this.decorations = Decoration.none; return; }
-      const providers = pluginProviders(kind, base) as PluginRangeProvider[];
-      if (!providers.length) { this.decorations = Decoration.none; return; }
-      const context = activeLanguageContext();
-      if (!context) { this.decorations = Decoration.none; return; }
-      const generation = ++this.generation;
-      const offset = view.state.selection.main.head;
-      void Promise.all(providers.map(async (provider) => {
-        try { return await provider.provideRanges({ path: context.path, language: context.language, text: context.text, offset }); }
-        catch (error) { pluginNotify(`Plugin ${kind} provider failed: ${String(error)}`); return null; }
-      })).then((values) => {
-        if (generation !== this.generation) return;
-        const merged = values.flatMap((value) => Array.isArray(value) ? value : value == null ? [] : [value]);
-        this.decorations = kind === "semanticTokens" ? pluginSemanticDecorations(merged, view.state.doc.length) : pluginLensWidgets(merged, kind, view.state.doc.length);
-        view.dispatch({});
-      });
-    }
-  }, { decorations: (plugin) => plugin.decorations });
-}
-
-const pluginCompletionSource = async (context: CompletionContext): Promise<CompletionResult | null> => {
-  if (!languageProvidersForKind("completion").length) return null;
-  const base = activeLanguageBase();
-  if (!base) return null;
-  const providers = pluginProviders("completion", base) as PluginCompletionProvider[];
-  if (!providers.length) return null;
-  const languageContext = activeLanguageContext();
-  if (!languageContext) return null;
-  const word = context.matchBefore(/[\w$-]*/);
-  if (!word || (word.from === word.to && !context.explicit)) return null;
-  const options: Completion[] = [];
-  for (const provider of providers) {
-    try {
-      const items = await provider.provideCompletionItems({
-        path: languageContext.path,
-        language: languageContext.language,
-        text: languageContext.text,
-        offset: context.pos,
-        line: languageContext.line,
-        from: word.from,
-        to: word.to,
-      });
-      options.push(...items);
-    } catch { /* A failing provider must not break other completions. */ }
-  }
-  return { from: word.from, options };
-};
-
-function renderPluginHover(dom: HTMLElement, value: unknown): boolean {
-  if (typeof value === "string") {
-    if (!value.trim()) return false;
-    dom.textContent = value;
-    return true;
-  }
-  if (!value || typeof value !== "object") return false;
-  const entry = value as { text?: unknown; contents?: unknown; html?: unknown };
-  const parts = Array.isArray(entry.contents) ? entry.contents : entry.contents === undefined ? [] : [entry.contents];
-  const text = [entry.text, entry.html, ...parts.map((part) => typeof part === "string" ? part : (part as { value?: unknown })?.value)]
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
-    .join("\n\n");
-  if (!text) return false;
-  dom.textContent = text;
-  return true;
-}
-
-const pluginHoverExtension = hoverTooltip((view, position) => {
-  if (!languageProvidersForKind("hover").length) return null;
-  const base = activeLanguageBase();
-  if (!base) return null;
-  const providers = pluginProviders("hover", base) as PluginHoverProvider[];
-  if (!providers.length) return null;
-  const languageContext = activeLanguageContext();
-  if (!languageContext) return null;
-  const end = view.state.doc.lineAt(position).to;
-  const makeTooltip = (value: unknown) => {
-    const dom = document.createElement("div");
-    dom.className = "arc-plugin-hover";
-    if (!renderPluginHover(dom, value)) return null;
-    return { pos: position, end, create: () => ({ dom }) };
+function providerContextAt(model: monaco.editor.ITextModel, position: monaco.Position): PluginLanguageContext {
+  const line = position.lineNumber;
+  return {
+    path: pluginModelPath(model),
+    language: model.getLanguageId(),
+    text: model.getValue(),
+    offset: model.getOffsetAt(position),
+    line: model.getLineContent(line),
+    lineFrom: model.getOffsetAt({ lineNumber: line, column: 1 }),
+    lineTo: model.getOffsetAt({ lineNumber: line, column: model.getLineMaxColumn(line) }),
+    word: model.getWordUntilPosition(position).word,
   };
-  for (const provider of providers) {
-    try {
-      const value = provider.provideHover({
-        path: languageContext.path,
-        language: languageContext.language,
-        text: languageContext.text,
-        offset: position,
-        line: languageContext.line,
-      });
-      if (value && typeof (value as Promise<unknown>).then === "function") {
-        const dom = document.createElement("div");
-        dom.className = "arc-plugin-hover";
-        dom.textContent = "Loading…";
-        void (value as Promise<unknown>).then((resolved) => { renderPluginHover(dom, resolved); }, () => undefined);
-        return { pos: position, end, create: () => ({ dom }) };
+}
+
+function monacoRangeForOffsets(model: monaco.editor.ITextModel, from: number, to: number): monaco.Range {
+  const start = model.getPositionAt(Math.max(0, Math.min(from, model.getValueLength())));
+  const end = model.getPositionAt(Math.max(0, Math.min(to, model.getValueLength())));
+  return new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column);
+}
+
+function monacoLocation(location: PluginLocationLike, current: monaco.editor.ITextModel): monaco.languages.Location | null {
+  const path = pluginPathFromLocation(location);
+  if (!path) return null;
+  const target = path === pluginModelPath(current) ? current : modelForPath(path);
+  if (location.from !== undefined) {
+    const range = target
+      ? monacoRangeForOffsets(target, location.from, location.to ?? location.from)
+      : new monaco.Range(location.line ?? 1, location.column ?? 1, location.line ?? 1, (location.column ?? 1) + 1);
+    return { uri: monaco.Uri.file(path), range };
+  }
+  if (location.line !== undefined) {
+    const line = location.line;
+    const column = location.column ?? 1;
+    const endColumn = target ? target.getLineMaxColumn(line) : column + 1;
+    return { uri: monaco.Uri.file(path), range: new monaco.Range(line, column, line, Math.max(column, endColumn)) };
+  }
+  return { uri: monaco.Uri.file(path), range: new monaco.Range(1, 1, 1, 1) };
+}
+
+
+function pluginCompletionKind(kind: unknown): monaco.languages.CompletionItemKind {
+  const values = monaco.languages.CompletionItemKind;
+  if (typeof kind === "number") return Math.min(kind, values.Snippet) as monaco.languages.CompletionItemKind;
+  switch (String(kind ?? "").toLowerCase()) {
+    case "keyword": return values.Keyword;
+    case "function": return values.Function;
+    case "method": return values.Method;
+    case "variable": return values.Variable;
+    case "class": return values.Class;
+    case "interface": return values.Interface;
+    case "module": return values.Module;
+    case "property": return values.Property;
+    case "unit": return values.Unit;
+    case "value": return values.Value;
+    case "enum": return values.Enum;
+    case "enummember": return values.EnumMember;
+    case "constant": return values.Constant;
+    case "struct": return values.Struct;
+    case "event": return values.Event;
+    case "operator": return values.Operator;
+    case "typeparameter": return values.TypeParameter;
+    case "snippet": return values.Snippet;
+    case "color": return values.Color;
+    case "file": return values.File;
+    case "reference": return values.Reference;
+    case "folder": return values.Folder;
+    default: return values.Text;
+  }
+}
+
+function pluginHoverContents(value: unknown): monaco.IMarkdownString[] {
+  if (typeof value === "string") return [{ value }];
+  if (!value || typeof value !== "object") return [];
+  const entry = value as { contents?: unknown; text?: string; html?: string };
+  if (typeof entry.text === "string") return [{ value: entry.text }];
+  if (typeof entry.html === "string") return [{ value: entry.html }];
+  if (Array.isArray(entry.contents)) return entry.contents.flatMap((item) => pluginHoverContents(item));
+  if (entry.contents !== undefined) return pluginHoverContents(entry.contents);
+  return [];
+}
+
+function pluginWorkspaceEdit(value: unknown, current: monaco.editor.ITextModel): monaco.languages.WorkspaceEdit | null {
+  const entries = normalizeWorkspaceEdit(value);
+  if (!entries.length) return null;
+  return {
+    edits: entries.flatMap((entry) => {
+      const target = entry.path === pluginModelPath(current) ? current : modelForPath(entry.path);
+      if (!target) return [];
+      return entry.edits.map((edit) => ({
+        resource: monaco.Uri.file(entry.path),
+        textEdit: { range: monacoRangeForOffsets(target, edit.from, edit.to ?? edit.from), text: edit.text },
+        versionId: target.getVersionId(),
+      }));
+    }),
+  };
+}
+
+function setPluginDiagnostics(owner: string, uri: string | null, items: unknown[] | null): void {
+  const models = uri
+    ? [modelForPath(pathFromUri(uri)) ?? monaco.editor.getModel(monaco.Uri.parse(uri))]
+    : monaco.editor.getModels();
+  for (const model of models) {
+    if (!model) continue;
+    const markers: monaco.editor.IMarkerData[] = (items ?? []).flatMap((item) => {
+      const value = item as {
+        message?: string;
+        severity?: string | number;
+        range?: { from?: number; to?: number; start?: { line?: number; character?: number }; end?: { line?: number; character?: number } };
+        from?: number;
+        to?: number;
+        line?: number;
+        column?: number;
+      };
+      const severity = typeof value.severity === "number"
+        ? value.severity
+        : String(value.severity ?? "error").toLowerCase() === "warning"
+          ? 4
+          : String(value.severity ?? "error").toLowerCase() === "info"
+            ? 2
+            : String(value.severity ?? "error").toLowerCase() === "hint"
+              ? 1
+              : 8;
+      let from = value.from ?? value.range?.from;
+      let to = value.to ?? value.range?.to;
+      if (from === undefined && value.range?.start?.line !== undefined) {
+        from = model.getOffsetAt({ lineNumber: (value.range.start.line ?? 0) + 1, column: (value.range.start.character ?? 0) + 1 });
+        to = value.range?.end?.line !== undefined
+          ? model.getOffsetAt({ lineNumber: (value.range.end.line ?? 0) + 1, column: (value.range.end.character ?? 0) + 1 })
+          : from;
       }
-      const tooltip = makeTooltip(value);
-      if (tooltip) return tooltip;
-    } catch { /* Ignore failing hover providers. */ }
+      if (from === undefined && value.line !== undefined) {
+        from = model.getOffsetAt({ lineNumber: value.line, column: value.column ?? 1 });
+        to = from + 1;
+      }
+      if (from === undefined) return [];
+      return [{
+        severity,
+        message: value.message ?? "Diagnostic",
+        startLineNumber: model.getPositionAt(from).lineNumber,
+        startColumn: model.getPositionAt(from).column,
+        endLineNumber: model.getPositionAt(to ?? from).lineNumber,
+        endColumn: model.getPositionAt(to ?? from).column,
+      }];
+    });
+    monaco.editor.setModelMarkers(model, owner, markers);
   }
-  return null;
-});
+}
 
-const pluginFoldingExtension = foldService.of((state, lineStart, lineEnd) => {
-  if (!languageProvidersForKind("folding").length) return null;
-  const base = activeLanguageBase();
-  if (!base) return null;
-  const providers = pluginProviders("folding", base) as PluginFoldingProvider[];
-  if (!providers.length) return null;
-  const languageContext = activeLanguageContext();
-  if (!languageContext) return null;
-  const line = state.doc.lineAt(lineStart);
-  for (const provider of providers) {
-    try {
-      const range = provider.provideFoldingRange({
-        path: languageContext.path,
-        language: languageContext.language,
-        text: languageContext.text,
-        line: line.number,
-      });
-      if (range && range.to > range.from) return range;
-    } catch { /* Ignore failing folding providers. */ }
-  }
-  void lineEnd;
-  return null;
-});
+let pluginMonacoProvidersRegistered = false;
 
-const pluginLanguageKeymap = keymap.of([
-  { key: "F12", run: () => { void pluginGoToDefinition(); return true; } },
-  { key: "Shift-F12", run: () => { void pluginFindReferences(); return true; } },
-  { key: "F2", run: () => { void pluginRenameSymbol(); return true; } },
-  { key: "Mod-.", run: () => { void pluginCodeActions(); return true; } },
-  { key: "Shift-Alt-ArrowRight", run: (view) => pluginExpandSelection(view) },
-  { key: "Ctrl-Shift-Space", run: () => { void pluginSignatureHelp(); return true; } },
-]);
+export function registerPluginMonacoProviders(): void {
+  if (pluginMonacoProvidersRegistered) return;
+  pluginMonacoProvidersRegistered = true;
+  const selector = "*";
 
-const pluginLanguageExtensions: Extension[] = [
-  EditorState.languageData.of(() => [{ autocomplete: pluginCompletionSource }]),
-  pluginHoverExtension,
-  pluginFoldingExtension,
-  pluginLanguageKeymap,
-  pluginViewPlugin("codeLens"),
-  pluginViewPlugin("inlayHints"),
-  pluginViewPlugin("semanticTokens"),
-];
+  monaco.languages.registerCompletionItemProvider(selector, {
+    async provideCompletionItems(model, position) {
+      const context = providerContextAt(model, position);
+      const providers = pluginProviders("completion", context) as PluginCompletionProvider[];
+      if (!providers.length) return { suggestions: [] };
+      const word = model.getWordUntilPosition(position);
+      const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
+      const suggestions: monaco.languages.CompletionItem[] = [];
+      for (const provider of providers) {
+        try {
+          const items = await provider.provideCompletionItems({ ...context, from: context.offset - word.word.length, to: context.offset });
+          for (const item of items) {
+            const label = typeof item.label === "string" ? item.label : String(item.label);
+            const insertText = item.insertText ?? label;
+            suggestions.push({
+              label,
+              kind: pluginCompletionKind(item.kind),
+              detail: item.detail,
+              documentation: typeof item.documentation === "string" ? item.documentation : undefined,
+              insertText,
+              sortText: item.sortText,
+              filterText: item.filterText,
+              range,
+              insertTextRules: /\$\{?\d/.test(insertText) ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+            });
+          }
+        } catch (error) {
+          pluginNotify(`Plugin completion provider failed: ${String(error)}`);
+        }
+      }
+      return { suggestions };
+    },
+  });
 
-const pluginEditorExtensions: Extension = [
-  pluginDecorationExtensions,
-  pluginLanguageExtensions,
-];
+  monaco.languages.registerHoverProvider(selector, {
+    async provideHover(model, position) {
+      const context = providerContextAt(model, position);
+      const providers = pluginProviders("hover", context) as PluginHoverProvider[];
+      for (const provider of providers) {
+        try {
+          const contents = pluginHoverContents(await provider.provideHover({ path: context.path, language: context.language, text: context.text, offset: context.offset, line: context.line }));
+          if (contents.length) return { contents, range: monacoRangeForOffsets(model, context.offset - context.word.length, context.offset) };
+        } catch (error) {
+          pluginNotify(`Plugin hover provider failed: ${String(error)}`);
+        }
+      }
+      return null;
+    },
+  });
+
+  monaco.languages.registerDefinitionProvider(selector, {
+    async provideDefinition(model, position) {
+      const context = providerContextAt(model, position);
+      const locations: monaco.languages.Location[] = [];
+      for (const provider of pluginProviders("definition", context) as PluginLocationProvider[]) {
+        try {
+          const result = await provider.provideLocations({ path: context.path, language: context.language, text: context.text, offset: context.offset, word: context.word });
+          for (const location of normalizeLocationList(result)) {
+            const converted = monacoLocation(location, model);
+            if (converted) locations.push(converted);
+          }
+        } catch (error) {
+          pluginNotify(`Plugin definition provider failed: ${String(error)}`);
+        }
+      }
+      return locations;
+    },
+  });
+
+  monaco.languages.registerReferenceProvider(selector, {
+    async provideReferences(model, position) {
+      const context = providerContextAt(model, position);
+      const locations: monaco.languages.Location[] = [];
+      for (const provider of pluginProviders("reference", context) as PluginLocationProvider[]) {
+        try {
+          const result = await provider.provideLocations({ path: context.path, language: context.language, text: context.text, offset: context.offset, word: context.word });
+          for (const location of normalizeLocationList(result)) {
+            const converted = monacoLocation(location, model);
+            if (converted) locations.push(converted);
+          }
+        } catch (error) {
+          pluginNotify(`Plugin reference provider failed: ${String(error)}`);
+        }
+      }
+      return locations;
+    },
+  });
+
+  monaco.languages.registerRenameProvider(selector, {
+    async provideRenameEdits(model, position, newName) {
+      const context = providerContextAt(model, position);
+      for (const provider of pluginProviders("rename", context) as PluginLocationProvider[]) {
+        try {
+          const result = provider.provideRename
+            ? await provider.provideRename({ path: context.path, language: context.language, text: context.text, offset: context.offset, word: context.word, newName })
+            : await provider.provideLocations({ path: context.path, language: context.language, text: context.text, offset: context.offset, word: context.word, newName });
+          const edit = pluginWorkspaceEdit(result, model);
+          if (edit) return edit as unknown as monaco.languages.WorkspaceEdit;
+          const locations = normalizeLocationList(result);
+          if (locations.length) {
+            return {
+              edits: locations.flatMap((location) => {
+                const converted = monacoLocation(location, model);
+                if (!converted) return [];
+                return [{ resource: converted.uri, textEdit: { range: converted.range, text: newName } }];
+              }),
+            } as unknown as monaco.languages.WorkspaceEdit;
+          }
+        } catch (error) {
+          pluginNotify(`Plugin rename provider failed: ${String(error)}`);
+        }
+      }
+      return { edits: [] } as unknown as monaco.languages.WorkspaceEdit;
+    },
+  });
+
+  monaco.languages.registerDocumentFormattingEditProvider(selector, {
+    async provideDocumentFormattingEdits(model) {
+      const context = providerContextAt(model, new monaco.Position(1, 1));
+      for (const provider of pluginProviders("formatting", context) as PluginFormattingProvider[]) {
+        try {
+          const text = await provider.provideFormatting({ path: context.path, language: context.language, text: context.text });
+          if (typeof text === "string") return [{ range: model.getFullModelRange(), text }];
+        } catch (error) {
+          pluginNotify(`Plugin formatting provider failed: ${String(error)}`);
+        }
+      }
+      return [];
+    },
+  });
+
+  monaco.languages.registerFoldingRangeProvider(selector, {
+    provideFoldingRanges(model) {
+      const context = providerContextAt(model, new monaco.Position(1, 1));
+      const providers = pluginProviders("folding", context) as PluginFoldingProvider[];
+      if (!providers.length) return [];
+      const ranges: monaco.languages.FoldingRange[] = [];
+      for (let line = 1; line <= model.getLineCount(); line += 1) {
+        for (const provider of providers) {
+          try {
+            const range = provider.provideFoldingRange({ path: context.path, language: context.language, text: context.text, line });
+            if (!range) continue;
+            ranges.push({
+              start: model.getPositionAt(range.from).lineNumber,
+              end: model.getPositionAt(range.to).lineNumber,
+            });
+          } catch {
+            // Ignore individual provider failures.
+          }
+        }
+      }
+      return ranges;
+    },
+  });
+}
+
+registerPluginMonacoProviders();
 
 function sanitizeSvg(svg: string): string {
   if (svg.length > 100_000) throw new Error("Plugin icon exceeds 100 KB.");
