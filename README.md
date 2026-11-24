@@ -1,5 +1,6 @@
 # Arc
 
+### THIS PROJECT IS VIBE CODED
 Arc is a desktop workspace for web development. It puts your project files, code editor, terminal, browser preview, and GitHub tools in one window.
 
 ## What you can do
