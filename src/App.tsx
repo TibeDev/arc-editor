@@ -5355,7 +5355,7 @@ function App() {
             pluginDirectory={pluginRuntime.pluginDirectory}
             availableBuiltins={pluginRuntime.availableBuiltins}
             panels={pluginRuntime.panels}
-            onInstallPlugin={pluginRuntime.installFromFolder}
+            onInstallPlugin={pluginRuntime.importFromArchive}
             onInstallBuiltin={pluginRuntime.installBuiltin}
             onTogglePlugin={pluginRuntime.setEnabled}
             onUninstallPlugin={pluginRuntime.uninstall}

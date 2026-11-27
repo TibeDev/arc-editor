@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { ArrowLeft, BookOpen, Download, FolderOpen, LayoutGrid, List, Plug, Puzzle, Search, SquareArrowOutUpRight, Trash2 } from "lucide-react";
+import { ArrowLeft, BookOpen, Download, Upload, FolderOpen, LayoutGrid, List, Plug, Puzzle, Search, SquareArrowOutUpRight, Trash2 } from "lucide-react";
 import { join } from "@tauri-apps/api/path";
 import pluginApiMarkdown from "../../PLUGIN_API.md?raw";
 import type { InstalledPlugin, PluginPanelContribution } from "../lib/pluginRuntime";
@@ -127,7 +127,7 @@ export default function PluginPanel({
         <div className="plugin-header-actions">
           <button className="action-button action-button--secondary action-button--compact" title="Plugin folder" aria-label="Open plugin folder" disabled={!pluginDirectory} onClick={() => void openPluginFolder()}><FolderOpen size={15} /></button>
           <button className="action-button action-button--secondary action-button--compact" title="API documentation" aria-label="Open API documentation" onClick={() => setShowDocs(true)}><BookOpen size={15} /></button>
-          <button className="action-button action-button--primary action-button--compact" title="Install from folder" aria-label="Install plugin from folder" disabled={busy} onClick={() => void install()}><Download size={15} /></button>
+          <button className="action-button action-button--primary action-button--compact" title="Import plugin ZIP" aria-label="Import plugin ZIP" disabled={busy} onClick={() => void install()}><Upload size={15} /></button>
         </div>
       </>}
     </header>
