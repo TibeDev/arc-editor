@@ -291,6 +291,7 @@ export type PluginApi = {
   platform: "windows" | "linux" | "macos";
   invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
   openUrl: (url: string) => Promise<void>;
+  openPreview: (url?: string) => void;
   openTerminal: (command?: string) => void;
   notify: (message: string) => void;
   supports: (capability: string) => boolean;
@@ -649,6 +650,7 @@ type PluginHostActions = {
   openSettings: () => void;
   openGithub: () => void;
   openPlugins: () => void;
+  openPreview: (url?: string) => void;
   openPluginPanel: (id: string) => void;
   setTitle: (title: string) => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
@@ -1161,6 +1163,7 @@ export function usePluginRuntime(
             platform: /win/i.test(navigator.platform) ? "windows" : /mac/i.test(navigator.platform) ? "macos" : "linux",
             invoke: (command, args) => invoke(command, args),
             openUrl: (externalUrl) => openUrl(externalUrl),
+            openPreview: (url) => hostActionsRef.current.openPreview(url),
             openTerminal: (command) => hostActionsRef.current.openTerminal(command),
             notify,
             supports: (capability) => SUPPORTED_CAPABILITIES.has(capability),

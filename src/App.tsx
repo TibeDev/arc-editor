@@ -141,6 +141,7 @@ import {
 import type { UpdateDownloadEvent, UpdateInfo } from './lib/updater';
 import { AGENT_KIT_FILES, agentCommand, launchPrompt } from './lib/agent/kit';
 import type { BuilderLaunch } from './components/BuildWizard';
+import type { PreviewTab } from './components/WebPreview';
 
 const TerminalView = lazy(() => import('./components/TerminalView'));
 const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
@@ -148,6 +149,7 @@ const GithubPanel = lazy(() => import('./components/GithubPanel'));
 const PluginPanel = lazy(() => import('./components/PluginPanel'));
 const ThemeMaker = lazy(() => import('./components/ThemeMaker'));
 const BuildWizard = lazy(() => import('./components/BuildWizard'));
+const WebPreview = lazy(() => import('./components/WebPreview'));
 
 type DiskFile = { name: string; path: string; kind: 'file' | 'directory' };
 type FsEvent = {
@@ -198,6 +200,7 @@ const GITHUB_TAB_KEY = 'internal:github';
 const PLUGIN_TAB_KEY = 'internal:plugins';
 const PLUGIN_VIEW_PREFIX = 'internal:plugin-view:';
 const BUILDER_TAB_KEY = 'internal:builder';
+const PREVIEW_PREFIX = 'internal:preview:';
 const MIN_VIEWER_WIDTH = 140;
 
 function PluginViewHost({ panel }: { panel: PluginPanelContribution }) {
@@ -821,6 +824,8 @@ function EditorPane({
   pluginPanel,
   builderPanel,
   pluginViews,
+  previews,
+  onPreviewChange,
   editorViews,
   pluginLanguages,
   pluginLanguageOverrides,
@@ -850,6 +855,11 @@ function EditorPane({
   pluginPanel: ReactNode;
   builderPanel: ReactNode;
   pluginViews: PluginPanelContribution[];
+  previews: PreviewTab[];
+  onPreviewChange: (
+    key: string,
+    patch: Partial<Pick<PreviewTab, 'url' | 'title'>>,
+  ) => void;
   editorViews: { current: Map<string, Map<GroupId, EditorView>> };
   pluginLanguages: PluginLanguageContribution[];
   pluginLanguageOverrides: Record<string, string>;
@@ -1170,6 +1180,10 @@ function EditorPane({
       ),
     [pluginViews],
   );
+  const previewsByKey = useMemo(
+    () => new Map(previews.map((preview) => [preview.key, preview])),
+    [previews],
+  );
   const tabItems = useMemo(
     () =>
       group.tabs
@@ -1181,6 +1195,7 @@ function EditorPane({
           plugins: key === PLUGIN_TAB_KEY,
           builder: key === BUILDER_TAB_KEY,
           pluginView: pluginViewsByKey.get(key),
+          preview: previewsByKey.get(key),
         }))
         .filter(
           (entry) =>
@@ -1189,9 +1204,16 @@ function EditorPane({
             entry.github ||
             entry.plugins ||
             entry.builder ||
-            entry.pluginView,
+            entry.pluginView ||
+            entry.preview,
         ),
-    [filesByPath, group.tabs, pluginViewsByKey, terminalsByKey],
+    [
+      filesByPath,
+      group.tabs,
+      pluginViewsByKey,
+      previewsByKey,
+      terminalsByKey,
+    ],
   );
   const groupTerminals = tabItems.flatMap((entry) =>
     entry.terminal ? [entry.terminal] : [],
@@ -1250,7 +1272,16 @@ function EditorPane({
         }}
       >
         {tabItems.map(
-          ({ key, file: tab, terminal, github, plugins, builder, pluginView }) => (
+          ({
+            key,
+            file: tab,
+            terminal,
+            github,
+            plugins,
+            builder,
+            pluginView,
+            preview,
+          }) => (
             <button
               key={key}
               className={`editor-tab ${key === group.activePath ? 'active' : ''}`}
@@ -1269,6 +1300,8 @@ function EditorPane({
                 <WandSparkles size={14} className="file-icon" />
               ) : plugins || pluginView ? (
                 <Puzzle size={14} className="file-icon" />
+              ) : preview ? (
+                <Globe size={14} className="file-icon" />
               ) : (
                 <FileIcon name={tab!.name} />
               )}
@@ -1284,8 +1317,10 @@ function EditorPane({
                       : builder
                         ? 'Build'
                         : pluginView
-                        ? pluginView.title
-                        : tab!.name}
+                          ? pluginView.title
+                          : preview
+                            ? preview.title || preview.url || 'Preview'
+                            : tab!.name}
               </span>
               {tab?.dirty ? (
                 <Circle size={8} className="dirty-dot" fill="currentColor" />
@@ -1322,6 +1357,25 @@ function EditorPane({
       {pluginViewsByKey.has(group.activePath) && (
         <PluginViewHost panel={pluginViewsByKey.get(group.activePath)!} />
       )}
+      {group.tabs.map((key) => {
+        const preview = previewsByKey.get(key);
+        if (!preview) return null;
+        return (
+          <div
+            key={key}
+            className={`preview-host ${group.activePath === key ? 'active' : ''}`}
+            aria-hidden={group.activePath !== key}
+          >
+            <Suspense fallback={<div className="editor-empty" />}>
+              <WebPreview
+                tab={preview}
+                workspace={workspace}
+                onChange={(patch) => onPreviewChange(key, patch)}
+              />
+            </Suspense>
+          </div>
+        );
+      })}
       {group.tabs.includes(BUILDER_TAB_KEY) && (
         <div
           className={`builder-host ${group.activePath === BUILDER_TAB_KEY ? 'active' : ''}`}
@@ -1335,7 +1389,8 @@ function EditorPane({
         group.activePath !== GITHUB_TAB_KEY &&
         group.activePath !== PLUGIN_TAB_KEY &&
         group.activePath !== BUILDER_TAB_KEY &&
-        !pluginViewsByKey.has(group.activePath) && (
+        !pluginViewsByKey.has(group.activePath) &&
+        !previewsByKey.has(group.activePath) && (
           <div className="editor-empty">
             <span>Choose a file to begin.</span>
             <span>Drop a file on an edge to split the editor.</span>
@@ -1521,6 +1576,8 @@ function App() {
     async () => undefined,
   );
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
+  const [previews, setPreviews] = useState<PreviewTab[]>([]);
+  const previewCounter = useRef(0);
   const editorViews = useRef(new Map<string, Map<GroupId, EditorView>>());
   const lastActiveEditorPath = useRef('');
   const selectionEventAt = useRef(0);
@@ -2551,6 +2608,36 @@ function App() {
     setMessage('');
   };
 
+  const openPreview = (url = '') => {
+    const key = `${PREVIEW_PREFIX}${Date.now()}-${++previewCounter.current}`;
+    setPreviews((current) => [...current, { key, url, title: '' }]);
+    setGroups((current) =>
+      current.map((group) =>
+        group.id === activeGroupId
+          ? {
+              ...group,
+              activePath: key,
+              tabs: [...group.tabs, key],
+            }
+          : group,
+      ),
+    );
+    setSettingsOpen(false);
+    setThemeMakerOpen(false);
+    setMessage('');
+  };
+
+  const updatePreview = (
+    key: string,
+    patch: Partial<Pick<PreviewTab, 'url' | 'title'>>,
+  ) => {
+    setPreviews((current) =>
+      current.map((preview) =>
+        preview.key === key ? { ...preview, ...patch } : preview,
+      ),
+    );
+  };
+
   const launchBuilderAgent = async ({ target, id, brief }: BuilderLaunch) => {
     if (!isTauri()) throw new Error('Terminal sessions are available in Arc desktop.');
     const buildDir = await join(await homeDir(), 'Arc Builds', `${target}-${id}`);
@@ -3390,7 +3477,16 @@ function App() {
         );
         pluginRuntime.emitEvent('terminal:closed', { id: terminal.id });
       }
-      if (!otherGroupsStillUseFile && !terminal) {
+      if (!otherGroupsStillUseFile && path.startsWith(PREVIEW_PREFIX)) {
+        setPreviews((current) =>
+          current.filter((preview) => preview.key !== path),
+        );
+      }
+      if (
+        !otherGroupsStillUseFile &&
+        !terminal &&
+        !path.startsWith(PREVIEW_PREFIX)
+      ) {
         fileContents.current.delete(path);
         lastDiskWrite.current.delete(path);
         setDiskConflicts((current) => {
@@ -3492,7 +3588,8 @@ function App() {
       terminal ||
       path === GITHUB_TAB_KEY ||
       path === PLUGIN_TAB_KEY ||
-      path === BUILDER_TAB_KEY
+      path === BUILDER_TAB_KEY ||
+      path.startsWith(PREVIEW_PREFIX)
     ) {
       const targetGroup = placement
         ? createSplitGroup(groupId, placement)
@@ -3938,6 +4035,11 @@ function App() {
       event.preventDefault();
       setCommandPaletteOpen(true);
       setCommandQuery('');
+      return;
+    }
+    if (modifier && event.altKey && key === 'p') {
+      event.preventDefault();
+      openPreview();
       return;
     }
     const pluginBinding = pluginRuntime.keybindings.find(
@@ -4599,6 +4701,7 @@ function App() {
     },
     openGithub: openGithubPanel,
     openPlugins: openPluginPanel,
+    openPreview: (url) => openPreview(url),
     openPluginPanel: openPluginView,
     setTitle: (title) => {
       document.title = title;
@@ -4776,6 +4879,12 @@ function App() {
     { id: 'open-builder', title: 'Create Plugin or Theme', run: openBuilderPanel },
     { id: 'open-github', title: 'Open GitHub', run: openGithubPanel },
     {
+      id: 'open-preview',
+      title: 'Open Web Preview',
+      description: 'Preview a dev server or workspace HTML',
+      run: () => openPreview(),
+    },
+    {
       id: 'save-file',
       title: 'Save Active File',
       run: async () => {
@@ -4910,6 +5019,8 @@ function App() {
         onConflictReload={reloadFromDisk}
         onConflictKeep={keepBuffer}
         pluginViews={pluginRuntime.panels}
+        previews={previews}
+        onPreviewChange={updatePreview}
         editorViews={editorViews}
         pluginLanguages={pluginRuntime.languages}
         pluginLanguageOverrides={pluginLanguageOverrides}

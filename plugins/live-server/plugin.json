@@ -1,7 +1,7 @@
 {
   "id": "live-server",
   "name": "Live Server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Preview the current workspace through a local web server.",
   "main": "main.js"
 }

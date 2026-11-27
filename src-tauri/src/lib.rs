@@ -23,6 +23,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{ipc::Channel, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_fs::FsExt;
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 #[derive(Default)]
@@ -2363,6 +2364,59 @@ fn plugin_local_server_start(
     root: String,
     entry: String,
 ) -> Result<LocalServerInfo, String> {
+    start_local_server(&app, &state, &plugin_id, root, entry)
+}
+
+#[tauri::command(async)]
+fn plugin_local_server_stop(
+    state: State<'_, LocalHttpServerState>,
+    plugin_id: String,
+) -> Result<bool, String> {
+    stop_local_server(&state, &plugin_id)
+}
+
+#[tauri::command(async)]
+fn preview_server_start(
+    app: tauri::AppHandle,
+    state: State<'_, LocalHttpServerState>,
+    root: String,
+    entry: String,
+) -> Result<LocalServerInfo, String> {
+    start_local_server(&app, &state, "arc-preview", root, entry)
+}
+
+#[tauri::command(async)]
+fn preview_server_stop(state: State<'_, LocalHttpServerState>) -> Result<bool, String> {
+    stop_local_server(&state, "arc-preview")
+}
+
+#[tauri::command(async)]
+async fn preview_frame_check(url: String) -> Result<bool, String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("Only http:// and https:// URLs can be previewed.".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || check_frame_headers(&url))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("Only http:// and https:// URLs can be opened.".to_string());
+    }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+fn start_local_server(
+    app: &tauri::AppHandle,
+    state: &State<'_, LocalHttpServerState>,
+    key: &str,
+    root: String,
+    entry: String,
+) -> Result<LocalServerInfo, String> {
     let root = PathBuf::from(root)
         .canonicalize()
         .map_err(|error| format!("Could not access local server folder: {error}"))?;
@@ -2370,7 +2424,7 @@ fn plugin_local_server_start(
         return Err("Local server needs a folder.".to_string());
     }
     if !app.fs_scope().is_allowed(&root) {
-        return Err("Plugin local server folder is outside approved workspace access.".to_string());
+        return Err("Local server folder is outside approved workspace access.".to_string());
     }
     if entry.contains('\\')
         || Path::new(&entry)
@@ -2382,10 +2436,10 @@ fn plugin_local_server_start(
 
     let previous = {
         let mut active = state.0.lock().map_err(|error| error.to_string())?;
-        if let Some(server) = active.get(&plugin_id).filter(|server| server.root == root) {
+        if let Some(server) = active.get(key).filter(|server| server.root == root) {
             return Ok(local_server_info(&server.root, server.port, &entry));
         }
-        active.remove(&plugin_id)
+        active.remove(key)
     };
     drop(previous);
 
@@ -2395,23 +2449,78 @@ fn plugin_local_server_start(
         .0
         .lock()
         .map_err(|error| error.to_string())?
-        .insert(plugin_id, server);
+        .insert(key.to_string(), server);
     Ok(info)
 }
 
-#[tauri::command(async)]
-fn plugin_local_server_stop(
-    state: State<'_, LocalHttpServerState>,
-    plugin_id: String,
-) -> Result<bool, String> {
+fn stop_local_server(state: &State<'_, LocalHttpServerState>, key: &str) -> Result<bool, String> {
     let server = state
         .0
         .lock()
         .map_err(|error| error.to_string())?
-        .remove(&plugin_id);
+        .remove(key);
     let was_running = server.is_some();
     drop(server);
     Ok(was_running)
+}
+
+fn check_frame_headers(url: &str) -> Result<bool, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(5))
+        .redirects(3)
+        .user_agent("Arc Preview")
+        .build();
+    match agent.get(url).call() {
+        Ok(response) => Ok(response_allows_framing(&response)),
+        Err(ureq::Error::Status(_, response)) => Ok(response_allows_framing(&response)),
+        Err(_) => Ok(true),
+    }
+}
+
+fn response_allows_framing(response: &ureq::Response) -> bool {
+    let x_frame_options = response.header("x-frame-options");
+    let csp = response.all("content-security-policy").join(", ");
+    framing_allowed(
+        x_frame_options,
+        if csp.is_empty() { None } else { Some(&csp) },
+    )
+}
+
+fn framing_allowed(x_frame_options: Option<&str>, csp: Option<&str>) -> bool {
+    if x_frame_options.is_some_and(|value| {
+        value.split(',').any(|option| {
+            matches!(
+                option.trim().to_ascii_lowercase().as_str(),
+                "deny" | "sameorigin"
+            )
+        })
+    }) {
+        return false;
+    }
+    let Some(csp) = csp else {
+        return true;
+    };
+    for policy in csp.split(',') {
+        for directive in policy.split(';') {
+            let mut parts = directive.split_whitespace();
+            if !parts
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("frame-ancestors"))
+            {
+                continue;
+            }
+            let sources = parts.collect::<Vec<_>>();
+            let allowed = sources.iter().any(|source| {
+                *source == "*"
+                    || source.eq_ignore_ascii_case("tauri://localhost")
+                    || source.eq_ignore_ascii_case("http://tauri.localhost")
+            });
+            if !allowed {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn local_server_info(root: &Path, port: u16, entry: &str) -> LocalServerInfo {
@@ -3633,6 +3742,10 @@ pub fn run() {
             github_create_repo,
             plugin_local_server_start,
             plugin_local_server_stop,
+            preview_server_start,
+            preview_server_stop,
+            preview_frame_check,
+            open_external_url,
             updater_check,
             updater_install
         ])
@@ -3814,6 +3927,20 @@ mod tests {
 
         drop(server);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn frame_check_blocks_framing_headers() {
+        assert!(framing_allowed(None, None));
+        assert!(!framing_allowed(Some("DENY"), None));
+        assert!(!framing_allowed(Some("SAMEORIGIN"), None));
+        assert!(!framing_allowed(None, Some("frame-ancestors 'self'")));
+        assert!(framing_allowed(None, Some("frame-ancestors *")));
+        assert!(framing_allowed(
+            None,
+            Some("frame-ancestors tauri://localhost")
+        ));
+        assert!(framing_allowed(None, Some("default-src 'self'")));
     }
 
     #[test]

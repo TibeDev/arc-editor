@@ -1,0 +1,123 @@
+.web-preview {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.preview-host {
+  display: none;
+  flex: 1;
+  min-height: 0;
+}
+.preview-host.active {
+  display: flex;
+}
+.web-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.web-preview-bar button {
+  height: 26px;
+  min-width: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--secondary-text);
+}
+.web-preview-bar button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.web-preview-bar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.web-preview-bar input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-md);
+}
+.web-preview-bar input::placeholder {
+  color: var(--muted);
+}
+.web-preview-error {
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  color: #e0a0a0;
+  font-size: var(--font-sm);
+}
+.web-preview-stage {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  background: #fff;
+}
+.web-preview-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.web-preview-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.arc-dragging .web-preview-shield {
+  pointer-events: auto;
+}
+.arc-dragging .web-preview-frame {
+  pointer-events: none;
+  visibility: hidden;
+}
+.web-preview-empty,
+.web-preview-blocked {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  background: var(--bg);
+  color: var(--subtle);
+  font-size: var(--font-md);
+}
+.web-preview-empty span:last-child {
+  color: var(--muted);
+  font-size: var(--font-sm);
+}
+.web-preview-empty button,
+.web-preview-blocked button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--font-md);
+}
+.web-preview-empty button:hover:not(:disabled),
+.web-preview-blocked button:hover {
+  background: var(--hover);
+}

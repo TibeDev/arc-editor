@@ -36,6 +36,24 @@ export function activate(api) {
     onClick: ({ workspace, target }) => start(workspace, target),
   });
 
+  api.registerContextMenuItem({
+    id: "open-in-preview",
+    label: "Open in Web Preview",
+    onClick: async ({ workspace, target }) => {
+      if (!workspace) {
+        api.notify("Open a folder first.");
+        return;
+      }
+      const root =
+        target?.kind === "directory" ? `${workspace}/${target.path}` : workspace;
+      const entry = target?.kind === "file" ? target.path : "";
+      const server = await api.localServer.start(root, entry);
+      running = true;
+      api.openPreview(server.url);
+      api.notify(`Previewing ${server.url}`);
+    },
+  });
+
   return () => {
     if (running) void api.localServer.stop();
   };
