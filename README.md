@@ -29,7 +29,9 @@ Installed AppImages update automatically. Arc checks for signed releases, replac
 
 Open a folder with `Ctrl+K`, then `Ctrl+O`. Use the file browser to open or manage files. Save with `Ctrl+S`; supported files can be formatted with Prettier on save or with `Alt+Shift+F`.
 
-Open a terminal with `Ctrl+T`. Start Live Server from the plugin toolbar or file context menu to preview the current project in a browser.
+Open a terminal with `Ctrl+T`. Open a web preview with `Ctrl+Alt+P`, then enter a dev server URL such as `http://localhost:5173` or serve workspace files. Sites that refuse framing must open in your browser.
+
+Start Live Server from the plugin toolbar or file context menu to preview the current project in a browser.
 
 The GitHub panel needs Git and GitHub CLI (`gh`). Open the panel, sign in, then stage and commit changes or sync with a remote.
 
@@ -40,6 +42,7 @@ The GitHub panel needs Git and GitHub CLI (`gh`). Open the panel, sign in, then 
 | `Ctrl+K`, then `Ctrl+O`     | Open a project folder                   |
 | `Ctrl+N` / `Ctrl+Shift+N`   | Create a file / folder                  |
 | `Ctrl+T`                    | Open a terminal                         |
+| `Ctrl+Alt+P`                | Open a web preview                      |
 | `Ctrl+Shift+P`              | Open the command palette                |
 | `Ctrl+\\` / `Ctrl+Shift+\\` | Split editor vertically / horizontally  |
 | `Ctrl+B`                    | Show or hide the file browser           |

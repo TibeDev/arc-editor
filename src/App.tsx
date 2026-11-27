@@ -10,6 +10,7 @@ import {
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type CSSProperties,
   type ReactNode,
 } from 'react';
 import {
@@ -64,6 +65,7 @@ import {
   mkdir,
   open as openFs,
   readDir,
+  readFile,
   readTextFile,
   remove,
   rename,
@@ -78,6 +80,7 @@ import {
   ChevronRight,
   Circle,
   File,
+  FileImage,
   FilePlus2,
   Folder,
   FolderOpen,
@@ -90,8 +93,11 @@ import {
   Search,
   Server,
   Settings as SettingsIcon,
+  WandSparkles,
   Terminal as TerminalIcon,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import {
   SiCss,
@@ -106,11 +112,13 @@ import {
   SiTypescript,
   SiYaml,
 } from 'react-icons/si';
-import { appDataDir, join } from '@tauri-apps/api/path';
+import { appDataDir, homeDir, join } from '@tauri-apps/api/path';
 import TitleBar from './components/TitleBar';
 import './styles/pluginExtensions.css';
 import './styles/layout-overrides.css';
+import './styles/app-themes.css';
 import { forgetTerminalOutput } from './lib/terminalOutput';
+import { showArcDialog } from './lib/dialog';
 import {
   usePluginRuntime,
   type PluginAppSnapshot,
@@ -125,8 +133,11 @@ import {
 import {
   APP_SETTINGS_VERSION,
   BUILTIN_THEMES,
+  DEFAULT_SETTINGS,
   DEFAULT_THEME,
-  isThemeDefinition,
+  normalizeThemeDefinition,
+  resolveEditorFont,
+  resolveInterfaceFont,
   loadSettings,
   themeCss,
   type AppSettings,
@@ -134,12 +145,17 @@ import {
   type UpdateChannel,
 } from './lib/settings';
 import type { UpdateDownloadEvent, UpdateInfo } from './lib/updater';
+import { AGENT_KIT_FILES, agentCommand, launchPrompt } from './lib/agent/kit';
+import type { BuilderLaunch } from './components/BuildWizard';
+import type { PreviewTab } from './components/WebPreview';
 
 const TerminalView = lazy(() => import('./components/TerminalView'));
 const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
 const GithubPanel = lazy(() => import('./components/GithubPanel'));
 const PluginPanel = lazy(() => import('./components/PluginPanel'));
 const ThemeMaker = lazy(() => import('./components/ThemeMaker'));
+const BuildWizard = lazy(() => import('./components/BuildWizard'));
+const WebPreview = lazy(() => import('./components/WebPreview'));
 
 type DiskFile = { name: string; path: string; kind: 'file' | 'directory' };
 type FsEvent = {
@@ -189,6 +205,8 @@ type UndoBatch = { workspace: string; entries: DeletedEntry[] };
 const GITHUB_TAB_KEY = 'internal:github';
 const PLUGIN_TAB_KEY = 'internal:plugins';
 const PLUGIN_VIEW_PREFIX = 'internal:plugin-view:';
+const BUILDER_TAB_KEY = 'internal:builder';
+const PREVIEW_PREFIX = 'internal:preview:';
 const MIN_VIEWER_WIDTH = 140;
 
 function PluginViewHost({ panel }: { panel: PluginPanelContribution }) {
@@ -314,6 +332,12 @@ function pruneLayout(
   if (!first) return second;
   if (!second) return first;
   return { ...layout, first, second };
+}
+
+function collectGroupIds(layout: LayoutNode): GroupId[] {
+  return layout.type === 'group'
+    ? [layout.groupId]
+    : [...collectGroupIds(layout.first), ...collectGroupIds(layout.second)];
 }
 
 function resizeLayout(
@@ -587,6 +611,19 @@ function expandDocumentTemplate(view: EditorView, extension: string): boolean {
 const extensionOf = (name: string) =>
   name.split('.').pop()?.toLowerCase() ?? '';
 
+const IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  avif: 'image/avif',
+};
+
+const isImageName = (name: string) => extensionOf(name) in IMAGE_MIME;
+
 function contentFingerprint(value: string): string {
   let hashA = 0x811c9dc5;
   let hashB = 0x9e3779b9;
@@ -596,6 +633,40 @@ function contentFingerprint(value: string): string {
     hashB = Math.imul(hashB ^ code, 0x85ebca6b);
   }
   return `${value.length}:${(hashA >>> 0).toString(36)}:${(hashB >>> 0).toString(36)}`;
+}
+
+async function askDirtyChoice(label: string): Promise<'save' | 'discard' | 'cancel'> {
+  if (!isTauri()) {
+    if (window.confirm(`Save changes to ${label} before continuing?`)) return 'save';
+    return window.confirm(`Discard unsaved changes to ${label}?`)
+      ? 'discard'
+      : 'cancel';
+  }
+  const answer = await showArcDialog({
+    title: 'Unsaved changes',
+    message: `Save changes to ${label} before continuing?`,
+    buttons: [
+      { label: 'Save', value: 'save', primary: true },
+      { label: 'Discard', value: 'discard', danger: true },
+      { label: 'Cancel', value: 'cancel' },
+    ],
+  });
+  if (answer === 'save') return 'save';
+  if (answer === 'discard') return 'discard';
+  return 'cancel';
+}
+
+async function confirmDialog(question: string): Promise<boolean> {
+  if (!isTauri()) return window.confirm(question);
+  const answer = await showArcDialog({
+    title: 'Arc',
+    message: question,
+    buttons: [
+      { label: 'OK', value: 'ok', primary: true },
+      { label: 'Cancel', value: 'cancel' },
+    ],
+  });
+  return answer === 'ok';
 }
 
 async function prettierFormat(
@@ -706,6 +777,7 @@ function FileIcon({ name }: { name: string }) {
   if (['md', 'mdx'].includes(ext))
     return <SiMarkdown className="file-icon icon-md" />;
   if (ext === 'svg') return <SiSvg className="file-icon icon-svg" />;
+  if (isImageName(name)) return <FileImage className="file-icon icon-image" />;
   if (['yaml', 'yml'].includes(ext))
     return <SiYaml className="file-icon icon-yaml" />;
   return <File size={14} className="file-icon" />;
@@ -758,6 +830,188 @@ async function loadCodeLanguage(extension: string): Promise<Extension> {
   return [];
 }
 
+function ImageView({
+  path,
+  name,
+  workspace,
+}: {
+  path: string;
+  name: string;
+  workspace: string;
+}) {
+  const [src, setSrc] = useState('');
+  const [error, setError] = useState('');
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const stage = useRef<HTMLDivElement>(null);
+  const scaleRef = useRef(1);
+  scaleRef.current = scale;
+  const drag = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = '';
+    void (async () => {
+      try {
+        const bytes = await readFile(`${workspace}/${path}`);
+        const mime = IMAGE_MIME[extensionOf(name)] ?? 'application/octet-stream';
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+        if (!cancelled) setSrc(objectUrl);
+      } catch (cause) {
+        if (!cancelled) setError(String(cause));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [path, name, workspace]);
+
+  const zoomBy = useCallback((factor: number) => {
+    setScale((current) =>
+      Math.min(20, Math.max(0.1, Number((current * factor).toFixed(3)))),
+    );
+  }, []);
+
+  const reset = useCallback(() => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  }, []);
+
+  useEffect(() => {
+    const node = stage.current;
+    if (!node) return;
+    const clampScale = (value: number) =>
+      Math.min(20, Math.max(0.1, Number(value.toFixed(3))));
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (gestureActive) return;
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
+      zoomBy(Math.exp(-delta * 0.0015));
+    };
+    let gestureActive = false;
+    let pinchBase = 1;
+    const onGestureStart = (event: Event) => {
+      event.preventDefault();
+      gestureActive = true;
+      pinchBase = scaleRef.current;
+    };
+    const onGestureChange = (event: Event) => {
+      event.preventDefault();
+      const scaleFactor = (event as Event & { scale?: number }).scale ?? 1;
+      setScale(clampScale(pinchBase * scaleFactor));
+    };
+    const onGestureEnd = (event: Event) => {
+      event.preventDefault();
+      gestureActive = false;
+    };
+    node.addEventListener('wheel', onWheel, { passive: false });
+    node.addEventListener('gesturestart', onGestureStart, { passive: false });
+    node.addEventListener('gesturechange', onGestureChange, { passive: false });
+    node.addEventListener('gestureend', onGestureEnd, { passive: false });
+    return () => {
+      node.removeEventListener('wheel', onWheel);
+      node.removeEventListener('gesturestart', onGestureStart);
+      node.removeEventListener('gesturechange', onGestureChange);
+      node.removeEventListener('gestureend', onGestureEnd);
+    };
+  }, [zoomBy]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key === '=' || event.key === '+' || event.code === 'NumpadAdd') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        zoomBy(1.25);
+      } else if (event.key === '-' || event.code === 'NumpadSubtract') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        zoomBy(1 / 1.25);
+      } else if (event.key === '0' || event.code === 'Numpad0') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        reset();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [reset, zoomBy]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<number>('pinch-zoom', (event) => {
+      const factor = event.payload;
+      if (Number.isFinite(factor) && factor > 0) zoomBy(factor);
+    }).then((stop) => {
+      unlisten = stop;
+    });
+    return () => unlisten?.();
+  }, [zoomBy]);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !src) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = {
+      x: event.clientX,
+      y: event.clientY,
+      originX: offset.x,
+      originY: offset.y,
+    };
+  };
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    if (!current) return;
+    setOffset({
+      x: current.originX + (event.clientX - current.x),
+      y: current.originY + (event.clientY - current.y),
+    });
+  };
+  const endDrag = () => {
+    drag.current = null;
+  };
+
+  return (
+    <div className="image-view">
+      <div className="image-toolbar">
+        <button onClick={() => zoomBy(1 / 1.25)} title="Zoom out">
+          <ZoomOut size={15} />
+        </button>
+        <span className="image-zoom-level">{Math.round(scale * 100)}%</span>
+        <button onClick={() => zoomBy(1.25)} title="Zoom in">
+          <ZoomIn size={15} />
+        </button>
+        <button onClick={reset} title="Reset zoom and position">
+          Reset
+        </button>
+      </div>
+      <div
+        ref={stage}
+        className="image-stage"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
+        onDoubleClick={reset}
+      >
+        {error ? (
+          <span className="image-error">{error}</span>
+        ) : src ? (
+          <img
+            src={src}
+            alt={name}
+            draggable={false}
+            style={{
+              transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+            }}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function EditorPane({
   group,
   file,
@@ -776,7 +1030,10 @@ function EditorPane({
   onConflictReload,
   onConflictKeep,
   pluginPanel,
+  builderPanel,
   pluginViews,
+  previews,
+  onPreviewChange,
   editorViews,
   pluginLanguages,
   pluginLanguageOverrides,
@@ -804,7 +1061,13 @@ function EditorPane({
   onConflictReload?: (path: string) => void;
   onConflictKeep?: (path: string) => void;
   pluginPanel: ReactNode;
+  builderPanel: ReactNode;
   pluginViews: PluginPanelContribution[];
+  previews: PreviewTab[];
+  onPreviewChange: (
+    key: string,
+    patch: Partial<Pick<PreviewTab, 'url' | 'title'>>,
+  ) => void;
   editorViews: { current: Map<string, Map<GroupId, EditorView>> };
   pluginLanguages: PluginLanguageContribution[];
   pluginLanguageOverrides: Record<string, string>;
@@ -833,7 +1096,7 @@ function EditorPane({
   const [dragActive, setDragActive] = useState(false);
 
   useEffect(() => {
-    if (!file || !host.current) {
+    if (!file || !host.current || isImageName(file.name)) {
       view.current?.destroy();
       view.current = null;
       return;
@@ -981,12 +1244,12 @@ function EditorPane({
           '&': { height: '100%' },
           '.cm-scroller': {
             overflow: 'auto',
-            fontFamily: settings.fontFamily,
+            fontFamily: resolveEditorFont(settings),
             fontSize: `${settings.fontSize}px`,
             lineHeight: String(settings.lineHeight),
           },
           '.cm-tooltip-autocomplete ul': {
-            fontFamily: settings.fontFamily,
+            fontFamily: resolveEditorFont(settings),
             fontSize: '12px',
             maxHeight: '250px',
           },
@@ -1012,6 +1275,7 @@ function EditorPane({
     settings.wordWrap,
     settings.autocomplete,
     settings.fontFamily,
+    settings.appTheme,
     settings.fontSize,
     settings.lineHeight,
   ]);
@@ -1124,6 +1388,10 @@ function EditorPane({
       ),
     [pluginViews],
   );
+  const previewsByKey = useMemo(
+    () => new Map(previews.map((preview) => [preview.key, preview])),
+    [previews],
+  );
   const tabItems = useMemo(
     () =>
       group.tabs
@@ -1133,7 +1401,9 @@ function EditorPane({
           terminal: terminalsByKey.get(key),
           github: key === GITHUB_TAB_KEY,
           plugins: key === PLUGIN_TAB_KEY,
+          builder: key === BUILDER_TAB_KEY,
           pluginView: pluginViewsByKey.get(key),
+          preview: previewsByKey.get(key),
         }))
         .filter(
           (entry) =>
@@ -1141,9 +1411,17 @@ function EditorPane({
             entry.terminal ||
             entry.github ||
             entry.plugins ||
-            entry.pluginView,
+            entry.builder ||
+            entry.pluginView ||
+            entry.preview,
         ),
-    [filesByPath, group.tabs, pluginViewsByKey, terminalsByKey],
+    [
+      filesByPath,
+      group.tabs,
+      pluginViewsByKey,
+      previewsByKey,
+      terminalsByKey,
+    ],
   );
   const groupTerminals = tabItems.flatMap((entry) =>
     entry.terminal ? [entry.terminal] : [],
@@ -1202,7 +1480,16 @@ function EditorPane({
         }}
       >
         {tabItems.map(
-          ({ key, file: tab, terminal, github, plugins, pluginView }) => (
+          ({
+            key,
+            file: tab,
+            terminal,
+            github,
+            plugins,
+            builder,
+            pluginView,
+            preview,
+          }) => (
             <button
               key={key}
               className={`editor-tab ${key === group.activePath ? 'active' : ''}`}
@@ -1217,8 +1504,12 @@ function EditorPane({
                 <TerminalIcon size={14} className="file-icon" />
               ) : github ? (
                 <Github size={14} className="file-icon" />
+              ) : builder ? (
+                <WandSparkles size={14} className="file-icon" />
               ) : plugins || pluginView ? (
                 <Puzzle size={14} className="file-icon" />
+              ) : preview ? (
+                <Globe size={14} className="file-icon" />
               ) : (
                 <FileIcon name={tab!.name} />
               )}
@@ -1231,9 +1522,13 @@ function EditorPane({
                     ? 'GitHub'
                     : plugins
                       ? 'Plugins'
-                      : pluginView
-                        ? pluginView.title
-                        : tab!.name}
+                      : builder
+                        ? 'Build'
+                        : pluginView
+                          ? pluginView.title
+                          : preview
+                            ? preview.title || preview.url || 'Preview'
+                            : tab!.name}
               </span>
               {tab?.dirty ? (
                 <Circle size={8} className="dirty-dot" fill="currentColor" />
@@ -1260,7 +1555,12 @@ function EditorPane({
           <button onClick={() => onConflictKeep?.(file.path)}>Keep mine</button>
         </div>
       )}
-      {file && <div className="editor-host" ref={host} />}
+      {file &&
+        (isImageName(file.name) ? (
+          <ImageView path={file.path} name={file.name} workspace={workspace} />
+        ) : (
+          <div className="editor-host" ref={host} />
+        ))}
       {group.activePath === GITHUB_TAB_KEY && (
         <Suspense fallback={<div className="editor-empty" />}>
           <GithubPanel workspace={workspace} />
@@ -1270,11 +1570,40 @@ function EditorPane({
       {pluginViewsByKey.has(group.activePath) && (
         <PluginViewHost panel={pluginViewsByKey.get(group.activePath)!} />
       )}
+      {group.tabs.map((key) => {
+        const preview = previewsByKey.get(key);
+        if (!preview) return null;
+        return (
+          <div
+            key={key}
+            className={`preview-host ${group.activePath === key ? 'active' : ''}`}
+            aria-hidden={group.activePath !== key}
+          >
+            <Suspense fallback={<div className="editor-empty" />}>
+              <WebPreview
+                tab={preview}
+                workspace={workspace}
+                onChange={(patch) => onPreviewChange(key, patch)}
+              />
+            </Suspense>
+          </div>
+        );
+      })}
+      {group.tabs.includes(BUILDER_TAB_KEY) && (
+        <div
+          className={`builder-host ${group.activePath === BUILDER_TAB_KEY ? 'active' : ''}`}
+          aria-hidden={group.activePath !== BUILDER_TAB_KEY}
+        >
+          {builderPanel}
+        </div>
+      )}
       {!file &&
         !activeTerminal &&
         group.activePath !== GITHUB_TAB_KEY &&
         group.activePath !== PLUGIN_TAB_KEY &&
-        !pluginViewsByKey.has(group.activePath) && (
+        group.activePath !== BUILDER_TAB_KEY &&
+        !pluginViewsByKey.has(group.activePath) &&
+        !previewsByKey.has(group.activePath) && (
           <div className="editor-empty">
             <span>Choose a file to begin.</span>
             <span>Drop a file on an edge to split the editor.</span>
@@ -1410,6 +1739,7 @@ function SplitContainer({
 
 function App() {
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
+  const [editorBackgroundUrl, setEditorBackgroundUrl] = useState("");
   const [themes, setThemes] = useState<ThemeDefinition[]>(BUILTIN_THEMES);
   const [customThemeIds, setCustomThemeIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1448,11 +1778,20 @@ function App() {
   const allowedHiddenPaths = useRef(new Set<string>());
   const settingsRef = useRef<AppSettings>(settings);
   const openFilesRef = useRef<OpenFile[]>([]);
+  const openingPaths = useRef(new Set<string>());
+  const dirtyGuardRef = useRef<
+    (matches?: (path: string) => boolean) => Promise<boolean>
+  >(async () => true);
+  const saveDirtyRef = useRef<
+    (matches?: (path: string) => boolean) => Promise<boolean>
+  >(async () => true);
   const groupsRef = useRef<EditorGroup[]>([]);
   const processFsEventsRef = useRef<(events: FsEvent[]) => Promise<void>>(
     async () => undefined,
   );
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
+  const [previews, setPreviews] = useState<PreviewTab[]>([]);
+  const previewCounter = useRef(0);
   const editorViews = useRef(new Map<string, Map<GroupId, EditorView>>());
   const lastActiveEditorPath = useRef('');
   const selectionEventAt = useRef(0);
@@ -1482,6 +1821,14 @@ function App() {
   const [filter, setFilter] = useState('');
   const [message, setMessage] = useState('');
   const messageHovered = useRef(false);
+  useEffect(() => {
+    if (!message || !settings.notificationsEnabled || !settings.notificationAutoDismiss) return;
+    const timer = window.setTimeout(() => {
+      if (messageHovered.current) return;
+      setMessage((current) => (current === message ? '' : current));
+    }, Math.max(1, settings.notificationDuration) * 1000);
+    return () => window.clearTimeout(timer);
+  }, [message, settings.notificationsEnabled, settings.notificationAutoDismiss, settings.notificationDuration]);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
@@ -1496,6 +1843,7 @@ function App() {
     startWidth: number;
     pointerId: number;
     pendingWidth: number;
+    collapsed: boolean;
   } | null>(null);
   const viewerDragFrame = useRef<number | null>(null);
   const fileExplorerRef = useRef<HTMLElement>(null);
@@ -1553,6 +1901,9 @@ function App() {
     [
       activeTheme,
       settings.editorGlassEnabled,
+      settings.editorBackgroundImage,
+      settings.editorBackgroundTransparency,
+      settings.editorBackgroundBlur,
       settings.glassAppTransparency,
       settings.glassSidebarTransparency,
       settings.editorGlassTransparency,
@@ -1562,6 +1913,7 @@ function App() {
       settings.glassSettingsTransparency,
       settings.glassControlsTransparency,
       settings.fontFamily,
+      settings.appTheme,
       settings.fontSize,
       settings.lineHeight,
       settings.tabSize,
@@ -1585,6 +1937,29 @@ function App() {
   }, [settings]);
 
   useEffect(() => {
+    let cancelled = false;
+    let objectUrl = "";
+    setEditorBackgroundUrl("");
+    if (!settings.editorBackgroundImage || settings.editorGlassEnabled) return;
+    void (async () => {
+      try {
+        const bytes = await readFile(settings.editorBackgroundImage);
+        const mime =
+          IMAGE_MIME[extensionOf(settings.editorBackgroundImage)] ??
+          "application/octet-stream";
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+        if (!cancelled) setEditorBackgroundUrl(objectUrl);
+      } catch {
+        // Unreadable or missing image falls back to the theme background.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [settings.editorBackgroundImage, settings.editorGlassEnabled]);
+
+  useEffect(() => {
     if (!isTauri()) {
       setAppVersion('dev');
       return;
@@ -1596,11 +1971,9 @@ function App() {
 
   const installUpdate = useCallback(async (automatic = false) => {
     if (!isTauri() || updateInstallingRef.current) return;
-    if (!automatic && openFilesRef.current.some((file) => file.dirty)) {
-      const approved = window.confirm(
-        'Some files have unsaved changes. Install the update and restart Arc now? Unsaved changes will be lost.',
-      );
-      if (!approved) return;
+    if (openFilesRef.current.some((file) => file.dirty)) {
+      if (automatic) return;
+      if (!(await dirtyGuardRef.current())) return;
     }
     updateInstallingRef.current = true;
     setUpdateInstalling(true);
@@ -1765,7 +2138,8 @@ function App() {
             const value: unknown = JSON.parse(
               localStorage.getItem(key) ?? 'null',
             );
-            return isThemeDefinition(value) ? [value] : [];
+            const theme = normalizeThemeDefinition(value);
+            return theme ? [theme] : [];
           } catch {
             return [];
           }
@@ -1795,7 +2169,7 @@ function App() {
             try {
               const path = await join(themesPath, entry.name, 'theme.json');
               const value: unknown = JSON.parse(await readTextFile(path));
-              return isThemeDefinition(value) ? value : null;
+              return normalizeThemeDefinition(value);
             } catch {
               return null;
             }
@@ -1838,6 +2212,7 @@ function App() {
       startWidth: viewerOpen ? settings.sidebarWidth : MIN_VIEWER_WIDTH,
       pointerId: event.pointerId,
       pendingWidth: viewerOpen ? settings.sidebarWidth : MIN_VIEWER_WIDTH,
+      collapsed: false,
     };
   };
 
@@ -1846,6 +2221,7 @@ function App() {
     if (!element) return;
     element.style.width = `${width}px`;
     element.style.flexBasis = `${width}px`;
+    element.style.minWidth = width < MIN_VIEWER_WIDTH ? '0px' : '';
   };
 
   useEffect(() => {
@@ -1854,12 +2230,15 @@ function App() {
       if (!drag || drag.pointerId !== event.pointerId) return;
       event.preventDefault();
       const width = Math.round(drag.startWidth + event.clientX - drag.startX);
+      drag.collapsed = width < MIN_VIEWER_WIDTH;
       drag.pendingWidth = Math.max(MIN_VIEWER_WIDTH, Math.min(480, width));
       if (viewerDragFrame.current !== null) return;
       viewerDragFrame.current = window.requestAnimationFrame(() => {
         viewerDragFrame.current = null;
         if (viewerDrag.current)
-          applyViewerWidth(viewerDrag.current.pendingWidth);
+          applyViewerWidth(
+            viewerDrag.current.collapsed ? 0 : viewerDrag.current.pendingWidth,
+          );
       });
     };
     const finishResize = (event: PointerEvent) => {
@@ -1870,10 +2249,9 @@ function App() {
         window.cancelAnimationFrame(viewerDragFrame.current);
         viewerDragFrame.current = null;
       }
-      applyViewerWidth(drag.pendingWidth);
-      const collapsed = drag.startWidth + event.clientX - drag.startX < MIN_VIEWER_WIDTH;
-      setViewerOpen(!collapsed);
-      if (!collapsed) updateSettings({ sidebarWidth: drag.pendingWidth });
+      applyViewerWidth(drag.collapsed ? 0 : drag.pendingWidth);
+      setViewerOpen(!drag.collapsed);
+      if (!drag.collapsed) updateSettings({ sidebarWidth: drag.pendingWidth });
     };
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', finishResize);
@@ -1988,21 +2366,27 @@ function App() {
       if (event.ctrlKey || event.metaKey) event.preventDefault();
     };
     const preventGestureZoom = (event: Event) => event.preventDefault();
-    window.addEventListener('wheel', preventWheelZoom, { passive: false });
+    window.addEventListener('wheel', preventWheelZoom, {
+      passive: false,
+      capture: true,
+    });
     window.addEventListener('gesturestart', preventGestureZoom, {
       passive: false,
+      capture: true,
     });
     window.addEventListener('gesturechange', preventGestureZoom, {
       passive: false,
+      capture: true,
     });
     window.addEventListener('gestureend', preventGestureZoom, {
       passive: false,
+      capture: true,
     });
     return () => {
-      window.removeEventListener('wheel', preventWheelZoom);
-      window.removeEventListener('gesturestart', preventGestureZoom);
-      window.removeEventListener('gesturechange', preventGestureZoom);
-      window.removeEventListener('gestureend', preventGestureZoom);
+      window.removeEventListener('wheel', preventWheelZoom, true);
+      window.removeEventListener('gesturestart', preventGestureZoom, true);
+      window.removeEventListener('gesturechange', preventGestureZoom, true);
+      window.removeEventListener('gestureend', preventGestureZoom, true);
     };
   }, []);
 
@@ -2389,23 +2773,24 @@ function App() {
     );
   }, []);
 
-  const openTerminal = (command?: string): string | null => {
+  const openTerminal = (command?: string, title = 'Terminal', cwd = workspace): string | null => {
     if (!isTauri()) {
       setMessage('Terminal sessions are available in Arc desktop.');
       return null;
     }
     const id = `terminal-${Date.now()}-${++terminalCounter.current}`;
+    const targetGroupId = activeGroupId;
     const session = {
       id,
       key: `terminal:${id}`,
-      cwd: workspace,
-      title: 'Terminal',
+      cwd,
+      title,
       command,
     };
     setTerminals((current) => [...current, session]);
     setGroups((current) =>
       current.map((group) =>
-        group.id === activeGroupId
+        group.id === targetGroupId
           ? {
               ...group,
               activePath: session.key,
@@ -2414,7 +2799,7 @@ function App() {
           : group,
       ),
     );
-    setActiveGroupId(activeGroupId);
+    setActiveGroupId(targetGroupId);
     setSettingsOpen(false);
     setThemeMakerOpen(false);
     setMessage('');
@@ -2427,9 +2812,10 @@ function App() {
       setMessage('Open a folder first.');
       return;
     }
+    const targetGroupId = activeGroupId;
     setGroups((current) =>
       current.map((group) =>
-        group.id === activeGroupId
+        group.id === targetGroupId
           ? {
               ...group,
               activePath: GITHUB_TAB_KEY,
@@ -2446,9 +2832,10 @@ function App() {
   };
 
   const openPluginPanel = () => {
+    const targetGroupId = activeGroupId;
     setGroups((current) =>
       current.map((group) =>
-        group.id === activeGroupId
+        group.id === targetGroupId
           ? {
               ...group,
               activePath: PLUGIN_TAB_KEY,
@@ -2462,6 +2849,78 @@ function App() {
     setSettingsOpen(false);
     setThemeMakerOpen(false);
     setMessage('');
+  };
+
+  const openBuilderPanel = () => {
+    const targetGroupId = activeGroupId;
+    setGroups((current) =>
+      current.map((group) =>
+        group.id === targetGroupId
+          ? {
+              ...group,
+              activePath: BUILDER_TAB_KEY,
+              tabs: group.tabs.includes(BUILDER_TAB_KEY)
+                ? group.tabs
+                : [...group.tabs, BUILDER_TAB_KEY],
+            }
+          : group,
+      ),
+    );
+    setSettingsOpen(false);
+    setThemeMakerOpen(false);
+    setMessage('');
+  };
+
+  const openPreview = (url = '') => {
+    const key = `${PREVIEW_PREFIX}${Date.now()}-${++previewCounter.current}`;
+    const targetGroupId = activeGroupId;
+    setPreviews((current) => [...current, { key, url, title: '' }]);
+    setGroups((current) =>
+      current.map((group) =>
+        group.id === targetGroupId
+          ? {
+              ...group,
+              activePath: key,
+              tabs: [...group.tabs, key],
+            }
+          : group,
+      ),
+    );
+    setSettingsOpen(false);
+    setThemeMakerOpen(false);
+    setMessage('');
+  };
+
+  const updatePreview = (
+    key: string,
+    patch: Partial<Pick<PreviewTab, 'url' | 'title'>>,
+  ) => {
+    setPreviews((current) =>
+      current.map((preview) =>
+        preview.key === key ? { ...preview, ...patch } : preview,
+      ),
+    );
+  };
+
+  const launchBuilderAgent = async ({ target, id, brief }: BuilderLaunch) => {
+    if (!isTauri()) throw new Error('Terminal sessions are available in Arc desktop.');
+    const buildDir = await join(await homeDir(), 'Arc Builds', `${target}-${id}`);
+    await mkdir(buildDir, { recursive: true });
+    await writeTextFile(await join(buildDir, 'brief.md'), brief);
+    await Promise.all(
+      Object.entries(AGENT_KIT_FILES).map(async ([name, content]) =>
+        writeTextFile(await join(buildDir, name), content),
+      ),
+    );
+    const command = agentCommand(
+      settings.agentCli,
+      settings.agentCommand,
+      launchPrompt(target),
+    );
+    if (!openTerminal(command, 'Arc Agent', buildDir)) {
+      throw new Error('Terminal sessions are available in Arc desktop.');
+    }
+    setMessage(`Building in ${buildDir}`);
   };
 
   const resizeSplit = (splitId: string, ratio: number) => {
@@ -2873,6 +3332,7 @@ function App() {
         setMessage('Folder access declined.');
         return;
       }
+      if (!(await saveDirtyRef.current())) return;
       await refreshWorkspace(selected);
       localStorage.setItem('arc.lastWorkspace', selected);
       terminals.forEach((terminal) => {
@@ -2915,15 +3375,16 @@ function App() {
     }
   };
 
-  const openFile = async (file: DiskFile, targetGroupId = activeGroupId) => {
+  const openFile = async (file: DiskFile, targetGroupId?: GroupId) => {
     if (file.kind !== 'file' || !workspace) return;
+    const groupId = targetGroupId ?? activeGroupId;
     const existing = openFiles.find((entry) => entry.path === file.path);
     const assignToGroup = () => {
-      const currentGroups = groups.some((group) => group.id === targetGroupId)
+      const currentGroups = groups.some((group) => group.id === groupId)
         ? groups
-        : [...groups, { id: targetGroupId, activePath: '', tabs: [] }];
+        : [...groups, { id: groupId, activePath: '', tabs: [] }];
       const nextGroups = currentGroups.map((group) => {
-        if (group.id === targetGroupId) {
+        if (group.id === groupId) {
           return {
             ...group,
             activePath: file.path,
@@ -2943,13 +3404,14 @@ function App() {
               : group.activePath,
         };
       });
-      normalizeGroups(nextGroups, targetGroupId);
+      normalizeGroups(nextGroups, groupId);
     };
-    if (existing) {
+    if (existing || openingPaths.current.has(file.path)) {
       assignToGroup();
       setMessage('');
       return;
     }
+    openingPaths.current.add(file.path);
     try {
       const absolutePath = `${workspace}/${file.path}`;
       const metadata = await stat(absolutePath);
@@ -2960,8 +3422,15 @@ function App() {
         )
       )
         return;
-      const content = await readTextFile(absolutePath);
-      fileContents.current.set(file.path, content);
+      if (openFilesRef.current.some((entry) => entry.path === file.path)) {
+        assignToGroup();
+        setMessage('');
+        return;
+      }
+      const content = isImageName(file.name)
+        ? null
+        : await readTextFile(absolutePath);
+      if (content !== null) fileContents.current.set(file.path, content);
       setOpenFiles((current) => [
         ...current,
         { path: file.path, name: file.name, revision: 0, dirty: false },
@@ -2970,6 +3439,8 @@ function App() {
       setMessage('');
     } catch (error) {
       setMessage(`Could not open ${file.name}: ${String(error)}`);
+    } finally {
+      openingPaths.current.delete(file.path);
     }
   };
 
@@ -2995,6 +3466,7 @@ function App() {
     async (path: string): Promise<boolean> => {
       const file = openFiles.find((entry) => entry.path === path);
       if (!file || !workspace) return false;
+      if (isImageName(file.name)) return false;
       if (pendingEditorContent.current.size) flushPendingEditorContent();
       const currentContent = fileContents.current.get(path) ?? '';
       let content: string;
@@ -3019,7 +3491,15 @@ function App() {
         return false;
       }
       try {
-        await writeTextFile(`${workspace}/${file.path}`, content);
+        const target = `${workspace}/${file.path}`;
+        const temporary = `${target}.${Date.now()}.arc-tmp`;
+        await writeTextFile(temporary, content);
+        try {
+          await rename(temporary, target);
+        } catch (error) {
+          await remove(temporary).catch(() => undefined);
+          throw error;
+        }
         fileContents.current.set(path, content);
         lastDiskWrite.current.set(path, contentFingerprint(content));
         selfWritePaths.current.set(path, Date.now());
@@ -3063,6 +3543,63 @@ function App() {
     },
     [openFiles, settings.prettierOnSave, workspace],
   );
+
+  const saveDirtyFiles = useCallback(
+    async (matches: (path: string) => boolean = () => true): Promise<boolean> => {
+      for (const file of openFilesRef.current)
+        if (
+          file.dirty &&
+          matches(file.path) &&
+          !(await saveFile(file.path))
+        )
+          return false;
+      return true;
+    },
+    [saveFile],
+  );
+
+  const guardDirtyFiles = useCallback(
+    async (matches: (path: string) => boolean = () => true): Promise<boolean> => {
+      const dirty = openFilesRef.current.filter(
+        (file) => file.dirty && matches(file.path),
+      );
+      if (!dirty.length) return true;
+      const label =
+        dirty.length === 1 ? dirty[0].name : `${dirty.length} files`;
+      const choice = await askDirtyChoice(label);
+      if (choice === 'cancel') return false;
+      if (choice === 'save') {
+        for (const file of dirty)
+          if (!(await saveFile(file.path))) return false;
+      }
+      return true;
+    },
+    [saveFile],
+  );
+
+  useEffect(() => {
+    saveDirtyRef.current = saveDirtyFiles;
+    dirtyGuardRef.current = guardDirtyFiles;
+  }, [guardDirtyFiles, saveDirtyFiles]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (await dirtyGuardRef.current()) return;
+        event.preventDefault();
+      })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const updateFile = useCallback(
     (path: string, content?: string, replace = false) => {
@@ -3208,7 +3745,16 @@ function App() {
         );
         pluginRuntime.emitEvent('terminal:closed', { id: terminal.id });
       }
-      if (!otherGroupsStillUseFile && !terminal) {
+      if (!otherGroupsStillUseFile && path.startsWith(PREVIEW_PREFIX)) {
+        setPreviews((current) =>
+          current.filter((preview) => preview.key !== path),
+        );
+      }
+      if (
+        !otherGroupsStillUseFile &&
+        !terminal &&
+        !path.startsWith(PREVIEW_PREFIX)
+      ) {
         fileContents.current.delete(path);
         lastDiskWrite.current.delete(path);
         setDiskConflicts((current) => {
@@ -3251,9 +3797,10 @@ function App() {
       setSelectedPath(path);
       setSelectedPaths(new Set([path]));
       selectionAnchor.current = path;
+      const targetGroupId = activeGroupId;
       setGroups((current) =>
         current.map((group) =>
-          group.id === activeGroupId
+          group.id === targetGroupId
             ? {
                 ...group,
                 activePath: path,
@@ -3306,7 +3853,13 @@ function App() {
     placement?: SplitPlacement,
   ) => {
     const terminal = terminals.find((entry) => entry.key === path);
-    if (terminal || path === GITHUB_TAB_KEY || path === PLUGIN_TAB_KEY) {
+    if (
+      terminal ||
+      path === GITHUB_TAB_KEY ||
+      path === PLUGIN_TAB_KEY ||
+      path === BUILDER_TAB_KEY ||
+      path.startsWith(PREVIEW_PREFIX)
+    ) {
       const targetGroup = placement
         ? createSplitGroup(groupId, placement)
         : groupId;
@@ -3503,6 +4056,23 @@ function App() {
   const deleteEntries = async (requestedEntries: DiskFile[]) => {
     if (!workspace || !requestedEntries.length) return;
     const entries = removeNestedEntries(requestedEntries);
+    const selected = (path: string) =>
+      entries.some(
+        (entry) =>
+          path === entry.path ||
+          (entry.kind === 'directory' && path.startsWith(`${entry.path}/`)),
+      );
+    if (!(await saveDirtyRef.current(selected))) return;
+    const directoryCount = entries.filter(
+      (entry) => entry.kind === 'directory',
+    ).length;
+    if (
+      directoryCount &&
+      !(await confirmDialog(
+        `Delete ${directoryCount === 1 ? 'this folder' : `${directoryCount} folders`} and everything inside?`,
+      ))
+    )
+      return;
     const batch: DeletedEntry[] = [];
     let failure = '';
     try {
@@ -3682,6 +4252,39 @@ function App() {
   const handleKey = (event: KeyboardEvent) => {
     const key = event.key.toLowerCase();
     const target = event.target as HTMLElement;
+    if ((event.ctrlKey || event.metaKey) && key === 'tab') {
+      event.preventDefault();
+      const inLayout = collectGroupIds(layout);
+      const ordered = [
+        ...inLayout,
+        ...groups
+          .map((group) => group.id)
+          .filter((id) => !inLayout.includes(id)),
+      ];
+      const step = event.shiftKey ? -1 : 1;
+      if (ordered.length > 1) {
+        const current = Math.max(0, ordered.indexOf(activeGroupId));
+        const nextId =
+          ordered[(current + step + ordered.length) % ordered.length];
+        setActiveGroupId(nextId);
+        const nextGroup = groups.find((group) => group.id === nextId);
+        const view = nextGroup?.activePath
+          ? editorViews.current.get(nextGroup.activePath)?.get(nextId)
+          : undefined;
+        requestAnimationFrame(() => view?.focus());
+      } else {
+        const group = groups.find((entry) => entry.id === activeGroupId);
+        if (group && group.tabs.length > 1) {
+          const current = Math.max(0, group.tabs.indexOf(group.activePath));
+          const nextPath =
+            group.tabs[(current + step + group.tabs.length) % group.tabs.length];
+          setActiveTab(group.id, nextPath);
+          const view = editorViews.current.get(nextPath)?.get(group.id);
+          requestAnimationFrame(() => view?.focus());
+        }
+      }
+      return;
+    }
     if (
       (event.key === 'F2' || event.key === 'Delete') &&
       target.matches("input, textarea, [contenteditable='true']")
@@ -3734,6 +4337,11 @@ function App() {
       event.preventDefault();
       setCommandPaletteOpen(true);
       setCommandQuery('');
+      return;
+    }
+    if (modifier && event.altKey && key === 'p') {
+      event.preventDefault();
+      openPreview();
       return;
     }
     const pluginBinding = pluginRuntime.keybindings.find(
@@ -3826,29 +4434,44 @@ function App() {
       }
       return;
     }
+    const inCodeEditor = Boolean(target.closest('.cm-editor'));
     if (key === '=' || key === '+' || event.code === 'NumpadAdd') {
       event.preventDefault();
-      updateSettings({
-        zoomLevel: Math.min(
-          2,
-          Math.round((settings.zoomLevel + 0.1) * 10) / 10,
-        ),
-      });
+      if (inCodeEditor)
+        updateSettings({
+          fontSize: Math.min(32, settings.fontSize + 1),
+        });
+      else
+        updateSettings({
+          zoomLevel: Math.min(
+            2,
+            Math.round((settings.zoomLevel + 0.1) * 10) / 10,
+          ),
+        });
       return;
     }
     if (key === '-' || event.code === 'NumpadSubtract') {
       event.preventDefault();
-      updateSettings({
-        zoomLevel: Math.max(
-          0.5,
-          Math.round((settings.zoomLevel - 0.1) * 10) / 10,
-        ),
-      });
+      if (inCodeEditor)
+        updateSettings({
+          fontSize: Math.max(8, settings.fontSize - 1),
+        });
+      else
+        updateSettings({
+          zoomLevel: Math.max(
+            0.5,
+            Math.round((settings.zoomLevel - 0.1) * 10) / 10,
+          ),
+        });
       return;
     }
     if (key === '0' || event.code === 'Numpad0') {
       event.preventDefault();
-      updateSettings({ zoomLevel: 1 });
+      updateSettings(
+        inCodeEditor
+          ? { fontSize: DEFAULT_SETTINGS.fontSize }
+          : { zoomLevel: 1 },
+      );
       return;
     }
     if (key === 'k') {
@@ -4266,9 +4889,10 @@ function App() {
 
   const openPluginView = (id: string) => {
     const path = `${PLUGIN_VIEW_PREFIX}${id}`;
+    const targetGroupId = activeGroupId;
     setGroups((current) =>
       current.map((group) =>
-        group.id === activeGroupId
+        group.id === targetGroupId
           ? {
               ...group,
               activePath: path,
@@ -4395,6 +5019,7 @@ function App() {
     },
     openGithub: openGithubPanel,
     openPlugins: openPluginPanel,
+    openPreview: (url) => openPreview(url),
     openPluginPanel: openPluginView,
     setTitle: (title) => {
       document.title = title;
@@ -4569,7 +5194,14 @@ function App() {
       run: () => setSettingsOpen(true),
     },
     { id: 'open-plugins', title: 'Open Plugins', run: openPluginPanel },
+    { id: 'open-builder', title: 'Create Plugin or Theme', run: openBuilderPanel },
     { id: 'open-github', title: 'Open GitHub', run: openGithubPanel },
+    {
+      id: 'open-preview',
+      title: 'Open Web Preview',
+      description: 'Preview a dev server or workspace HTML',
+      run: () => openPreview(),
+    },
     {
       id: 'save-file',
       title: 'Save Active File',
@@ -4662,6 +5294,80 @@ function App() {
     }
   };
 
+  const renderEditorGroup = (group: EditorGroup) => (
+    <EditorPane
+      key={group.id}
+      group={group}
+      file={(() => {
+        const file = openFiles.find(
+          (entry) => entry.path === group.activePath,
+        );
+        return file
+          ? { ...file, content: fileContents.current.get(file.path) ?? '' }
+          : undefined;
+      })()}
+      activeTerminal={terminals.find(
+        (terminal) => terminal.key === group.activePath,
+      )}
+      terminals={terminals}
+      files={openFiles}
+      onActivate={setActiveGroupId}
+      onChange={updateFile}
+      onClose={closeTab}
+      onDropFile={openDroppedFile}
+      canCreateSplit={group.tabs.length > 0}
+      onSelect={setActiveTab}
+      onTerminalTitleChange={updateTerminalTitle}
+      workspace={workspace}
+      diskConflict={diskConflicts.has(group.activePath)}
+      onConflictReload={reloadFromDisk}
+      onConflictKeep={keepBuffer}
+      pluginViews={pluginRuntime.panels}
+      previews={previews}
+      onPreviewChange={updatePreview}
+      editorViews={editorViews}
+      pluginLanguages={pluginRuntime.languages}
+      pluginLanguageOverrides={pluginLanguageOverrides}
+      pluginEditorExtensions={pluginRuntime.editorExtensions}
+      pluginGrammarFor={pluginRuntime.getGrammar}
+      pluginGrammarVersion={pluginRuntime.grammarVersion}
+      onSelectionChange={(path) => {
+        const now = performance.now();
+        if (now - selectionEventAt.current < 80) return;
+        selectionEventAt.current = now;
+        const context = getPluginEditorContext(path);
+        pluginRuntime.emitEvent('editor:selection-changed', context);
+        pluginRuntime.emitEvent('editor:context-changed', context);
+      }}
+      builderPanel={
+        <Suspense fallback={<div className="editor-empty" />}>
+          <BuildWizard
+            settings={settings}
+            onLaunch={launchBuilderAgent}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        </Suspense>
+      }
+      pluginPanel={
+        <Suspense fallback={<div className="editor-empty" />}>
+          <PluginPanel
+            plugins={pluginRuntime.plugins}
+            pluginDirectory={pluginRuntime.pluginDirectory}
+            availableBuiltins={pluginRuntime.availableBuiltins}
+            panels={pluginRuntime.panels}
+            onInstallPlugin={pluginRuntime.installFromFolder}
+            onInstallBuiltin={pluginRuntime.installBuiltin}
+            onTogglePlugin={pluginRuntime.setEnabled}
+            onUninstallPlugin={pluginRuntime.uninstall}
+            onOpenPanel={openPluginView}
+          />
+        </Suspense>
+      }
+      settings={settings}
+      theme={activeTheme}
+    />
+  );
+
   const renderLayout = (node: LayoutNode): ReactNode => {
     if (node.type === 'split') {
       return (
@@ -4676,68 +5382,7 @@ function App() {
     }
     const group = groups.find((entry) => entry.id === node.groupId);
     if (!group) return null;
-    return (
-      <EditorPane
-        key={group.id}
-        group={group}
-        file={(() => {
-          const file = openFiles.find(
-            (entry) => entry.path === group.activePath,
-          );
-          return file
-            ? { ...file, content: fileContents.current.get(file.path) ?? '' }
-            : undefined;
-        })()}
-        activeTerminal={terminals.find(
-          (terminal) => terminal.key === group.activePath,
-        )}
-        terminals={terminals}
-        files={openFiles}
-        onActivate={setActiveGroupId}
-        onChange={updateFile}
-        onClose={closeTab}
-        onDropFile={openDroppedFile}
-        canCreateSplit={group.tabs.length > 0}
-        onSelect={setActiveTab}
-        onTerminalTitleChange={updateTerminalTitle}
-        workspace={workspace}
-        diskConflict={diskConflicts.has(group.activePath)}
-        onConflictReload={reloadFromDisk}
-        onConflictKeep={keepBuffer}
-        pluginViews={pluginRuntime.panels}
-        editorViews={editorViews}
-        pluginLanguages={pluginRuntime.languages}
-        pluginLanguageOverrides={pluginLanguageOverrides}
-        pluginEditorExtensions={pluginRuntime.editorExtensions}
-        pluginGrammarFor={pluginRuntime.getGrammar}
-        pluginGrammarVersion={pluginRuntime.grammarVersion}
-        onSelectionChange={(path) => {
-          const now = performance.now();
-          if (now - selectionEventAt.current < 80) return;
-          selectionEventAt.current = now;
-          const context = getPluginEditorContext(path);
-          pluginRuntime.emitEvent('editor:selection-changed', context);
-          pluginRuntime.emitEvent('editor:context-changed', context);
-        }}
-        pluginPanel={
-          <Suspense fallback={<div className="editor-empty" />}>
-            <PluginPanel
-              plugins={pluginRuntime.plugins}
-              pluginDirectory={pluginRuntime.pluginDirectory}
-              availableBuiltins={pluginRuntime.availableBuiltins}
-              panels={pluginRuntime.panels}
-              onInstallPlugin={pluginRuntime.installFromFolder}
-              onInstallBuiltin={pluginRuntime.installBuiltin}
-              onTogglePlugin={pluginRuntime.setEnabled}
-              onUninstallPlugin={pluginRuntime.uninstall}
-              onOpenPanel={openPluginView}
-            />
-          </Suspense>
-        }
-        settings={settings}
-        theme={activeTheme}
-      />
-    );
+    return renderEditorGroup(group);
   };
 
   const themeMaker = themeMakerOpen ? (
@@ -4769,8 +5414,13 @@ function App() {
 
   return (
     <main
-      className={`app-shell ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''}`}
-      style={settings.interfaceFontFamily ? { fontFamily: settings.interfaceFontFamily } : undefined}
+      className={`app-shell app-theme-${settings.appTheme} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${editorBackgroundUrl ? 'has-editor-background' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''}`}
+      style={{
+        fontFamily: resolveInterfaceFont(settings),
+        '--editor-background-image': editorBackgroundUrl
+          ? `url("${editorBackgroundUrl}")`
+          : 'none',
+      } as CSSProperties}
       onClick={() => {
         if (contextMenu) setContextMenu(null);
       }}
@@ -4816,7 +5466,10 @@ function App() {
       <div className="app-body">
       {!workspace &&
       terminals.length === 0 &&
-      !groups.some((group) => group.tabs.includes(PLUGIN_TAB_KEY)) ? (
+      !groups.some(
+        (group) =>
+          group.tabs.includes(PLUGIN_TAB_KEY) || group.tabs.includes(BUILDER_TAB_KEY),
+      ) ? (
         <section className="welcome-screen">
           <div className="welcome-tools">
             <button
@@ -4920,7 +5573,7 @@ function App() {
                 <span>New folder</span>
               </div>
             </div>
-            {message && (
+            {message && settings.notificationsEnabled && (
               <div
                 className={`welcome-message ${message.startsWith('Could not') ? 'error' : ''}`}
               >
@@ -5205,6 +5858,14 @@ function App() {
               </button>
               <button
                 className="settings-launch"
+                aria-label="Create plugin or theme"
+                title="Create plugin or theme"
+                onClick={openBuilderPanel}
+              >
+                <WandSparkles size={15} />
+              </button>
+              <button
+                className="settings-launch"
                 aria-label="New terminal (Ctrl+T)"
                 title="New terminal (Ctrl+T)"
                 onClick={() => openTerminal()}
@@ -5232,7 +5893,7 @@ function App() {
                 </button>
               ))}
             </div>
-            {message && (
+            {message && settings.notificationsEnabled && (
               <div
                 className={`message ${message.startsWith('Could not') ? 'error' : ''}`}
                 onMouseDown={(event) => {

@@ -178,8 +178,8 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
     const interval = window.setInterval(() => {
       if (inFlight) return;
       inFlight = true;
-      void invoke<GithubStatus>("github_status", { root: workspace }).then((next) => {
-        if (next.authenticated) void finishAuth(authSessionId);
+      void invoke<boolean>("github_auth_status", { root: workspace }).then((authenticated) => {
+        if (authenticated) void finishAuth(authSessionId);
       }).catch(() => undefined).finally(() => {
         inFlight = false;
       });
@@ -318,12 +318,9 @@ export default function GithubPanel({ workspace }: { workspace: string }) {
   const stageAll = async () => {
     if (!status) return;
     const shouldStage = status.changes.some((change) => !change.staged);
-    await perform(async () => {
-      for (const change of status.changes) {
-        if (!shouldStage && !change.staged) continue;
-        await invoke("github_stage", { root: workspace, path: change.path, stage: shouldStage });
-      }
-    });
+    await perform(() =>
+      invoke(shouldStage ? "github_stage_all" : "github_unstage_all", { root: workspace }),
+    );
   };
 
   const openLink = async (url: string) => {

@@ -1,6 +1,7 @@
-import { ChevronRight, LoaderCircle, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { ChevronRight, LoaderCircle, Menu, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "../lib/settings";
+import { open } from "@tauri-apps/plugin-dialog";
+import { APP_THEME_OPTIONS, appThemeDefinition, DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "../lib/settings";
 import type { UpdateInfo } from "../lib/updater";
 import type { PluginConfigurationContribution, PluginConfigurationProperty } from "../lib/pluginRuntime";
 import ThemeColorPicker from "./ThemeColorPicker";
@@ -11,9 +12,11 @@ import "./SettingsPanel.css";
 const settingsCategories = [
   { id: "editor", label: "Editor", description: "Formatting and editing behavior.", sections: [{ id: "formatting", label: "Formatting" }, { id: "editing", label: "Editing" }] },
   { id: "typography", label: "Fonts & Typography", description: "Choose typefaces and tune reading density.", sections: [{ id: "interface", label: "App interface" }, { id: "editor", label: "Code editor" }, { id: "terminal", label: "Terminal" }] },
-  { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes.", sections: [{ id: "interface", label: "Interface" }, { id: "editor-colors", label: "Editor colors" }, { id: "transparency", label: "Transparency and blur" }] },
+  { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes.", sections: [{ id: "interface", label: "Interface" }, { id: "editor-colors", label: "Editor colors" }, { id: "transparency", label: "Transparency and blur" }, { id: "background", label: "App background" }] },
   { id: "terminal", label: "Terminal", description: "Cursor and scrollback behavior.", sections: [{ id: "terminal", label: "Terminal" }] },
   { id: "files", label: "Files", description: "Workspace browsing preferences.", sections: [{ id: "file-explorer", label: "File viewer" }] },
+  { id: "notifications", label: "Notifications", description: "Choose how in-app notifications behave.", sections: [{ id: "behavior", label: "Notification behavior" }] },
+  { id: "ai", label: "AI", description: "Default terminal agent for building plugins and themes.", sections: [{ id: "agent", label: "Terminal agent" }] },
   { id: "updates", label: "Updates", description: "Release channel and automatic updates.", sections: [{ id: "channel", label: "Release channel" }, { id: "behavior", label: "Automatic updates" }] },
   { id: "plugins", label: "Plugins", description: "Settings contributed by installed plugins.", sections: [] },
 ] as const;
@@ -103,14 +106,16 @@ function isFontAvailable(stack: string) {
   return available;
 }
 
-function FontFamilySetting({ label, value, options, fallback, onChange }: {
+function FontFamilySetting({ label, value, options, fallback, themeDefault, onChange }: {
   label: string;
   value: string;
   options: FontOption[];
   fallback: string;
+  themeDefault: string;
   onChange: (value: string) => void;
 }) {
-  const preset = options.find((option) => option.value === value);
+  const allOptions = [{ value: "", label: "App theme default" }, ...options];
+  const preset = allOptions.find((option) => option.value === value);
   const customName = preset ? "" : fontNameFromStack(value);
   const [customDraft, setCustomDraft] = useState(customName);
   useEffect(() => setCustomDraft(customName), [value]);
@@ -119,10 +124,10 @@ function FontFamilySetting({ label, value, options, fallback, onChange }: {
       value={preset ? value : "__custom"}
       options={[
         ...(!preset ? [{ value: "__custom", label: "Custom font name below", disabled: true }] : []),
-        ...options.map((option) => ({ value: option.value, label: option.label })),
+        ...allOptions.map((option) => ({ value: option.value, label: option.label })),
       ]}
       onChange={(next) => {
-        const selected = options.find((option) => option.value === next);
+        const selected = allOptions.find((option) => option.value === next);
         if (selected) onChange(selected.value);
       }}
     /></label>
@@ -130,9 +135,9 @@ function FontFamilySetting({ label, value, options, fallback, onChange }: {
       setCustomDraft(event.target.value);
       if (event.target.value.trim()) onChange(fontStackFromName(event.target.value, fallback));
     }} onBlur={() => {
-      if (!customDraft.trim() && !preset) onChange(options[0]?.value ?? fallback);
+      if (!customDraft.trim() && !preset) onChange("");
     }} /></label>
-    <div className="font-preview" style={{ fontFamily: value || undefined }}>Aa Bb Cc 0123</div>
+    <div className="font-preview" style={{ fontFamily: value || themeDefault }}>Aa Bb Cc 0123</div>
   </>;
 }
 
@@ -223,6 +228,7 @@ export default function SettingsPanel({
   onInstallUpdate: () => void;
 }) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("editor");
+  const [navOpen, setNavOpen] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<Set<SettingsCategory>>(() => new Set(["editor"]));
   const [categorySearch, setCategorySearch] = useState("");
   const [themeSearch, setThemeSearch] = useState("");
@@ -250,6 +256,20 @@ export default function SettingsPanel({
     <span><strong>{label}</strong><small>{description}</small></span>
     <input type="checkbox" checked={Boolean(settings[key])} onChange={(event) => onChange({ [key]: event.target.checked })} />
   </label>;
+  const editorBackgroundName = settings.editorBackgroundImage.split(/[\\/]/).pop() ?? "";
+  const chooseEditorBackground = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: "Choose app background",
+        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"] }],
+      });
+      if (typeof selected === "string") onChange({ editorBackgroundImage: selected });
+    } catch {
+      // Dialog is unavailable outside Tauri.
+    }
+  };
 
   const selectedCategory = settingsCategories.find((category) => category.id === activeCategory)!;
   const sectionsForCategory = (category: typeof settingsCategories[number]) => {
@@ -279,8 +299,20 @@ export default function SettingsPanel({
   return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="settings-panel" role="dialog" aria-modal="true" aria-label="Settings">
       <button className="settings-close" aria-label="Close settings" title="Close settings" onClick={onClose}><X size={16} /></button>
+      <div className="settings-mobile-bar">
+        <button
+          className="settings-nav-toggle"
+          aria-label="Toggle settings menu"
+          aria-expanded={navOpen}
+          onClick={() => setNavOpen((current) => !current)}
+        >
+          <Menu size={16} />
+          <span>{selectedCategory.label}</span>
+        </button>
+      </div>
       <div className="settings-layout">
-        <nav className="settings-nav" aria-label="Settings categories">
+        {navOpen && <button className="settings-nav-scrim" aria-label="Close settings menu" onClick={() => setNavOpen(false)} />}
+        <nav className={`settings-nav${navOpen ? " open" : ""}`} aria-label="Settings categories">
           <label className="settings-search">
             <Search size={14} aria-hidden="true" />
             <input type="text" value={categorySearch} placeholder="Search categories" aria-label="Search settings categories" onChange={(event) => {
@@ -320,6 +352,7 @@ export default function SettingsPanel({
                       setActiveCategory(category.id);
                       setTimeout(() => scrollToSection(section.id), 0);
                     }
+                    setNavOpen(false);
                   }}>{section.label}</button>)}
                 </div>}
               </div>;
@@ -349,22 +382,27 @@ export default function SettingsPanel({
             </>}
             {activeCategory === "typography" && <>
               <section className="settings-section" id="settings-section-typography-interface"><h3>App interface</h3>
-                <FontFamilySetting label="Interface font" value={settings.interfaceFontFamily} options={availableFonts.interface} fallback="sans-serif" onChange={(interfaceFontFamily) => onChange({ interfaceFontFamily })} />
-                <div className="setting-note">Custom font names must be installed on your system. Theme default follows Classic app styling.</div>
+                <FontFamilySetting label="Interface font" value={settings.interfaceFontFamily} options={availableFonts.interface} fallback="sans-serif" themeDefault={appThemeDefinition(settings.appTheme).interfaceFont} onChange={(interfaceFontFamily) => onChange({ interfaceFontFamily })} />
+                <label className="setting-field"><span>App zoom <b>{Math.round(settings.zoomLevel * 100)}%</b></span><input type="range" min="0.5" max="2" step="0.05" value={settings.zoomLevel} onChange={(event) => onChange({ zoomLevel: Number(event.target.value) })} /></label>
+                <div className="setting-note">Custom font names must be installed on your system. App theme default follows the selected app theme.</div>
               </section>
               <section className="settings-section" id="settings-section-typography-editor"><h3>Code editor</h3>
-                <FontFamilySetting label="Editor font" value={settings.fontFamily} options={availableFonts.editor} fallback="monospace" onChange={(fontFamily) => onChange({ fontFamily })} />
-                <label className="setting-field"><span>Font size <b>{settings.fontSize}px</b></span><input type="range" min="10" max="24" step="1" value={settings.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) })} /></label>
+                <FontFamilySetting label="Editor font" value={settings.fontFamily} options={availableFonts.editor} fallback="monospace" themeDefault={appThemeDefinition(settings.appTheme).editorFont} onChange={(fontFamily) => onChange({ fontFamily })} />
+                <label className="setting-field"><span>Font size <b>{settings.fontSize}px</b></span><input type="range" min="8" max="32" step="1" value={settings.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) })} /></label>
                 <label className="setting-field"><span>Line height <b>{settings.lineHeight.toFixed(1)}</b></span><input type="range" min="1.2" max="2.2" step="0.1" value={settings.lineHeight} onChange={(event) => onChange({ lineHeight: Number(event.target.value) })} /></label>
+                <div className="setting-note"><kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd> zooms the app, or changes editor font size when a code editor is focused.</div>
               </section>
               <section className="settings-section" id="settings-section-typography-terminal"><h3>Terminal</h3>
-                <FontFamilySetting label="Terminal font" value={settings.terminalFontFamily} options={availableFonts.terminal} fallback="monospace" onChange={(terminalFontFamily) => onChange({ terminalFontFamily })} />
+                <FontFamilySetting label="Terminal font" value={settings.terminalFontFamily} options={availableFonts.terminal} fallback="monospace" themeDefault={appThemeDefinition(settings.appTheme).terminalFont} onChange={(terminalFontFamily) => onChange({ terminalFontFamily })} />
                 <label className="setting-field"><span>Font size <b>{settings.terminalFontSize}px</b></span><input type="range" min="10" max="24" step="1" value={settings.terminalFontSize} onChange={(event) => onChange({ terminalFontSize: Number(event.target.value) })} /></label>
               </section>
             </>}
             {activeCategory === "appearance" && <>
               <section className="settings-section" id="settings-section-appearance-interface"><h3>Interface</h3>
-                <label className="setting-field"><span>App theme</span><Select value="classic" onChange={(next) => onChange({ appTheme: next as AppSettings["appTheme"] })} options={[{ value: "classic", label: "Classic" }]} /></label>
+                <label className="setting-field"><span>App theme</span><Select value={settings.appTheme} onChange={(next) => {
+                  const appTheme = next as AppSettings["appTheme"];
+                  onChange({ appTheme, selectedTheme: appThemeDefinition(appTheme).defaultColorTheme });
+                }} options={APP_THEME_OPTIONS} /></label>
                 <div className="setting-note">App style and editor color theme are independent.</div>
                 {toggle("titleBarEnabled", "Custom title bar", "Use Arc's title bar. Turn off to use the system window frame.")}
               </section>
@@ -395,11 +433,21 @@ export default function SettingsPanel({
                   {transparency("glassControlsTransparency", "Inputs and controls")}
                 </>}
               </section>
+              <section className="settings-section" id="settings-section-appearance-background"><h3>App background</h3>
+                <div className="settings-button-row">
+                  <button className="settings-action" onClick={() => void chooseEditorBackground()}>Choose image</button>
+                  {settings.editorBackgroundImage && <button className="settings-action" onClick={() => onChange({ editorBackgroundImage: "" })}>Remove</button>}
+                </div>
+                {settings.editorBackgroundImage ? <div className="setting-note">{editorBackgroundName}</div> : <div className="setting-note">Show an image behind the whole app.</div>}
+                {settings.editorBackgroundImage && settings.editorGlassEnabled && <div className="setting-note">Disabled while transparency is enabled. Turn off Transparency above to use it.</div>}
+                {settings.editorBackgroundImage && !settings.editorGlassEnabled && <>
+                  <label className="setting-field"><span>Transparency <b>{settings.editorBackgroundTransparency}%</b></span><input type="range" min="0" max="100" step="1" value={settings.editorBackgroundTransparency} onChange={(event) => onChange({ editorBackgroundTransparency: Number(event.target.value) })} /></label>
+                  <label className="setting-field"><span>Blur <b>{settings.editorBackgroundBlur}px</b></span><input type="range" min="0" max="40" step="1" value={settings.editorBackgroundBlur} onChange={(event) => onChange({ editorBackgroundBlur: Number(event.target.value) })} /></label>
+                </>}
+              </section>
             </>}
             {activeCategory === "terminal" && <section className="settings-section" id="settings-section-terminal-terminal"><h3>Terminal</h3>
               <label className="setting-field"><span>Cursor shape</span><Select value={settings.terminalCursorStyle} onChange={(next) => onChange({ terminalCursorStyle: next as AppSettings["terminalCursorStyle"] })} options={[{ value: "block", label: "Block" }, { value: "underline", label: "Underline" }, { value: "bar", label: "Bar" }]} /></label>
-              {toggle("terminalCursorBlink", "Blinking cursor", "Blink the terminal cursor.")}
-              {toggle("terminalScrollbar", "Show scrollbar", "Show the terminal's scrollback scrollbar.")}
               {toggle("terminalShowTitle", "Show shell title", "Use the title reported by the running shell in its tab.")}
               <label className="setting-field"><span>Scrollback lines <b>{settings.terminalScrollback}</b></span><input type="range" min="500" max="5000" step="500" value={settings.terminalScrollback} onChange={(event) => onChange({ terminalScrollback: Number(event.target.value) })} /></label>
               <label className="setting-field"><span>Padding <b>{settings.terminalPadding}px</b></span><input type="range" min="0" max="24" step="2" value={settings.terminalPadding} onChange={(event) => onChange({ terminalPadding: Number(event.target.value) })} /></label>
@@ -408,7 +456,19 @@ export default function SettingsPanel({
             </section>}
             {activeCategory === "files" && <section className="settings-section" id="settings-section-files-file-explorer"><h3>File viewer</h3>
               {toggle("showHiddenFiles", "Show hidden files", "Include dotfiles and hidden folders in workspace tree.")}
-              {toggle("restoreTerminals", "Reopen terminals", "Recreate previous terminal tabs when reopening a folder (commands are re-run).")}
+            </section>}
+            {activeCategory === "ai" && <section className="settings-section" id="settings-section-ai-agent"><h3>Terminal agent</h3>
+              <label className="setting-field"><span>Default agent</span><Select value={settings.agentCli} onChange={(next) => onChange({ agentCli: next as AppSettings["agentCli"] })} options={[
+                { value: "opencode", label: "OpenCode" },
+                { value: "claude", label: "Claude Code" },
+                { value: "codex", label: "Codex" },
+                { value: "custom", label: "Custom command" },
+              ]} /></label>
+              <div className="setting-note">The Build tab opens this agent in a terminal. The command must be installed and available on PATH.</div>
+              {settings.agentCli === "custom" && <>
+                <label className="setting-field"><span>Command template</span><input type="text" value={settings.agentCommand} placeholder={'my-agent --prompt "{prompt}"'} onChange={(event) => onChange({ agentCommand: event.target.value })} /></label>
+                <div className="setting-note">Use <kbd>{"{prompt}"}</kbd> where the prompt should go. Without it, Arc appends the prompt.</div>
+              </>}
             </section>}
             {activeCategory === "updates" && <>
               <section className="settings-section" id="settings-section-updates-channel"><h3>Release channel</h3>
@@ -432,6 +492,14 @@ export default function SettingsPanel({
                 </div>}
               </section>
             </>}
+            {activeCategory === "notifications" && <section className="settings-section" id="settings-section-notifications-behavior"><h3>Notification behavior</h3>
+              {toggle("notificationsEnabled", "Enable notifications", "Show status messages and plugin toasts.")}
+              {settings.notificationsEnabled && <>
+                {toggle("notificationAutoDismiss", "Auto-dismiss notifications", "Close status messages and plugin toasts by themselves.")}
+                {settings.notificationAutoDismiss && <label className="setting-field"><span>Auto-dismiss after <b>{settings.notificationDuration}s</b></span><input type="range" min="1" max="30" step="1" value={settings.notificationDuration} onChange={(event) => onChange({ notificationDuration: Number(event.target.value) })} /></label>}
+                <div className="setting-note">Hover over a notification to pause its timer.</div>
+              </>}
+            </section>}
             {activeCategory === "plugins" && <>
               {(!pluginConfigurations || pluginConfigurations.length === 0) && <section className="settings-section" id="settings-section-plugins-none"><h3>Plugin settings</h3><p>No installed plugin contributes settings.</p></section>}
               {pluginConfigurations?.map((contribution) => <section className="settings-section" id={`settings-section-plugins-${contribution.id}`} key={contribution.id}>

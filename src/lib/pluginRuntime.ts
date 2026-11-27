@@ -19,9 +19,14 @@ import * as codeMirrorState from "@codemirror/state";
 import * as codeMirrorAutocomplete from "@codemirror/autocomplete";
 import * as codeMirrorHighlight from "@lezer/highlight";
 import type { AppSettings, ThemeDefinition } from "./settings";
+import { loadSettings } from "./settings";
 
-const builtinManifestSources = import.meta.glob<string>("../../plugins/*/plugin.json", { eager: true, query: "?raw", import: "default" });
-const builtinPluginSourceLoaders = import.meta.glob<string>("../../plugins/*/main.js", { query: "?raw", import: "default" });
+const builtinManifestSources: Record<string, string> = import.meta.env.PROD
+  ? import.meta.glob<string>(["../../plugins/*/plugin.json", "!../../plugins/api-tester/plugin.json"], { eager: true, query: "?raw", import: "default" })
+  : import.meta.glob<string>("../../plugins/*/plugin.json", { eager: true, query: "?raw", import: "default" });
+const builtinPluginSourceLoaders: Record<string, () => Promise<string>> = import.meta.env.PROD
+  ? import.meta.glob<string>(["../../plugins/*/main.js", "!../../plugins/api-tester/main.js"], { query: "?raw", import: "default" })
+  : import.meta.glob<string>("../../plugins/*/main.js", { query: "?raw", import: "default" });
 
 const disabledStorageKey = "arc.plugins.disabled";
 const builtinsSeededKey = "arc.plugins.builtinsSeeded";
@@ -287,6 +292,7 @@ export type PluginApi = {
   platform: "windows" | "linux" | "macos";
   invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
   openUrl: (url: string) => Promise<void>;
+  openPreview: (url?: string) => void;
   openTerminal: (command?: string) => void;
   notify: (message: string) => void;
   supports: (capability: string) => boolean;
@@ -645,6 +651,7 @@ type PluginHostActions = {
   openSettings: () => void;
   openGithub: () => void;
   openPlugins: () => void;
+  openPreview: (url?: string) => void;
   openPluginPanel: (id: string) => void;
   setTitle: (title: string) => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
@@ -1157,6 +1164,7 @@ export function usePluginRuntime(
             platform: /win/i.test(navigator.platform) ? "windows" : /mac/i.test(navigator.platform) ? "macos" : "linux",
             invoke: (command, args) => invoke(command, args),
             openUrl: (externalUrl) => openUrl(externalUrl),
+            openPreview: (url) => hostActionsRef.current.openPreview(url),
             openTerminal: (command) => hostActionsRef.current.openTerminal(command),
             notify,
             supports: (capability) => SUPPORTED_CAPABILITIES.has(capability),
@@ -3766,6 +3774,8 @@ function showInputBoxModal(options?: { prompt?: string; value?: string; password
 
 function showNotificationToast(message: string, options?: { severity?: "info" | "warning" | "error"; actions?: { label: string; run: () => void }[]; progress?: boolean }): string {
   const id = `notification-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const { notificationsEnabled, notificationAutoDismiss, notificationDuration } = loadSettings();
+  if (!notificationsEnabled) return id;
   const toast = document.createElement("div");
   toast.className = `arc-plugin-toast ${options?.severity ?? "info"}`;
   const text = document.createElement("span");
@@ -3778,8 +3788,23 @@ function showNotificationToast(message: string, options?: { severity?: "info" | 
     button.addEventListener("click", () => { action.run(); toast.remove(); });
     toast.append(button);
   }
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.textContent = "×";
+  dismiss.title = "Dismiss";
+  dismiss.setAttribute("aria-label", "Dismiss notification");
+  dismiss.addEventListener("click", () => toast.remove());
+  toast.append(dismiss);
   document.body.append(toast);
-  window.setTimeout(() => toast.remove(), 6000);
+  let timer = 0;
+  const arm = (delay: number) => {
+    window.clearTimeout(timer);
+    if (!notificationAutoDismiss) return;
+    timer = window.setTimeout(() => toast.remove(), delay);
+  };
+  toast.addEventListener("mouseenter", () => window.clearTimeout(timer));
+  toast.addEventListener("mouseleave", () => arm(Math.max(1, notificationDuration) * 1000));
+  arm(Math.max(1, notificationDuration) * 1000);
   return id;
 }
 

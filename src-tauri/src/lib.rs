@@ -23,6 +23,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{ipc::Channel, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_fs::FsExt;
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 #[derive(Default)]
@@ -299,7 +300,7 @@ fn terminal_spawn(
     #[cfg(target_os = "windows")]
     let shell = env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
     #[cfg(not(target_os = "windows"))]
-    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let shell = CommandBuilder::new_default_prog().get_shell();
     let mut command_builder = CommandBuilder::new(&shell);
     #[cfg(target_os = "windows")]
     command_builder.arg("/Q");
@@ -307,6 +308,17 @@ fn terminal_spawn(
     command_builder.arg("-i");
     command_builder.env("TERM", "xterm-256color");
     command_builder.env("COLORTERM", "truecolor");
+    #[cfg(target_os = "linux")]
+    for (key, value) in appimage_env() {
+        match value {
+            Some(value) => {
+                command_builder.env(key, value);
+            }
+            None => {
+                command_builder.env_remove(key);
+            }
+        }
+    }
     if let Some(directory) = cwd.filter(|path| !path.is_empty()) {
         command_builder.cwd(directory);
     }
@@ -520,6 +532,45 @@ async fn workspace_pick(app: tauri::AppHandle) -> Result<Option<String>, String>
                 .map_err(|error| error.to_string())
         })
         .transpose()
+}
+
+static SAVE_PROMPT_BUSY: AtomicBool = AtomicBool::new(false);
+
+struct SavePromptGuard;
+
+impl Drop for SavePromptGuard {
+    fn drop(&mut self) {
+        SAVE_PROMPT_BUSY.store(false, Ordering::Release);
+    }
+}
+
+#[tauri::command]
+async fn save_builder_prompt(
+    app: tauri::AppHandle,
+    file_name: String,
+    content: String,
+) -> Result<Option<String>, String> {
+    if SAVE_PROMPT_BUSY.swap(true, Ordering::AcqRel) {
+        return Err("A save dialog is already open.".into());
+    }
+    let _guard = SavePromptGuard;
+    let dialog = app
+        .dialog()
+        .file()
+        .set_title("Save Arc build prompt")
+        .set_file_name(&file_name)
+        .add_filter("Markdown", &["md"]);
+    let selected = if let Some(window) = app.get_webview_window("main") {
+        dialog.set_parent(&window).blocking_save_file()
+    } else {
+        dialog.blocking_save_file()
+    };
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let path = selected.into_path().map_err(|error| error.to_string())?;
+    std::fs::write(&path, content).map_err(|error| format!("Could not save prompt: {error}"))?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
@@ -932,10 +983,28 @@ fn plugin_process_exec(
     env: Option<HashMap<String, String>>,
     timeout_ms: Option<u64>,
 ) -> Result<ProcessExecResult, String> {
+    const MAX_EXEC_OUTPUT: usize = 4 * 1024 * 1024;
+
+    fn read_capped<R: Read>(mut reader: R, cap: usize) -> Vec<u8> {
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(length) => {
+                    let room = cap.saturating_sub(output.len());
+                    if room > 0 {
+                        output.extend_from_slice(&buffer[..length.min(room)]);
+                    }
+                }
+            }
+        }
+        output
+    }
+
     if executable.trim().is_empty() {
         return Err("An executable is required.".to_string());
     }
-    let _ = timeout_ms;
     let mut command = external_command(&executable);
     command
         .args(&args)
@@ -957,23 +1026,56 @@ fn plugin_process_exec(
         let _ = child.wait();
         return Err("Application is shutting down.".to_string());
     }
-    let output = match child.wait_with_output() {
-        Ok(output) => output,
-        Err(error) => {
-            if let Some(managed) = managed {
-                processes.unregister(managed);
+    let stdout_reader = child
+        .stdout
+        .take()
+        .map(|stdout| thread::spawn(move || read_capped(stdout, MAX_EXEC_OUTPUT)));
+    let stderr_reader = child
+        .stderr
+        .take()
+        .map(|stderr| thread::spawn(move || read_capped(stderr, MAX_EXEC_OUTPUT)));
+    let deadline = timeout_ms
+        .filter(|millis| *millis > 0)
+        .map(|millis| Instant::now() + Duration::from_millis(millis));
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(error) => {
+                if let Some(managed) = managed {
+                    processes.stop(managed, Duration::from_millis(200));
+                }
+                let _ = child.wait();
+                return Err(format!("Could not run {executable}: {error}"));
             }
-            return Err(format!("Could not run {executable}: {error}"));
         }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            timed_out = true;
+            if let Some(managed) = managed {
+                processes.stop(managed, Duration::from_millis(200));
+            }
+            let _ = child.kill();
+            break child.wait().ok();
+        }
+        thread::sleep(Duration::from_millis(20));
     };
-    if let Some(managed) = managed {
-        processes.unregister(managed);
+    if !timed_out {
+        if let Some(managed) = managed {
+            processes.unregister(managed);
+        }
     }
+    let stdout = stdout_reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
     Ok(ProcessExecResult {
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        code: output.status.code(),
-        signal: process_exit_signal(&output.status),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        code: status.as_ref().and_then(|status| status.code()),
+        signal: status.as_ref().and_then(process_exit_signal),
     })
 }
 
@@ -1166,6 +1268,7 @@ fn plugin_socket_close(state: State<'_, PluginSocketState>, id: String) -> Resul
 fn read_http_request(
     stream: &mut TcpStream,
 ) -> Result<(String, String, HashMap<String, String>, Vec<u8>), String> {
+    const MAX_HTTP_BODY: usize = 16 * 1024 * 1024;
     stream
         .set_read_timeout(Some(Duration::from_secs(15)))
         .map_err(|error| error.to_string())?;
@@ -1203,6 +1306,17 @@ fn read_http_request(
         .get("content-length")
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
+    if content_length > MAX_HTTP_BODY {
+        let _ = write_http_response(
+            stream,
+            HttpReply {
+                status: 413,
+                headers: HashMap::from([("content-type".to_string(), "text/plain".to_string())]),
+                body: b"Request body is too large.".to_vec(),
+            },
+        );
+        return Err("Request body is too large.".to_string());
+    }
     let mut body = buffer[header_end..].to_vec();
     while body.len() < content_length {
         let length = stream.read(&mut chunk).map_err(|error| error.to_string())?;
@@ -1215,12 +1329,39 @@ fn read_http_request(
     Ok((method, url, headers, body))
 }
 
+fn http_reason(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        413 => "Payload Too Large",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "OK",
+    }
+}
+
 fn write_http_response(stream: &mut TcpStream, reply: HttpReply) -> Result<(), String> {
     let mut headers = reply.headers;
     headers
         .entry("content-length".to_string())
         .or_insert_with(|| reply.body.len().to_string());
-    let mut response = format!("HTTP/1.1 {} OK\r\n", reply.status);
+    let mut response = format!(
+        "HTTP/1.1 {} {}\r\n",
+        reply.status,
+        http_reason(reply.status)
+    );
     for (key, value) in &headers {
         response.push_str(&format!("{key}: {value}\r\n"));
     }
@@ -1546,20 +1687,82 @@ fn set_native_background_blur(window: tauri::WebviewWindow, enabled: bool) -> Re
     }
 }
 
+#[cfg(target_os = "linux")]
+const APPIMAGE_ENV_REMOVE: &[&str] = &[
+    "APPDIR",
+    "APPIMAGE",
+    "APPIMAGE_EXTRACT_AND_RUN",
+    "APPIMAGE_GTK_THEME",
+    "ARGV0",
+    "OWD",
+    "GTK_THEME",
+];
+
+#[cfg(target_os = "linux")]
+const APPIMAGE_PATH_LISTS: &[&str] = &[
+    "PATH",
+    "LD_LIBRARY_PATH",
+    "XDG_DATA_DIRS",
+    "PERLLIB",
+    "PYTHONPATH",
+    "QT_PLUGIN_PATH",
+    "GI_TYPELIB_PATH",
+    "GST_PLUGIN_SYSTEM_PATH",
+    "GST_PLUGIN_SYSTEM_PATH_1_0",
+];
+
+/// Remove AppImage-only paths from env vars so child processes use the host system.
+#[cfg(target_os = "linux")]
+fn appimage_env_edits(
+    appdir: &Path,
+    vars: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> {
+    let appdir_text = appdir.to_string_lossy();
+    let mut edits = Vec::new();
+    for (key, value) in vars {
+        let Some(name) = key.to_str() else { continue };
+        if APPIMAGE_ENV_REMOVE.contains(&name) {
+            edits.push((key, None));
+            continue;
+        }
+        if !value.to_string_lossy().contains(&*appdir_text) {
+            continue;
+        }
+        if APPIMAGE_PATH_LISTS.contains(&name) {
+            let kept: Vec<PathBuf> = env::split_paths(&value)
+                .filter(|path| !path.starts_with(appdir))
+                .collect();
+            if kept.is_empty() {
+                edits.push((key, None));
+            } else if let Ok(joined) = env::join_paths(kept) {
+                edits.push((key, Some(joined)));
+            }
+        } else {
+            edits.push((key, None));
+        }
+    }
+    edits
+}
+
+#[cfg(target_os = "linux")]
+fn appimage_env() -> Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> {
+    match env::var_os("APPDIR") {
+        Some(appdir) => appimage_env_edits(Path::new(&appdir), env::vars_os()),
+        None => Vec::new(),
+    }
+}
+
 fn external_command(program: &str) -> Command {
     let mut command = Command::new(program);
     process::prepare_command(&mut command);
     #[cfg(target_os = "linux")]
-    if let (Some(appdir), Some(library_path)) =
-        (env::var_os("APPDIR"), env::var_os("LD_LIBRARY_PATH"))
-    {
-        let appdir = PathBuf::from(appdir);
-        let host_paths = env::split_paths(&library_path).filter(|path| !path.starts_with(&appdir));
-        if let Ok(host_paths) = env::join_paths(host_paths) {
-            if host_paths.is_empty() {
-                command.env_remove("LD_LIBRARY_PATH");
-            } else {
-                command.env("LD_LIBRARY_PATH", host_paths);
+    for (key, value) in appimage_env() {
+        match value {
+            Some(value) => {
+                command.env(key, value);
+            }
+            None => {
+                command.env_remove(key);
             }
         }
     }
@@ -1919,6 +2122,43 @@ fn github_stage(root: String, path: String, stage: bool) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
+fn github_stage_all(root: String) -> Result<(), String> {
+    let root = resolve_git_root(Path::new(&root))?;
+    let output = git_command()
+        .args(["add", "-A"])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("Could not run Git: {error}"))?;
+    require_success(output)?;
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn github_unstage_all(root: String) -> Result<(), String> {
+    let root = resolve_git_root(Path::new(&root))?;
+    let output = git_command()
+        .arg("reset")
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("Could not run Git: {error}"))?;
+    require_success(output)?;
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn github_auth_status(root: String) -> Result<bool, String> {
+    let root = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|error| format!("Could not access workspace: {error}"))?;
+    Ok(gh_command()
+        .args(["auth", "status"])
+        .current_dir(root)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false))
+}
+
+#[tauri::command(async)]
 fn github_commit(root: String, message: String, description: Option<String>) -> Result<(), String> {
     let root = resolve_git_root(Path::new(&root))?;
     let message = message.trim();
@@ -2124,6 +2364,59 @@ fn plugin_local_server_start(
     root: String,
     entry: String,
 ) -> Result<LocalServerInfo, String> {
+    start_local_server(&app, &state, &plugin_id, root, entry)
+}
+
+#[tauri::command(async)]
+fn plugin_local_server_stop(
+    state: State<'_, LocalHttpServerState>,
+    plugin_id: String,
+) -> Result<bool, String> {
+    stop_local_server(&state, &plugin_id)
+}
+
+#[tauri::command(async)]
+fn preview_server_start(
+    app: tauri::AppHandle,
+    state: State<'_, LocalHttpServerState>,
+    root: String,
+    entry: String,
+) -> Result<LocalServerInfo, String> {
+    start_local_server(&app, &state, "arc-preview", root, entry)
+}
+
+#[tauri::command(async)]
+fn preview_server_stop(state: State<'_, LocalHttpServerState>) -> Result<bool, String> {
+    stop_local_server(&state, "arc-preview")
+}
+
+#[tauri::command(async)]
+async fn preview_frame_check(url: String) -> Result<bool, String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("Only http:// and https:// URLs can be previewed.".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || check_frame_headers(&url))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("Only http:// and https:// URLs can be opened.".to_string());
+    }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+fn start_local_server(
+    app: &tauri::AppHandle,
+    state: &State<'_, LocalHttpServerState>,
+    key: &str,
+    root: String,
+    entry: String,
+) -> Result<LocalServerInfo, String> {
     let root = PathBuf::from(root)
         .canonicalize()
         .map_err(|error| format!("Could not access local server folder: {error}"))?;
@@ -2131,7 +2424,7 @@ fn plugin_local_server_start(
         return Err("Local server needs a folder.".to_string());
     }
     if !app.fs_scope().is_allowed(&root) {
-        return Err("Plugin local server folder is outside approved workspace access.".to_string());
+        return Err("Local server folder is outside approved workspace access.".to_string());
     }
     if entry.contains('\\')
         || Path::new(&entry)
@@ -2143,10 +2436,10 @@ fn plugin_local_server_start(
 
     let previous = {
         let mut active = state.0.lock().map_err(|error| error.to_string())?;
-        if let Some(server) = active.get(&plugin_id).filter(|server| server.root == root) {
+        if let Some(server) = active.get(key).filter(|server| server.root == root) {
             return Ok(local_server_info(&server.root, server.port, &entry));
         }
-        active.remove(&plugin_id)
+        active.remove(key)
     };
     drop(previous);
 
@@ -2156,23 +2449,78 @@ fn plugin_local_server_start(
         .0
         .lock()
         .map_err(|error| error.to_string())?
-        .insert(plugin_id, server);
+        .insert(key.to_string(), server);
     Ok(info)
 }
 
-#[tauri::command(async)]
-fn plugin_local_server_stop(
-    state: State<'_, LocalHttpServerState>,
-    plugin_id: String,
-) -> Result<bool, String> {
+fn stop_local_server(state: &State<'_, LocalHttpServerState>, key: &str) -> Result<bool, String> {
     let server = state
         .0
         .lock()
         .map_err(|error| error.to_string())?
-        .remove(&plugin_id);
+        .remove(key);
     let was_running = server.is_some();
     drop(server);
     Ok(was_running)
+}
+
+fn check_frame_headers(url: &str) -> Result<bool, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(5))
+        .redirects(3)
+        .user_agent("Arc Preview")
+        .build();
+    match agent.get(url).call() {
+        Ok(response) => Ok(response_allows_framing(&response)),
+        Err(ureq::Error::Status(_, response)) => Ok(response_allows_framing(&response)),
+        Err(_) => Ok(true),
+    }
+}
+
+fn response_allows_framing(response: &ureq::Response) -> bool {
+    let x_frame_options = response.header("x-frame-options");
+    let csp = response.all("content-security-policy").join(", ");
+    framing_allowed(
+        x_frame_options,
+        if csp.is_empty() { None } else { Some(&csp) },
+    )
+}
+
+fn framing_allowed(x_frame_options: Option<&str>, csp: Option<&str>) -> bool {
+    if x_frame_options.is_some_and(|value| {
+        value.split(',').any(|option| {
+            matches!(
+                option.trim().to_ascii_lowercase().as_str(),
+                "deny" | "sameorigin"
+            )
+        })
+    }) {
+        return false;
+    }
+    let Some(csp) = csp else {
+        return true;
+    };
+    for policy in csp.split(',') {
+        for directive in policy.split(';') {
+            let mut parts = directive.split_whitespace();
+            if !parts
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("frame-ancestors"))
+            {
+                continue;
+            }
+            let sources = parts.collect::<Vec<_>>();
+            let allowed = sources.iter().any(|source| {
+                *source == "*"
+                    || source.eq_ignore_ascii_case("tauri://localhost")
+                    || source.eq_ignore_ascii_case("http://tauri.localhost")
+            });
+            if !allowed {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn local_server_info(root: &Path, port: u16, entry: &str) -> LocalServerInfo {
@@ -2289,25 +2637,18 @@ fn run_local_server_watcher(
     while !stop.load(Ordering::Relaxed) {
         match receive.recv_timeout(Duration::from_millis(500)) {
             Ok(Ok(events)) => {
-                generation.fetch_add(1, Ordering::Relaxed);
+                let mut changed = false;
                 for debounced in events {
-                    let created = match &debounced.event.kind {
-                        EventKind::Create(_) => debounced.event.paths.last().cloned(),
-                        EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
-                            debounced.event.paths.last().cloned()
-                        }
-                        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
-                            debounced.event.paths.get(1).cloned()
-                        }
-                        _ => None,
-                    };
-                    let Some(path) = created else { continue };
-                    let Ok(is_dir) = fs::metadata(&path).map(|data| data.is_dir()) else {
+                    let Some(mapped) = map_fs_event(&filter, &root, &debounced.event) else {
                         continue;
                     };
-                    if !is_dir || is_watch_ignored(&filter, &root, &path, true) {
+                    changed = true;
+                    if mapped.kind != "created" || mapped.is_dir != Some(true) {
                         continue;
                     }
+                    let Some(path) = mapped.paths.last().map(PathBuf::from) else {
+                        continue;
+                    };
                     watch_directory_tree(
                         &mut debouncer,
                         &mut watched,
@@ -2316,6 +2657,9 @@ fn run_local_server_watcher(
                         &path,
                         &mut failures,
                     );
+                }
+                if changed {
+                    generation.fetch_add(1, Ordering::Relaxed);
                 }
             }
             Ok(Err(_)) => {}
@@ -2328,7 +2672,7 @@ fn run_local_server_watcher(
 fn run_local_server_poll(stop: Arc<AtomicBool>, generation: Arc<AtomicU64>, root: PathBuf) {
     let mut previous = generation.load(Ordering::Relaxed);
     while !stop.load(Ordering::Relaxed) {
-        thread::sleep(Duration::from_millis(700));
+        thread::sleep(Duration::from_millis(2000));
         if stop.load(Ordering::Relaxed) {
             break;
         }
@@ -3354,6 +3698,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             workspace_pick,
+            save_builder_prompt,
             workspace_access_allowed,
             workspace_grant_access,
             workspace_allow_hidden_paths,
@@ -3385,6 +3730,9 @@ pub fn run() {
             github_status,
             github_configure_identity,
             github_stage,
+            github_stage_all,
+            github_unstage_all,
+            github_auth_status,
             github_commit,
             github_fetch,
             github_pull,
@@ -3394,9 +3742,51 @@ pub fn run() {
             github_create_repo,
             plugin_local_server_start,
             plugin_local_server_stop,
+            preview_server_start,
+            preview_server_stop,
+            preview_frame_check,
+            open_external_url,
             updater_check,
             updater_install
         ])
+        .setup(|app| {
+            #[cfg(target_os = "linux")]
+            {
+                use gtk::prelude::*;
+                use std::sync::{Arc, Mutex};
+
+                let handle = app.handle().clone();
+                if let Some(window) = app.get_webview_window("main") {
+                    window.with_webview(move |webview| {
+                        let webview = webview.inner();
+                        let previous_scale = Arc::new(Mutex::new(1.0_f64));
+                        webview.connect_event(move |_, event| {
+                            if let Some(pinch) = event.downcast_ref::<gdk::EventTouchpadPinch>() {
+                                let mut previous = previous_scale.lock().unwrap();
+                                let scale = pinch.scale();
+                                let factor = if (scale - 1.0).abs() < f64::EPSILON {
+                                    1.0
+                                } else {
+                                    scale / *previous
+                                };
+                                *previous = scale;
+                                let _ = handle.emit("pinch-zoom", factor);
+                                return gtk::glib::Propagation::Stop;
+                            }
+                            if let Some(scroll) = event.downcast_ref::<gdk::EventScroll>() {
+                                if scroll.state().contains(gdk::ModifierType::CONTROL_MASK) {
+                                    let (_, dy) = scroll.delta();
+                                    let _ = handle.emit("pinch-zoom", (-dy * 0.08).exp());
+                                    return gtk::glib::Propagation::Stop;
+                                }
+                            }
+                            gtk::glib::Propagation::Proceed
+                        });
+                    })?;
+                }
+            }
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while running Arc");
     app.run(|app_handle, event| {
@@ -3424,6 +3814,55 @@ mod tests {
         response
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn strips_appimage_environment_for_child_processes() {
+        use std::ffi::OsString;
+
+        let appdir = Path::new("/tmp/.mount_Arc123");
+        let vars = vec![
+            (
+                OsString::from("APPDIR"),
+                OsString::from("/tmp/.mount_Arc123"),
+            ),
+            (
+                OsString::from("APPIMAGE"),
+                OsString::from("/home/user/Arc.AppImage"),
+            ),
+            (
+                OsString::from("PATH"),
+                OsString::from("/tmp/.mount_Arc123/usr/bin:/usr/bin:/tmp/.mount_Arc123/bin"),
+            ),
+            (
+                OsString::from("PYTHONHOME"),
+                OsString::from("/tmp/.mount_Arc123/usr/"),
+            ),
+            (
+                OsString::from("LD_LIBRARY_PATH"),
+                OsString::from("/tmp/.mount_Arc123/usr/lib"),
+            ),
+            (OsString::from("HOME"), OsString::from("/home/user")),
+        ];
+
+        let edits: std::collections::HashMap<_, _> =
+            appimage_env_edits(appdir, vars).into_iter().collect();
+        assert!(matches!(edits.get(&OsString::from("APPDIR")), Some(None)));
+        assert!(matches!(edits.get(&OsString::from("APPIMAGE")), Some(None)));
+        assert!(matches!(
+            edits.get(&OsString::from("PYTHONHOME")),
+            Some(None)
+        ));
+        assert!(matches!(
+            edits.get(&OsString::from("LD_LIBRARY_PATH")),
+            Some(None)
+        ));
+        assert_eq!(
+            edits.get(&OsString::from("PATH")),
+            Some(&Some(OsString::from("/usr/bin")))
+        );
+        assert!(!edits.contains_key(&OsString::from("HOME")));
+    }
+
     #[test]
     fn bounds_concurrent_server_connections() {
         let active = Arc::new(AtomicUsize::new(0));
@@ -3433,6 +3872,39 @@ mod tests {
         assert!(acquire_connection_slot(&active).is_none());
         drop(slots);
         assert!(acquire_connection_slot(&active).is_some());
+    }
+
+    #[test]
+    fn maps_http_reason_phrases() {
+        assert_eq!(http_reason(200), "OK");
+        assert_eq!(http_reason(404), "Not Found");
+        assert_eq!(http_reason(413), "Payload Too Large");
+        assert_eq!(http_reason(500), "Internal Server Error");
+    }
+
+    #[test]
+    fn rejects_oversize_http_bodies_with_413() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let client = thread::spawn(move || {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(
+                stream,
+                "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n",
+                17 * 1024 * 1024
+            )
+            .unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            response
+        });
+        let (mut server, _) = listener.accept().unwrap();
+        assert!(read_http_request(&mut server).is_err());
+        drop(server);
+        assert!(client
+            .join()
+            .unwrap()
+            .starts_with("HTTP/1.1 413 Payload Too Large"));
     }
 
     #[test]
@@ -3496,6 +3968,20 @@ mod tests {
     }
 
     #[test]
+    fn frame_check_blocks_framing_headers() {
+        assert!(framing_allowed(None, None));
+        assert!(!framing_allowed(Some("DENY"), None));
+        assert!(!framing_allowed(Some("SAMEORIGIN"), None));
+        assert!(!framing_allowed(None, Some("frame-ancestors 'self'")));
+        assert!(framing_allowed(None, Some("frame-ancestors *")));
+        assert!(framing_allowed(
+            None,
+            Some("frame-ancestors tauri://localhost")
+        ));
+        assert!(framing_allowed(None, Some("default-src 'self'")));
+    }
+
+    #[test]
     fn local_server_encodes_file_urls() {
         assert_eq!(
             encode_url_path("folder/a file.html"),
@@ -3510,7 +3996,7 @@ mod tests {
     #[test]
     fn watcher_maps_events_and_filters_ignore_paths() {
         use notify_debouncer_full::notify as notify_crate;
-        use notify_debouncer_full::notify::event::{CreateKind, DataChange, RemoveKind};
+        use notify_debouncer_full::notify::event::{CreateKind, RemoveKind};
 
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -23,7 +23,7 @@
 }
 .plugin-header-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
@@ -47,6 +47,7 @@
 .plugin-heading strong {
   font-size: var(--font-lg);
   font-weight: 600;
+  white-space: nowrap;
 }
 .plugin-heading span {
   overflow: hidden;
@@ -199,6 +200,7 @@
   background: var(--panel);
   color: var(--muted);
   cursor: pointer;
+  flex: 0 0 auto;
 }
 .plugin-view-switch span {
   width: 26px;
@@ -220,6 +222,7 @@
   align-items: center;
   gap: var(--space-md);
   flex: 0 0 auto;
+  white-space: nowrap;
 }
 .plugin-card-list {
   display: grid;
@@ -264,6 +267,7 @@
 }
 .plugin-toggle-button {
   flex: 0 0 auto;
+  min-width: 66px;
   height: 24px;
   padding: 0 10px;
   border: 1px solid transparent;
@@ -290,7 +294,7 @@
 }
 @media (max-width: 760px) {
   .plugin-header {
-    align-items: flex-start;
+    align-items: center;
     padding: 8px 10px;
   }
   .plugin-header-actions {

@@ -61,7 +61,7 @@ Install the folder from **Plugins → Install from folder**. `activate(api)` run
 | `api.mcp` | MCP stdio/HTTP client, tools, resources, prompts, and exposure |
 | `api.lifecycle`, `api.timers`, `api.disposables` | Automatic plugin cleanup lifecycle |
 | `api.invoke` | Invoke a Tauri command directly |
-| `api.openUrl`, `api.openTerminal`, `api.notify` | Convenience aliases for common UI actions |
+| `api.openUrl`, `api.openPreview`, `api.openTerminal`, `api.notify` | Convenience aliases for common UI actions |
 
 Workspace file paths use paths relative to current workspace, such as `src/main.js`. `api.workspace` is current workspace path, or an empty string when no workspace is open.
 
@@ -80,6 +80,8 @@ api.app.setTitle("Arc — My Plugin");
 ```
 
 `getState()` returns workspace path, active file, open files and dirty flags, terminal sessions, settings, and active theme.
+
+`api.openPreview(url)` opens the built-in web preview tab for a URL, for example the result of `api.localServer.start(...)`.
 
 ## Workspace files
 

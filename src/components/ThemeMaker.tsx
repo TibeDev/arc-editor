@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from "react";
 import { ArrowLeft, FolderOpen, Plus, Save } from "lucide-react";
 import TitleBar from "./TitleBar";
-import { GLASS_BLUR, themeColorWithOpacity, THEME_COLOR_GROUPS, type AppSettings, type ThemeColors, type ThemeDefinition } from "../lib/settings";
+import { GLASS_BLUR, resolveEditorFont, resolveInterfaceFont, themeColorWithOpacity, THEME_COLOR_GROUPS, type AppSettings, type ThemeColors, type ThemeDefinition } from "../lib/settings";
 import ThemeColorPicker from "./ThemeColorPicker";
 import Select from "./Select";
 import "../styles/controls.css";
@@ -56,10 +56,10 @@ export default function ThemeMaker({
   };
 
   const chrome = initialTheme;
-  return <main className={`theme-maker-page ${settings.editorGlassEnabled ? "editor-glass-enabled" : ""} ${colorPickerOpen ? "color-picker-open" : ""} ${settings.titleBarEnabled ? "" : "titlebar-off"}`} style={{
+  return <main className={`theme-maker-page app-theme-${settings.appTheme} ${settings.editorGlassEnabled ? "editor-glass-enabled" : ""} ${colorPickerOpen ? "color-picker-open" : ""} ${settings.titleBarEnabled ? "" : "titlebar-off"}`} style={{
     background: glassFill(chrome.colors.background, settings.glassAppTransparency),
     color: chrome.colors.text,
-    fontFamily: settings.interfaceFontFamily || undefined,
+    fontFamily: resolveInterfaceFont(settings),
     "--editor-glass-blur": `${GLASS_BLUR}px`,
     "--glass-app-transparency": `${settings.editorGlassEnabled ? settings.glassAppTransparency : 0}%`,
     "--glass-sidebar-transparency": `${settings.editorGlassEnabled ? settings.glassSidebarTransparency : 0}%`,
@@ -79,7 +79,28 @@ export default function ThemeMaker({
     "--settings-text": chrome.colors.text,
     "--settings-raised": chrome.colors.raised,
     "--settings-border": chrome.colors.border,
-    "--settings-accent": chrome.colors.function,
+    "--settings-accent": chrome.colors.accent,
+    "--app-accent": chrome.colors.accent,
+    "--app-accent-text": chrome.colors.accentText,
+    "--app-input": chrome.colors.input,
+    "--app-warning": chrome.colors.warning,
+    "--app-error": chrome.colors.error,
+    "--app-highlight": themeColorWithOpacity(chrome.colors.text, 0.07),
+    "--app-canvas": chrome.colors.background,
+    "--app-surface": chrome.colors.sidebar,
+    "--app-raised": chrome.colors.raised,
+    "--app-border": chrome.colors.border,
+    "--app-text": chrome.colors.text,
+    "--app-secondary": chrome.colors.secondaryText,
+    "--app-muted": chrome.colors.muted,
+    "--app-hover": chrome.colors.hover,
+    "--app-selected": chrome.colors.selected,
+    "--line": chrome.colors.border,
+    "--text": chrome.colors.text,
+    "--secondary-text": chrome.colors.secondaryText,
+    "--muted": chrome.colors.muted,
+    "--hover": chrome.colors.hover,
+    "--selected": chrome.colors.selected,
   } as CSSProperties}>
     {settings.titleBarEnabled && <TitleBar />}
     <div className="theme-maker-body">
@@ -110,7 +131,7 @@ export default function ThemeMaker({
         </section>)}
       </aside>
       <section className="theme-preview-area">
-        <div className="theme-preview-window" style={{ borderColor: theme.colors.border, background: theme.colors.editor, fontFamily: settings.fontFamily }}>
+        <div className="theme-preview-window" style={{ borderColor: theme.colors.border, background: theme.colors.editor, fontFamily: resolveEditorFont(settings) }}>
           <div className="theme-preview-sidebar" style={{ background: theme.colors.sidebar, borderColor: theme.colors.border }}>
             <div className="theme-preview-sidebar-heading" style={{ color: theme.colors.secondaryText }}>EXPLORER</div>
             <div className="theme-preview-tree"><span>⌄</span><span>src</span></div>

@@ -4,11 +4,11 @@ Guide for AI coding agents working on Arc. Read this before exploring the codeba
 
 ## What this project is
 
-**Arc** is a desktop workspace for web development: file browser, code editor (CodeMirror 6), terminal (xterm + PTY), GitHub panel (git/gh integration), and a JavaScript plugin system, in one Tauri window.
+**Arc** is a desktop workspace for web development: file browser, code editor (CodeMirror 6), terminal (rioterm + PTY), GitHub panel (git/gh integration), and a JavaScript plugin system, in one Tauri window.
 
 - Package name: `arc-ide`, version `0.1.2`, identifier `dev.arc.ide`
 - Stack: **Tauri 2** (Rust backend) + **React 19** + **TypeScript** (strict) + **Vite 6** frontend
-- Editor: **CodeMirror 6**. Terminal: **xterm** + **portable-pty**. Formatting: **Prettier 3** embedded in the app
+- Editor: **CodeMirror 6**. Terminal: **rioterm** (WASM) + **portable-pty**. Formatting: **Prettier 3** embedded in the app
 - Primary dev/target platform: **Linux (Omarchy/Arch)**. Release builds also target Windows and macOS via CI
 - No router, no state library, no test framework on the frontend. Backend has Rust unit tests inside `src-tauri/src/lib.rs`
 
@@ -41,7 +41,7 @@ dist/                    Build output (gitignored)
 | `components/GithubPanel.tsx` | GitHub panel UI (calls `github_*` Tauri commands) |
 | `components/PluginPanel.tsx` | Plugin manager UI (install/enable/disable/remove) |
 | `components/ThemeMaker.tsx`, `components/ThemeColorPicker.tsx` | Custom theme editor |
-| `components/TerminalView.tsx` | xterm terminal component (lazy loaded) |
+| `components/TerminalView.tsx` | rioterm terminal component (lazy loaded) |
 | `lib/terminalOutput.ts` | Global `terminal-output` event buffer (2 MB cap/session) so terminals survive tab switches |
 | `main.tsx` | React root |
 | `styles/` | Global styles and shared controls |
@@ -95,6 +95,7 @@ There is **no frontend test runner**; `npm run build` doubles as the typecheck g
 | --- | --- |
 | `README.md` | User-facing overview, shortcuts, install |
 | `PLUGIN_API.md` | Full plugin API reference (keep in sync when changing the plugin API) |
+| `ARC_AGENT_KIT.md` | Agent-facing contract for the Build tab wizard (plugin + theme generation, install handshake). Keep in sync with plugin and theme formats |
 | `FILE_WATCHER.md` | Spec + notes for live file watching (notify-debouncer-full → `fs-changed` events → tree reducer). **Implemented**: `watch_project`/`unwatch_project` in `src-tauri/src/lib.rs`, listener + delta reducer in `src/App.tsx` |
 | `apple-design.md` | Design direction: Apple/Xcode-inspired, layered translucent surfaces, content-first, minimal borders. Follow for UI work |
 
@@ -103,3 +104,17 @@ There is **no frontend test runner**; `npm run build` doubles as the typecheck g
 1. Bump version in all three files (`package.json`, `tauri.conf.json`, `Cargo.toml`) to match.
 2. Merge to `main`; tag must be on `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. `.github/workflows/release.yml` builds Linux (deb/rpm/AppImage), Windows (msi/nsis), macOS (universal dmg) and publishes a GitHub Release with generated notes.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
+Rules:
+- When graphify-out/graph.json exists, run `graphify query "<question>"` before your first grep, search or source-file read for a codebase question, and put this rule in every subagent prompt that explores code. Read raw files only for lines the graph or an earlier read already located. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. When the answer is under a Markdown heading, `graphify section "<heading>"` prints that section's text, so the .md need not be opened. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+- A committed graphify-out/graph.json is rewritten whole on every build, so a large diff to it in a pull request is expected. Do not flag it as churn or suggest skipping the graph rebuild or its hooks.

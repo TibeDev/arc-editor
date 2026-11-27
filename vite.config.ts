@@ -8,6 +8,7 @@ export default defineConfig({
     strictPort: true,
     watch: { ignored: ["**/src-tauri/**"] },
   },
+  optimizeDeps: { exclude: ["rioterm"] },
   build: {
     rollupOptions: {
       output: {

@@ -194,8 +194,8 @@ input:focus-visible {
   min-width: 140px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--panel);
-  border-right: 1px solid var(--line);
 }
 .explorer-heading {
   height: 35px;
@@ -335,7 +335,6 @@ input:focus-visible {
   display: grid;
   place-items: start center;
   padding-top: 8px;
-  border-right: 1px solid var(--line);
   background: var(--panel);
   color: #858b92;
 }
@@ -425,6 +424,74 @@ input:focus-visible {
   flex: 1;
   overflow: hidden;
   padding: 0;
+}
+.image-view {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.image-toolbar {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-raised, #1a1c1f);
+  color: var(--fg-muted, #a2a7ae);
+  font-size: var(--font-sm);
+}
+.image-toolbar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.image-toolbar button:hover {
+  background: var(--hover, rgba(255, 255, 255, 0.08));
+  color: var(--fg, #e1e4e8);
+}
+.image-zoom-level {
+  min-width: 42px;
+  text-align: center;
+}
+.image-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 16px;
+  cursor: grab;
+  touch-action: none;
+}
+.image-stage:active {
+  cursor: grabbing;
+}
+.image-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transform-origin: center center;
+  will-change: transform;
+  user-select: none;
+}
+.image-error {
+  color: #e06c75;
+  font-size: var(--font-sm);
 }
 .cm-editor {
   height: 100%;
@@ -605,6 +672,9 @@ input:focus-visible {
 }
 .icon-svg {
   color: #ffb13b;
+}
+.icon-image {
+  color: #4ec9b0;
 }
 .icon-yaml {
   color: #cb171e;
@@ -1247,6 +1317,8 @@ input:focus-visible {
   display: grid;
   place-items: center;
   background: transparent;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
   cursor: col-resize;
   touch-action: none;
   user-select: none;
@@ -1312,12 +1384,14 @@ input:focus-visible {
 }
 .theme-list {
   display: grid;
-  gap: 3px;
-  max-height: 150px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  max-height: 200px;
   overflow: auto;
 }
 .theme-choice {
-  min-height: 39px;
+  position: relative;
+  min-height: 84px;
   display: flex;
   align-items: center;
   border: 1px solid transparent;
@@ -1330,12 +1404,13 @@ input:focus-visible {
 .theme-choice > button:first-child {
   min-width: 0;
   flex: 1;
-  height: 36px;
+  height: 100%;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding: 0 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 11px;
   background: transparent;
   color: #c6cdd5;
   text-align: left;
@@ -1346,6 +1421,8 @@ input:focus-visible {
 .theme-choice-name {
   display: grid;
   gap: 2px;
+  max-width: 100%;
+  padding-right: 22px;
   font-size: var(--font-sm);
 }
 .theme-choice-name small {
@@ -1357,18 +1434,19 @@ input:focus-visible {
   gap: 3px;
 }
 .theme-swatches i {
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 14px;
   border: 1px solid #ffffff30;
-  border-radius: 50%;
+  border-radius: 4px;
 }
 .theme-remove {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
-  margin-right: 3px;
   border-radius: var(--radius-xs);
   background: transparent;
   color: #828c97;
@@ -1665,11 +1743,16 @@ input:focus-visible {
   height: 100%;
   padding: 8px 10px;
 }
-.terminal-view .xterm {
+.terminal-surface {
+  width: 100%;
   height: 100%;
+  overflow: hidden;
 }
-.terminal-view .xterm-viewport {
-  overflow-y: auto !important;
+/* rioterm DOM spans only paint the font box; fill the cell so transparent backgrounds show no row seams. */
+.terminal-surface span {
+  display: inline-block;
+  height: 100%;
+  vertical-align: top;
 }
 .welcome-tools {
   position: absolute;
@@ -1705,12 +1788,6 @@ input:focus-visible {
   border: 2px solid var(--settings-muted, #808995);
   background: rgba(128, 137, 149, 0.08);
   pointer-events: none;
-}
-.terminal-view.hide-scrollbar .xterm-viewport {
-  scrollbar-width: none !important;
-}
-.terminal-view.hide-scrollbar .xterm-viewport::-webkit-scrollbar {
-  display: none;
 }
 .app-shell.editor-glass-enabled .file-explorer,
 .app-shell.editor-glass-enabled .editor-pane,
@@ -1781,7 +1858,7 @@ input:focus-visible {
 }
 
 .file-explorer-resizer.collapsed span {
-  background: var(--line);
+  background: transparent;
 }
 
 .app-shell.editor-glass-enabled .settings-backdrop .settings-panel {
@@ -1817,8 +1894,6 @@ input,
 textarea,
 [contenteditable="true"],
 .cm-content,
-.xterm,
-.xterm-screen,
 .plugin-view-host,
 .arc-plugin-output,
 .message,
@@ -1832,3 +1907,150 @@ a {
   -webkit-user-drag: none;
 }
 
+
+/* Editor search panel */
+.app-shell .cm-editor .cm-panels {
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  font-family: var(--font-sans, "Inter", "SF Pro Text", system-ui, sans-serif);
+}
+.app-shell .cm-editor .cm-panel.cm-search {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 34px 8px 8px;
+  border: 1px solid var(--app-border, #2a2d31);
+  border-radius: 8px;
+  background: var(--app-raised, #1a1c1f);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  font-size: 11px;
+  color: var(--app-text, #d5d9e0);
+}
+.app-shell .cm-editor .cm-panel.cm-search br {
+  flex-basis: 100%;
+  height: 0;
+}
+.app-shell .cm-editor .cm-panel.cm-search input.cm-textfield {
+  flex: 1 1 180px;
+  min-width: 130px;
+  height: 28px;
+  margin: 0 !important;
+  padding: 0 10px;
+  border: 1px solid var(--app-border, #2a2d31);
+  border-radius: 6px;
+  background: var(--app-input, #111315);
+  color: var(--app-text, #d5d9e0);
+  font: inherit;
+  font-size: 11px;
+  transition: border-color 0.12s ease;
+}
+.app-shell .cm-editor .cm-panel.cm-search input.cm-textfield::placeholder {
+  color: var(--app-muted, #747980);
+}
+.app-shell .cm-editor .cm-panel.cm-search input.cm-textfield:focus {
+  outline: none;
+  border-color: var(--app-accent, #4ea1ff);
+  box-shadow: 0 0 0 1px var(--app-accent, #4ea1ff);
+}
+.app-shell .cm-editor .cm-panel.cm-search button.cm-button {
+  height: 26px;
+  margin: 0 !important;
+  padding: 0 10px;
+  border: 1px solid var(--app-border, #2a2d31);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--app-secondary, #a6abb2);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.app-shell .cm-editor .cm-panel.cm-search button.cm-button:hover {
+  background: var(--app-hover, #202326);
+  color: var(--app-text, #d5d9e0);
+}
+.app-shell .cm-editor .cm-panel.cm-search button.cm-button:active {
+  background: var(--app-selected, #292d32);
+}
+.app-shell .cm-editor .cm-panel.cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 !important;
+  padding: 4px 6px;
+  border-radius: 5px;
+  color: var(--app-muted, #747980);
+  font: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.app-shell .cm-editor .cm-panel.cm-search label:hover {
+  background: var(--app-hover, #202326);
+  color: var(--app-secondary, #a6abb2);
+}
+.app-shell .cm-editor .cm-panel.cm-search input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  margin: 0 !important;
+  accent-color: var(--app-accent, #4ea1ff);
+  cursor: pointer;
+}
+.app-shell .cm-editor .cm-panel.cm-search [name="close"] {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--app-muted, #747980);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.app-shell .cm-editor .cm-panel.cm-search [name="close"]:hover {
+  background: var(--app-hover, #202326);
+  color: var(--app-text, #d5d9e0);
+}
+
+/* App image background */
+.app-shell.has-editor-background {
+  position: relative;
+  isolation: isolate;
+}
+.app-shell.has-editor-background::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--editor-background-image, none);
+  background-position: center;
+  background-size: cover;
+  opacity: var(--editor-background-opacity, 0.45);
+  filter: blur(var(--editor-background-blur, 0px));
+  pointer-events: none;
+}
+.app-shell.has-editor-background .file-explorer,
+.app-shell.has-editor-background .editor-pane,
+.app-shell.has-editor-background .tab-strip,
+.app-shell.has-editor-background .terminal-stack,
+.app-shell.has-editor-background .terminal-host,
+.app-shell.has-editor-background .terminal-view,
+.app-shell.has-editor-background .welcome-screen,
+.app-shell.has-editor-background .editor-root,
+.app-shell.has-editor-background .editor-empty,
+.app-shell.has-editor-background .editor-host,
+.app-shell.has-editor-background .github-panel,
+.app-shell.has-editor-background .github-header {
+  background: transparent;
+}

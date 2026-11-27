@@ -1,0 +1,537 @@
+/* App themes: presentation only. Colors come from the editor color theme. */
+
+/* Modern: Linear-inspired, precision-engineered dark workspace. */
+:is(.app-shell, .theme-maker-page).app-theme-modern {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --font-xs: 10px;
+  --font-sm: 11px;
+  --font-md: 12px;
+  --font-lg: 13px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --titlebar-height: 32px;
+  --tab-strip-height: 36px;
+  letter-spacing: -0.01em;
+}
+
+.app-theme-modern button,
+.app-theme-modern input,
+.app-theme-modern .tree-row,
+.app-theme-modern .editor-tab,
+.app-theme-modern .tool-button,
+.app-theme-modern .theme-choice,
+.app-theme-modern .arc-select-trigger {
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+/* Chrome and navigation */
+.app-theme-modern .titlebar {
+  background: color-mix(in srgb, var(--app-canvas) 86%, transparent);
+  box-shadow: inset 0 -1px 0 var(--app-highlight);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  backdrop-filter: blur(12px) saturate(1.2);
+}
+.app-theme-modern .titlebar-button {
+  border-radius: var(--radius-sm);
+  margin: 3px 1px;
+}
+.app-theme-modern .tool-button,
+.app-theme-modern .settings-launch {
+  border-radius: var(--radius-sm);
+}
+.app-theme-modern .file-explorer {
+  border-right-color: var(--app-highlight);
+  box-shadow: inset -1px 0 0 var(--app-highlight);
+}
+.app-theme-modern .explorer-heading {
+  height: 36px;
+  flex-basis: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.app-theme-modern .tree-scroll {
+  padding: 6px;
+}
+.app-theme-modern .tree-row {
+  width: calc(100% - 12px);
+  height: 28px;
+  margin: 1px 6px;
+  border-radius: var(--radius-sm);
+  letter-spacing: -0.005em;
+}
+.app-theme-modern .tree-row.selected {
+  box-shadow: inset 0 0 0 1px var(--app-highlight);
+}
+.app-theme-modern .search-row {
+  height: 32px;
+  flex-basis: 32px;
+  margin: 6px;
+  border-color: var(--app-highlight);
+  border-radius: var(--radius-md);
+  background: var(--app-input);
+  box-shadow:
+    inset 0 1px 3px rgb(0 0 0 / 0.4),
+    0 1px 0 var(--app-highlight);
+}
+.app-theme-modern .show-file-explorer {
+  border-right-color: var(--app-highlight);
+}
+
+/* Editor tabs */
+.app-theme-modern .tab-strip {
+  gap: 2px;
+  padding: 4px;
+  border-bottom-color: var(--app-highlight);
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--app-highlight) 55%, transparent),
+    transparent
+  );
+}
+.app-theme-modern .editor-tab {
+  height: calc(var(--tab-strip-height) - 8px);
+  align-self: center;
+  min-width: 116px;
+  padding: 0 10px;
+  border-right: 0;
+  border-radius: var(--radius-sm);
+  letter-spacing: -0.005em;
+}
+.app-theme-modern .editor-tab.active {
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--app-highlight) 70%, transparent),
+    transparent 72%
+  );
+  box-shadow:
+    inset 0 0 0 1px var(--app-highlight),
+    0 1px 3px rgb(0 0 0 / 0.4);
+}
+.app-theme-modern .tab-close {
+  border-radius: var(--radius-xs);
+}
+.app-theme-modern .split-divider span,
+.app-theme-modern .file-explorer-resizer span {
+  background: var(--app-highlight);
+}
+
+/* Editor surface */
+.app-theme-modern .editor-pane + .editor-pane {
+  border-left-color: var(--app-highlight);
+}
+.app-theme-modern .editor-footer {
+  height: 28px;
+  flex-basis: 28px;
+  padding: 0 var(--space-md);
+  border-top-color: var(--app-highlight);
+  background-image: linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--app-highlight) 45%, transparent),
+    transparent
+  );
+  box-shadow: inset 0 1px 0 var(--app-highlight);
+}
+.app-theme-modern .welcome-open {
+  border-radius: var(--radius-md);
+  border-color: var(--app-highlight);
+  color: var(--app-secondary);
+  box-shadow:
+    0 1px 0 var(--app-highlight),
+    inset 0 1px 0 var(--app-highlight);
+}
+.app-theme-modern .welcome-shortcuts kbd {
+  border-radius: var(--radius-xs);
+  border-color: var(--app-highlight);
+  background: var(--app-input);
+  font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  box-shadow: inset 0 1px 0 var(--app-highlight);
+}
+.app-theme-modern .terminal-view {
+  padding: 10px 12px;
+}
+.app-theme-modern .cm-scroller,
+.app-theme-modern .cm-tooltip-autocomplete ul {
+  letter-spacing: normal;
+}
+.app-theme-modern .cm-scroller,
+.app-theme-modern .cm-tooltip-autocomplete ul {
+  font-feature-settings: "calt" 0;
+}
+
+/* Context menus and command palette */
+.app-theme-modern .context-menu {
+  width: 200px;
+  padding: 4px;
+  border-color: var(--app-highlight);
+  border-radius: var(--radius-lg);
+  background: var(--app-input);
+  box-shadow:
+    0 14px 36px rgb(0 0 0 / 0.55),
+    0 2px 8px rgb(0 0 0 / 0.4),
+    inset 0 1px 0 var(--app-highlight);
+}
+.app-theme-modern .context-menu button {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-xs);
+  letter-spacing: -0.005em;
+}
+.app-theme-modern .context-menu button:hover {
+  box-shadow: inset 0 1px 0 var(--app-highlight);
+}
+.app-theme-modern .context-menu kbd {
+  font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+}
+.app-theme-modern .menu-divider {
+  margin: 4px 2px;
+  background: var(--app-highlight);
+}
+.app-theme-modern .command-palette-backdrop {
+  background: rgb(0 0 0 / 0.72);
+}
+.app-theme-modern .command-palette-dialog {
+  border-color: var(--app-highlight);
+  border-radius: var(--radius-xl);
+  background: var(--app-input);
+  box-shadow:
+    0 28px 80px rgb(0 0 0 / 0.65),
+    0 4px 16px rgb(0 0 0 / 0.45),
+    inset 0 1px 0 var(--app-highlight);
+}
+.app-theme-modern .command-palette-dialog > input {
+  height: 48px;
+  padding: 0 16px;
+  border-bottom-color: var(--app-highlight);
+  font-family: inherit;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+.app-theme-modern .command-palette-dialog > div {
+  padding: 6px;
+}
+.app-theme-modern .command-palette-dialog > div > button {
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  letter-spacing: -0.005em;
+}
+.app-theme-modern .command-palette-dialog small,
+.app-theme-modern .command-palette-dialog p {
+  font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Settings */
+:is(.app-shell, .theme-maker-page).app-theme-modern .settings-panel {
+  border-color: var(--app-highlight);
+  border-radius: var(--radius-xl);
+  background: var(--app-input);
+  box-shadow:
+    0 28px 90px rgb(0 0 0 / 0.6),
+    0 3px 14px rgb(0 0 0 / 0.45),
+    inset 0 1px 0 var(--app-highlight);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern .settings-header {
+  height: 56px;
+  flex-basis: 56px;
+  padding: 0 16px;
+  border-bottom-color: var(--app-highlight);
+  background: transparent;
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--app-highlight) 70%, transparent),
+    transparent
+  );
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern .settings-header h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern .settings-header span {
+  font-size: 11px;
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern .settings-nav {
+  background: color-mix(in srgb, var(--app-input) 55%, transparent);
+  border-right-color: var(--app-highlight);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern .settings-nav-button {
+  min-height: 32px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern .settings-subnav-button {
+  min-height: 28px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern .settings-search {
+  height: 32px;
+  border-color: var(--app-highlight);
+  border-radius: var(--radius-md);
+  background: var(--app-input);
+  box-shadow:
+    inset 0 1px 3px rgb(0 0 0 / 0.4),
+    0 1px 0 var(--app-highlight);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .settings-scroll {
+  padding: 16px 28px 24px;
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern .settings-section {
+  padding: 20px 0 8px;
+  border-bottom-color: var(--app-highlight);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .settings-section
+  h3 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .setting-toggle {
+  min-height: 52px;
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .setting-toggle
+  strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .settings-action,
+:is(.app-shell, .theme-maker-page).app-theme-modern .settings-reset {
+  height: 32px;
+  border-color: var(--app-highlight);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 1px 0 var(--app-highlight),
+    inset 0 1px 0 var(--app-highlight);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .theme-search {
+  height: 32px;
+  border-color: var(--app-highlight);
+  border-radius: var(--radius-md);
+  background: var(--app-input);
+  box-shadow:
+    inset 0 1px 3px rgb(0 0 0 / 0.4),
+    0 1px 0 var(--app-highlight);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .theme-choice {
+  border-radius: var(--radius-md);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .setting-field
+  .arc-select-trigger {
+  height: 32px;
+  border-color: var(--app-highlight);
+  border-radius: var(--radius-md);
+  background: var(--app-input);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .setting-field
+  input[type="text"],
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .setting-field
+  input[type="number"],
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .font-family-input {
+  height: 32px;
+  border-color: var(--app-highlight);
+  border-radius: var(--radius-md);
+  background: var(--app-input);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .setting-field
+  input[type="range"] {
+  border-radius: 999px;
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-panel
+  .setting-toggle
+  input[type="checkbox"] {
+  border-radius: 999px;
+  background: var(--app-input);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-panel
+  .setting-toggle
+  input[type="checkbox"]::after {
+  border-radius: 50%;
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-panel
+  .setting-toggle
+  input[type="checkbox"]:checked {
+  border-color: var(--app-accent);
+  background: var(--app-accent);
+}
+
+/* Controls */
+.app-theme-modern .action-button {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  background: var(--app-accent);
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--app-accent-text) 14%, transparent),
+    transparent 65%
+  );
+  color: var(--app-accent-text);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.45),
+    inset 0 1px 0 color-mix(in srgb, var(--app-accent-text) 22%, transparent);
+}
+.app-theme-modern .action-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-accent) 86%, var(--app-text));
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--app-accent-text) 18%, transparent),
+    transparent 65%
+  );
+}
+.app-theme-modern .action-button--secondary {
+  border: 1px solid var(--app-highlight);
+  background: var(--app-input);
+  background-image: none;
+  color: var(--app-text);
+  box-shadow:
+    0 1px 0 var(--app-highlight),
+    inset 0 1px 0 var(--app-highlight);
+}
+.app-theme-modern .action-button--secondary:hover:not(:disabled) {
+  background: var(--app-selected);
+  color: var(--app-text);
+}
+.app-theme-modern .action-button--compact {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  flex: 0 0 30px;
+  padding: 0;
+}
+.app-theme-modern .action-button--compact svg {
+  display: block;
+  flex: 0 0 auto;
+}
+.app-theme-modern .icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+}
+.app-theme-modern .icon-button:hover:not(:disabled) {
+  border-color: var(--app-highlight);
+  background: var(--app-selected);
+  color: var(--app-text);
+}
+.app-theme-modern .arc-select-menu {
+  border-radius: var(--radius-lg);
+}
+.app-theme-modern .arc-select-option {
+  min-height: 28px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+}
+
+/* Depth */
+.app-theme-modern .tool-button:hover,
+.app-theme-modern .editor-tab:hover,
+.app-theme-modern .theme-choice:hover {
+  box-shadow: inset 0 1px 0 var(--app-highlight);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .theme-choice {
+  border: 1px solid var(--app-highlight);
+  background-color: var(--app-raised);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .theme-choice:hover {
+  border-color: color-mix(in srgb, var(--app-text) 16%, transparent);
+  background-color: var(--app-hover);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .theme-choice.active {
+  border-color: color-mix(in srgb, var(--app-accent) 55%, transparent);
+  background-color: var(--app-selected);
+}
+
+/* Scrollbars */
+.app-theme-modern ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.app-theme-modern ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app-theme-modern ::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--app-muted) 45%, transparent);
+}
+.app-theme-modern ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--app-muted) 65%, transparent);
+}
+
+/* Focus */
+.app-theme-modern button:focus-visible,
+.app-theme-modern input:focus-visible {
+  outline: 1px solid var(--app-accent);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 22%, transparent);
+}
+:is(.app-shell, .theme-maker-page).app-theme-modern
+  .settings-main
+  .setting-field
+  .arc-select-trigger:focus-visible {
+  outline: none;
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 22%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-theme-modern button,
+  .app-theme-modern input,
+  .app-theme-modern .tree-row,
+  .app-theme-modern .editor-tab,
+  .app-theme-modern .tool-button,
+  .app-theme-modern .theme-choice,
+  .app-theme-modern .arc-select-trigger {
+    transition: none;
+  }
+}

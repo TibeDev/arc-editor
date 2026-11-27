@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 
 type TerminalOutput = { id: string; data: string };
-type Subscriber = { callback: (data: string) => void; active: boolean };
+type Subscriber = { callback: (data: string, replay: boolean) => void; active: boolean };
 type BufferedChunk = { id: string; data: string };
 type BufferedOutput = { chunks: BufferedChunk[]; size: number };
 
@@ -58,7 +58,7 @@ function ensureListener() {
       for (const subscriber of subscribers.get(payload.id) ?? []) {
         if (!subscriber.active) continue;
         try {
-          subscriber.callback(payload.data);
+          subscriber.callback(payload.data, false);
         } catch {
           // One terminal view must not stop output for the others.
         }
@@ -71,7 +71,7 @@ function ensureListener() {
   return listener;
 }
 
-export function subscribeTerminalOutput(id: string, callback: (data: string) => void) {
+export function subscribeTerminalOutput(id: string, callback: (data: string, replay: boolean) => void) {
   const subscriber: Subscriber = { callback, active: false };
   const sessionSubscribers = subscribers.get(id) ?? new Set<Subscriber>();
   sessionSubscribers.add(subscriber);
@@ -83,13 +83,13 @@ export function subscribeTerminalOutput(id: string, callback: (data: string) => 
       if (!sessionSubscribers.has(subscriber)) return;
       batch += chunk.data;
       if (batch.length >= replayBatchLimit) {
-        callback(batch);
+        callback(batch, true);
         batch = "";
       }
     }
-    if (batch) callback(batch);
+    if (batch) callback(batch, true);
     if (sessionSubscribers.has(subscriber)) subscriber.active = true;
-  }).catch((error) => callback(`\r\nTerminal output listener failed: ${String(error)}\r\n`));
+  }).catch((error) => callback(`\r\nTerminal output listener failed: ${String(error)}\r\n`, false));
 
   return () => {
     subscriber.active = false;

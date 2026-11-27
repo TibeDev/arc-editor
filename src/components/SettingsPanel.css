@@ -33,6 +33,30 @@
   min-height: 0;
   flex: 1;
   display: flex;
+  position: relative;
+}
+.settings-mobile-bar {
+  display: none;
+}
+.settings-nav-scrim {
+  display: none;
+}
+.settings-nav-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--settings-text, var(--text));
+  font: inherit;
+  font-size: var(--font-lg);
+  cursor: pointer;
+}
+.settings-nav-toggle:hover {
+  background: color-mix(in srgb, var(--settings-raised, #24282e) 70%, transparent);
 }
 .settings-nav {
   width: 232px;
@@ -83,6 +107,7 @@
   align-content: start;
   gap: 2px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .settings-nav-button {
   width: 100%;
@@ -111,7 +136,9 @@
   margin-left: auto;
   flex: 0 0 auto;
   color: var(--settings-muted, #8c939d);
+  transform-origin: center;
   transition: transform 0.15s ease;
+  will-change: transform;
 }
 .settings-nav-button[aria-expanded="true"] .settings-nav-chevron {
   color: var(--settings-accent, #9ab0ca);
@@ -464,15 +491,24 @@
   font-size: var(--font-lg);
 }
 .settings-main .theme-list {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
   max-height: 260px;
 }
 .settings-main .theme-choice {
-  min-height: 44px;
+  min-height: 84px;
   border-radius: 7px;
+  overflow: hidden;
 }
 .settings-main .theme-choice > button:first-child {
-  height: 41px;
-  padding: 0 11px;
+  height: 100%;
+  min-height: 82px;
+  padding: 10px 11px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  border-radius: inherit;
 }
 .settings-main .theme-choice-name {
   font-size: var(--font-md);
@@ -577,7 +613,7 @@
   );
 }
 
-@media (max-width: 720px) {
+@media (max-width: 860px) {
   .settings-backdrop {
     padding: 10px;
   }
@@ -586,50 +622,71 @@
     height: calc(100vh - var(--titlebar-height) - 20px);
     border-radius: 12px;
   }
-  .settings-layout {
-    flex-direction: column;
-  }
-  .settings-nav {
-    width: auto;
-    flex: 0 0 auto;
-    flex-direction: row;
+  .settings-mobile-bar {
+    display: flex;
     align-items: center;
-    gap: var(--space-md);
-    padding: 10px 12px;
-    border-right: 0;
+    flex: 0 0 44px;
+    height: 44px;
+    padding: 0 44px 0 10px;
     border-bottom: 1px solid var(--settings-border, #2b3036);
   }
-  .settings-search {
-    width: 150px;
-    flex: 0 0 150px;
+  .settings-layout {
+    flex-direction: row;
   }
-  .settings-nav-list {
-    display: flex;
-    gap: 3px;
-    overflow-x: auto;
+  .settings-nav-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border: 0;
+    background: #0007;
   }
-  .settings-nav-button {
-    width: auto;
-    min-width: max-content;
-    min-height: 32px;
-    padding: 0 10px;
-    font-size: var(--font-md);
+  .settings-nav {
+    position: absolute;
+    z-index: 3;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(280px, 82%);
+    flex: 0 0 auto;
+    gap: var(--space-md);
+    padding: 14px 12px;
+    border-right: 1px solid var(--settings-border, #2b3036);
+    border-bottom: 0;
+    background: var(--settings-bg, #171a1e);
+    box-shadow: 12px 0 40px #0007;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    visibility: hidden;
+  }
+  .settings-nav.open {
+    transform: translateX(0);
+    visibility: visible;
   }
   .settings-nav-empty {
-    display: none;
+    display: block;
   }
   .settings-subnav {
-    display: none;
+    display: grid;
   }
   .settings-nav .settings-reset {
-    width: 32px;
-    flex: 0 0 32px;
-    justify-content: center;
-    padding: 0;
-    overflow: hidden;
-    font-size: 0;
+    width: auto;
+    flex: 0 0 auto;
+    justify-content: flex-start;
+    padding: 0 11px;
+    overflow: visible;
+    font-size: var(--font-md);
   }
   .settings-main .settings-scroll {
     padding: 16px 18px 24px;
   }
+}
+
+.settings-main .settings-button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-main .settings-button-row .settings-action {
+  margin: 8px 0 12px;
 }
