@@ -353,12 +353,14 @@ export default function SettingsPanel({
             {activeCategory === "typography" && <>
               <section className="settings-section" id="settings-section-typography-interface"><h3>App interface</h3>
                 <FontFamilySetting label="Interface font" value={settings.interfaceFontFamily} options={availableFonts.interface} fallback="sans-serif" themeDefault={appThemeDefinition(settings.appTheme).interfaceFont} onChange={(interfaceFontFamily) => onChange({ interfaceFontFamily })} />
+                <label className="setting-field"><span>App zoom <b>{Math.round(settings.zoomLevel * 100)}%</b></span><input type="range" min="0.5" max="2" step="0.05" value={settings.zoomLevel} onChange={(event) => onChange({ zoomLevel: Number(event.target.value) })} /></label>
                 <div className="setting-note">Custom font names must be installed on your system. App theme default follows the selected app theme.</div>
               </section>
               <section className="settings-section" id="settings-section-typography-editor"><h3>Code editor</h3>
                 <FontFamilySetting label="Editor font" value={settings.fontFamily} options={availableFonts.editor} fallback="monospace" themeDefault={appThemeDefinition(settings.appTheme).editorFont} onChange={(fontFamily) => onChange({ fontFamily })} />
-                <label className="setting-field"><span>Font size <b>{settings.fontSize}px</b></span><input type="range" min="10" max="24" step="1" value={settings.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) })} /></label>
+                <label className="setting-field"><span>Font size <b>{settings.fontSize}px</b></span><input type="range" min="8" max="32" step="1" value={settings.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) })} /></label>
                 <label className="setting-field"><span>Line height <b>{settings.lineHeight.toFixed(1)}</b></span><input type="range" min="1.2" max="2.2" step="0.1" value={settings.lineHeight} onChange={(event) => onChange({ lineHeight: Number(event.target.value) })} /></label>
+                <div className="setting-note"><kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd> zooms the app, or changes editor font size when a code editor is focused.</div>
               </section>
               <section className="settings-section" id="settings-section-typography-terminal"><h3>Terminal</h3>
                 <FontFamilySetting label="Terminal font" value={settings.terminalFontFamily} options={availableFonts.terminal} fallback="monospace" themeDefault={appThemeDefinition(settings.appTheme).terminalFont} onChange={(terminalFontFamily) => onChange({ terminalFontFamily })} />

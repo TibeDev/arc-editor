@@ -84,6 +84,8 @@ import {
   Github,
   Globe,
   FolderPlus,
+  Maximize2,
+  Minimize2,
   PanelLeftClose,
   PanelLeftOpen,
   Puzzle,
@@ -128,6 +130,7 @@ import {
 import {
   APP_SETTINGS_VERSION,
   BUILTIN_THEMES,
+  DEFAULT_SETTINGS,
   DEFAULT_THEME,
   normalizeThemeDefinition,
   resolveEditorFont,
@@ -326,6 +329,27 @@ function pruneLayout(
   if (!first) return second;
   if (!second) return first;
   return { ...layout, first, second };
+}
+
+function removeLayoutGroup(
+  layout: LayoutNode,
+  groupId: GroupId,
+): LayoutNode | null {
+  if (layout.type === 'group')
+    return layout.groupId === groupId ? null : layout;
+  const first = removeLayoutGroup(layout.first, groupId);
+  const second = removeLayoutGroup(layout.second, groupId);
+  if (!first) return second;
+  if (!second) return first;
+  return first === layout.first && second === layout.second
+    ? layout
+    : { ...layout, first, second };
+}
+
+function collectGroupIds(layout: LayoutNode): GroupId[] {
+  return layout.type === 'group'
+    ? [layout.groupId]
+    : [...collectGroupIds(layout.first), ...collectGroupIds(layout.second)];
 }
 
 function resizeLayout(
@@ -835,6 +859,8 @@ function EditorPane({
   onSelectionChange,
   settings,
   theme,
+  floating,
+  onToggleFloat,
 }: {
   group: EditorGroup;
   file?: EditorFile;
@@ -869,6 +895,8 @@ function EditorPane({
   onSelectionChange?: (path: string) => void;
   settings: AppSettings;
   theme: ThemeDefinition;
+  floating?: boolean;
+  onToggleFloat?: () => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -1339,6 +1367,17 @@ function EditorPane({
           ),
         )}
         <div className="tab-spacer" />
+        <button
+          className="pane-float-button"
+          title={floating ? 'Dock panel' : 'Float panel'}
+          aria-label={floating ? 'Dock panel' : 'Float panel'}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleFloat?.();
+          }}
+        >
+          {floating ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+        </button>
       </div>
       {file && diskConflict && (
         <div className="disk-conflict">
@@ -1589,6 +1628,24 @@ function App() {
     groupId: 'group-1',
   });
   const [activeGroupId, setActiveGroupId] = useState<GroupId>('group-1');
+  const [floatingGroupId, setFloatingGroupId] = useState<GroupId | null>(null);
+  const [floatingBounds, setFloatingBounds] = useState(() => {
+    const width = Math.min(760, Math.max(360, window.innerWidth - 96));
+    const height = Math.min(560, Math.max(280, window.innerHeight - 120));
+    return {
+      x: Math.max(24, Math.round((window.innerWidth - width) / 2)),
+      y: Math.max(24, Math.round((window.innerHeight - height) / 2)),
+      width,
+      height,
+    };
+  });
+  const floatingDrag = useRef<{
+    mode: 'move' | 'resize';
+    pointerId: number;
+    startX: number;
+    startY: number;
+    bounds: { x: number; y: number; width: number; height: number };
+  } | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedDirectory, setSelectedDirectory] = useState('');
   const [selectedPath, setSelectedPath] = useState('');
@@ -2010,6 +2067,56 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const handleMove = (event: PointerEvent) => {
+      const drag = floatingDrag.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      if (drag.mode === 'move') {
+        setFloatingBounds({
+          ...drag.bounds,
+          x: Math.max(
+            0,
+            Math.min(window.innerWidth - 80, drag.bounds.x + dx),
+          ),
+          y: Math.max(
+            0,
+            Math.min(window.innerHeight - 40, drag.bounds.y + dy),
+          ),
+        });
+      } else {
+        setFloatingBounds({
+          ...drag.bounds,
+          width: Math.max(
+            280,
+            Math.min(window.innerWidth - drag.bounds.x, drag.bounds.width + dx),
+          ),
+          height: Math.max(
+            180,
+            Math.min(
+              window.innerHeight - drag.bounds.y,
+              drag.bounds.height + dy,
+            ),
+          ),
+        });
+      }
+    };
+    const finish = (event: PointerEvent) => {
+      if (floatingDrag.current?.pointerId === event.pointerId)
+        floatingDrag.current = null;
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+    };
+  }, []);
+
   const persistTheme = async (theme: ThemeDefinition, custom: boolean) => {
     const saved = { ...theme, name: theme.name.trim() };
     try {
@@ -2175,6 +2282,43 @@ function App() {
     setActiveGroupId(newGroupId);
     return newGroupId;
   };
+
+  const toggleFloatingGroup = (groupId: GroupId) => {
+    if (floatingGroupId === groupId) {
+      setFloatingGroupId(null);
+      setLayout((current) =>
+        collectGroupIds(current).includes(groupId)
+          ? current
+          : (() => {
+              const targetId = collectGroupIds(current).find(
+                (id) => id !== groupId,
+              );
+              return targetId
+                ? insertSplit(
+                    current,
+                    targetId,
+                    groupId,
+                    { direction: 'vertical', after: true },
+                    `split-${++splitCounter.current}`,
+                  )
+                : current;
+            })(),
+      );
+      setActiveGroupId(groupId);
+      return;
+    }
+    const nextActive =
+      collectGroupIds(layout).find((id) => id !== groupId) ??
+      groups.find((group) => group.id !== groupId)?.id;
+    setFloatingGroupId(groupId);
+    setLayout((current) => removeLayoutGroup(current, groupId) ?? current);
+    if (activeGroupId === groupId && nextActive) setActiveGroupId(nextActive);
+  };
+
+  useEffect(() => {
+    if (floatingGroupId && !groups.some((group) => group.id === floatingGroupId))
+      setFloatingGroupId(null);
+  }, [floatingGroupId, groups]);
 
   // ---- Live file tree updates (backend watcher) ----
 
@@ -3091,6 +3235,7 @@ function App() {
       setGroups([{ id: 'group-1', activePath: '', tabs: [] }]);
       setLayout({ type: 'group', groupId: 'group-1' });
       setActiveGroupId('group-1');
+      setFloatingGroupId(null);
       groupCounter.current = 1;
       splitCounter.current = 0;
       setExpanded(new Set());
@@ -3983,6 +4128,39 @@ function App() {
   const handleKey = (event: KeyboardEvent) => {
     const key = event.key.toLowerCase();
     const target = event.target as HTMLElement;
+    if ((event.ctrlKey || event.metaKey) && key === 'tab') {
+      event.preventDefault();
+      const inLayout = collectGroupIds(layout);
+      const ordered = [
+        ...inLayout,
+        ...groups
+          .map((group) => group.id)
+          .filter((id) => !inLayout.includes(id)),
+      ];
+      const step = event.shiftKey ? -1 : 1;
+      if (ordered.length > 1) {
+        const current = Math.max(0, ordered.indexOf(activeGroupId));
+        const nextId =
+          ordered[(current + step + ordered.length) % ordered.length];
+        setActiveGroupId(nextId);
+        const nextGroup = groups.find((group) => group.id === nextId);
+        const view = nextGroup?.activePath
+          ? editorViews.current.get(nextGroup.activePath)?.get(nextId)
+          : undefined;
+        requestAnimationFrame(() => view?.focus());
+      } else {
+        const group = groups.find((entry) => entry.id === activeGroupId);
+        if (group && group.tabs.length > 1) {
+          const current = Math.max(0, group.tabs.indexOf(group.activePath));
+          const nextPath =
+            group.tabs[(current + step + group.tabs.length) % group.tabs.length];
+          setActiveTab(group.id, nextPath);
+          const view = editorViews.current.get(nextPath)?.get(group.id);
+          requestAnimationFrame(() => view?.focus());
+        }
+      }
+      return;
+    }
     if (
       (event.key === 'F2' || event.key === 'Delete') &&
       target.matches("input, textarea, [contenteditable='true']")
@@ -4132,29 +4310,44 @@ function App() {
       }
       return;
     }
+    const inCodeEditor = Boolean(target.closest('.cm-editor'));
     if (key === '=' || key === '+' || event.code === 'NumpadAdd') {
       event.preventDefault();
-      updateSettings({
-        zoomLevel: Math.min(
-          2,
-          Math.round((settings.zoomLevel + 0.1) * 10) / 10,
-        ),
-      });
+      if (inCodeEditor)
+        updateSettings({
+          fontSize: Math.min(32, settings.fontSize + 1),
+        });
+      else
+        updateSettings({
+          zoomLevel: Math.min(
+            2,
+            Math.round((settings.zoomLevel + 0.1) * 10) / 10,
+          ),
+        });
       return;
     }
     if (key === '-' || event.code === 'NumpadSubtract') {
       event.preventDefault();
-      updateSettings({
-        zoomLevel: Math.max(
-          0.5,
-          Math.round((settings.zoomLevel - 0.1) * 10) / 10,
-        ),
-      });
+      if (inCodeEditor)
+        updateSettings({
+          fontSize: Math.max(8, settings.fontSize - 1),
+        });
+      else
+        updateSettings({
+          zoomLevel: Math.max(
+            0.5,
+            Math.round((settings.zoomLevel - 0.1) * 10) / 10,
+          ),
+        });
       return;
     }
     if (key === '0' || event.code === 'Numpad0') {
       event.preventDefault();
-      updateSettings({ zoomLevel: 1 });
+      updateSettings(
+        inCodeEditor
+          ? { fontSize: DEFAULT_SETTINGS.fontSize }
+          : { zoomLevel: 1 },
+      );
       return;
     }
     if (key === 'k') {
@@ -4976,6 +5169,82 @@ function App() {
     }
   };
 
+  const renderEditorGroup = (group: EditorGroup, floating = false) => (
+    <EditorPane
+      key={group.id}
+      group={group}
+      file={(() => {
+        const file = openFiles.find(
+          (entry) => entry.path === group.activePath,
+        );
+        return file
+          ? { ...file, content: fileContents.current.get(file.path) ?? '' }
+          : undefined;
+      })()}
+      activeTerminal={terminals.find(
+        (terminal) => terminal.key === group.activePath,
+      )}
+      terminals={terminals}
+      files={openFiles}
+      onActivate={setActiveGroupId}
+      onChange={updateFile}
+      onClose={closeTab}
+      onDropFile={openDroppedFile}
+      canCreateSplit={group.tabs.length > 0}
+      onSelect={setActiveTab}
+      onTerminalTitleChange={updateTerminalTitle}
+      workspace={workspace}
+      diskConflict={diskConflicts.has(group.activePath)}
+      onConflictReload={reloadFromDisk}
+      onConflictKeep={keepBuffer}
+      pluginViews={pluginRuntime.panels}
+      previews={previews}
+      onPreviewChange={updatePreview}
+      editorViews={editorViews}
+      pluginLanguages={pluginRuntime.languages}
+      pluginLanguageOverrides={pluginLanguageOverrides}
+      pluginEditorExtensions={pluginRuntime.editorExtensions}
+      pluginGrammarFor={pluginRuntime.getGrammar}
+      pluginGrammarVersion={pluginRuntime.grammarVersion}
+      onSelectionChange={(path) => {
+        const now = performance.now();
+        if (now - selectionEventAt.current < 80) return;
+        selectionEventAt.current = now;
+        const context = getPluginEditorContext(path);
+        pluginRuntime.emitEvent('editor:selection-changed', context);
+        pluginRuntime.emitEvent('editor:context-changed', context);
+      }}
+      builderPanel={
+        <Suspense fallback={<div className="editor-empty" />}>
+          <BuildWizard
+            settings={settings}
+            onLaunch={launchBuilderAgent}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        </Suspense>
+      }
+      pluginPanel={
+        <Suspense fallback={<div className="editor-empty" />}>
+          <PluginPanel
+            plugins={pluginRuntime.plugins}
+            pluginDirectory={pluginRuntime.pluginDirectory}
+            availableBuiltins={pluginRuntime.availableBuiltins}
+            panels={pluginRuntime.panels}
+            onInstallPlugin={pluginRuntime.installFromFolder}
+            onInstallBuiltin={pluginRuntime.installBuiltin}
+            onTogglePlugin={pluginRuntime.setEnabled}
+            onUninstallPlugin={pluginRuntime.uninstall}
+            onOpenPanel={openPluginView}
+          />
+        </Suspense>
+      }
+      settings={settings}
+      theme={activeTheme}
+      floating={floating}
+      onToggleFloat={() => toggleFloatingGroup(group.id)}
+    />
+  );
+
   const renderLayout = (node: LayoutNode): ReactNode => {
     if (node.type === 'split') {
       return (
@@ -4988,82 +5257,15 @@ function App() {
         />
       );
     }
+    if (node.groupId === floatingGroupId) return null;
     const group = groups.find((entry) => entry.id === node.groupId);
     if (!group) return null;
-    return (
-      <EditorPane
-        key={group.id}
-        group={group}
-        file={(() => {
-          const file = openFiles.find(
-            (entry) => entry.path === group.activePath,
-          );
-          return file
-            ? { ...file, content: fileContents.current.get(file.path) ?? '' }
-            : undefined;
-        })()}
-        activeTerminal={terminals.find(
-          (terminal) => terminal.key === group.activePath,
-        )}
-        terminals={terminals}
-        files={openFiles}
-        onActivate={setActiveGroupId}
-        onChange={updateFile}
-        onClose={closeTab}
-        onDropFile={openDroppedFile}
-        canCreateSplit={group.tabs.length > 0}
-        onSelect={setActiveTab}
-        onTerminalTitleChange={updateTerminalTitle}
-        workspace={workspace}
-        diskConflict={diskConflicts.has(group.activePath)}
-        onConflictReload={reloadFromDisk}
-        onConflictKeep={keepBuffer}
-        pluginViews={pluginRuntime.panels}
-        previews={previews}
-        onPreviewChange={updatePreview}
-        editorViews={editorViews}
-        pluginLanguages={pluginRuntime.languages}
-        pluginLanguageOverrides={pluginLanguageOverrides}
-        pluginEditorExtensions={pluginRuntime.editorExtensions}
-        pluginGrammarFor={pluginRuntime.getGrammar}
-        pluginGrammarVersion={pluginRuntime.grammarVersion}
-        onSelectionChange={(path) => {
-          const now = performance.now();
-          if (now - selectionEventAt.current < 80) return;
-          selectionEventAt.current = now;
-          const context = getPluginEditorContext(path);
-          pluginRuntime.emitEvent('editor:selection-changed', context);
-          pluginRuntime.emitEvent('editor:context-changed', context);
-        }}
-        builderPanel={
-          <Suspense fallback={<div className="editor-empty" />}>
-            <BuildWizard
-              settings={settings}
-              onLaunch={launchBuilderAgent}
-              onOpenSettings={() => setSettingsOpen(true)}
-            />
-          </Suspense>
-        }
-        pluginPanel={
-          <Suspense fallback={<div className="editor-empty" />}>
-            <PluginPanel
-              plugins={pluginRuntime.plugins}
-              pluginDirectory={pluginRuntime.pluginDirectory}
-              availableBuiltins={pluginRuntime.availableBuiltins}
-              panels={pluginRuntime.panels}
-              onInstallPlugin={pluginRuntime.installFromFolder}
-              onInstallBuiltin={pluginRuntime.installBuiltin}
-              onTogglePlugin={pluginRuntime.setEnabled}
-              onUninstallPlugin={pluginRuntime.uninstall}
-              onOpenPanel={openPluginView}
-            />
-          </Suspense>
-        }
-        settings={settings}
-        theme={activeTheme}
-      />
-    );
+    return renderEditorGroup(group);
   };
+
+  const floatingGroup = floatingGroupId
+    ? groups.find((group) => group.id === floatingGroupId)
+    : undefined;
 
   const themeMaker = themeMakerOpen ? (
     <div className="theme-maker-overlay">
@@ -5487,6 +5689,52 @@ function App() {
           )}
           <section className="editor-root">
             <div className="editor-content">{renderLayout(layout)}</div>
+            {floatingGroup && (
+              <div
+                className="floating-panel"
+                style={{
+                  left: floatingBounds.x,
+                  top: floatingBounds.y,
+                  width: floatingBounds.width,
+                  height: floatingBounds.height,
+                }}
+                onPointerDown={(event) => {
+                  const target = event.target as HTMLElement;
+                  if (
+                    event.button !== 0 ||
+                    !target.closest('.tab-strip') ||
+                    target.closest('button, input')
+                  )
+                    return;
+                  event.preventDefault();
+                  floatingDrag.current = {
+                    mode: 'move',
+                    pointerId: event.pointerId,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    bounds: floatingBounds,
+                  };
+                }}
+              >
+                {renderEditorGroup(floatingGroup, true)}
+                <div
+                  className="floating-resize-handle"
+                  title="Resize panel"
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    floatingDrag.current = {
+                      mode: 'resize',
+                      pointerId: event.pointerId,
+                      startX: event.clientX,
+                      startY: event.clientY,
+                      bounds: floatingBounds,
+                    };
+                  }}
+                />
+              </div>
+            )}
             {pluginRuntime.statusItems.length > 0 && (
               <div className="plugin-status-bar">
                 {pluginRuntime.statusItems

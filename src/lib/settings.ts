@@ -303,12 +303,13 @@ export function migrateStorageNamespace(): void {
 
 export function loadSettings(): AppSettings {
   try {
-    const stored = JSON.parse(localStorage.getItem("arc.settings") ?? "null") as (Partial<AppSettings> & { version?: number; editorGlassSaturation?: unknown; frameRateMode?: unknown; frameRateLimit?: unknown }) | null;
+    const stored = JSON.parse(localStorage.getItem("arc.settings") ?? "null") as (Partial<AppSettings> & { version?: number; editorGlassSaturation?: unknown; frameRateMode?: unknown; frameRateLimit?: unknown; panelZoom?: unknown }) | null;
     if (!stored) return DEFAULT_SETTINGS;
     const saved = { ...stored };
     delete saved.editorGlassSaturation;
     delete saved.frameRateMode;
     delete saved.frameRateLimit;
+    delete saved.panelZoom;
     const settings = { ...DEFAULT_SETTINGS, ...saved };
     if ((settings.appTheme as string) === "t3") {
       settings.appTheme = "modern";
@@ -342,6 +343,8 @@ export function loadSettings(): AppSettings {
     settings.agentCommand = typeof settings.agentCommand === "string"
       ? settings.agentCommand.slice(0, 500)
       : DEFAULT_SETTINGS.agentCommand;
+    if (!Number.isFinite(settings.zoomLevel)) settings.zoomLevel = DEFAULT_SETTINGS.zoomLevel;
+    settings.zoomLevel = Math.min(2, Math.max(0.5, settings.zoomLevel));
     return settings;
   } catch {
     return DEFAULT_SETTINGS;
