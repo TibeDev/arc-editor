@@ -4,13 +4,14 @@ Guide for AI coding agents working on Arc. Read this before exploring the codeba
 
 ## What this project is
 
-**Arc** is a desktop workspace for web development: file browser, code editor (CodeMirror 6), terminal (rioterm + PTY), GitHub panel (git/gh integration), and a JavaScript plugin system, in one Tauri window.
+**Arc** is a desktop workspace for web development: file browser, code editor (CodeMirror 6), terminal (rioterm + PTY), web preview, GitHub panel (git/gh integration), a JavaScript plugin system, and a plugin/theme Build wizard, in one Tauri window.
 
 - Package name: `arc-ide`, version `0.1.2`, identifier `dev.arc.ide`
 - Stack: **Tauri 2** (Rust backend) + **React 19** + **TypeScript** (strict) + **Vite 6** frontend
 - Editor: **CodeMirror 6**. Terminal: **rioterm** (WASM) + **portable-pty**. Formatting: **Prettier 3** embedded in the app
+- Other frontend libraries: **JSZip** (plugin ZIP import), **react-markdown** + **remark-gfm** (plugin API docs), **lucide-react** icons
 - Primary dev/target platform: **Linux (Omarchy/Arch)**. Release builds also target Windows and macOS via CI
-- No router, no state library, no test framework on the frontend. Backend has Rust unit tests inside `src-tauri/src/lib.rs`
+- No router, no state library, no frontend test framework. Backend tests live in `src-tauri/src/lib.rs`
 
 ## Repository layout
 
@@ -19,32 +20,42 @@ index.html               Vite entry
 src/                     Frontend (React + TS)
   App.tsx                App shell and most UI
   components/            React components with colocated CSS
-  lib/                   Plugin runtime, settings, terminal and workspace logic
+  lib/                   Plugin runtime, settings, agent kit, terminal and updater logic
   styles/                Global and shared CSS
 src-tauri/               Rust backend (Tauri 2)
-  src/lib.rs             ALL Tauri commands + tests (~1600 lines)
+  src/lib.rs             ALL Tauri commands + tests (~4100 lines)
+  src/process.rs         Managed child-process registry (process groups / Windows job objects)
   src/main.rs            Entry: NVIDIA/Wayland workaround + app-data migration
   capabilities/          Tauri permission scopes
-plugins/                 Built-in plugins (live-server, xampp)
-dist/                    Build output (gitignored)
+plugins/                 Built-in plugins (live-server, xampp; api-tester is dev-only)
+research/                Design research notes (currently webview-panel.md)
+graphify-out/            Knowledge graph output
+install-appimage.sh      Linux AppImage installer + launcher entry
 .github/workflows/       release.yml — tag-driven release pipeline
+dist/                    Build output (gitignored)
 ```
 
 ### Frontend files (`src/`)
 
 | File | Role |
 | --- | --- |
-| `App.tsx` | **Monolith (~4300 lines).** App shell, file tree, tabs, nested editor splits (`SplitContainer`, `EditorPane`), command palette, context menus, search, workspace state. Most UI work happens here |
-| `lib/pluginRuntime.ts` | Plugin loader + full plugin API (`api.files`, `api.editor`, `api.terminal`, `api.ui`, `api.events`, `api.storage`, ...). Built-in plugins are inlined at build time via `import.meta.glob` of `../../plugins/*` |
-| `lib/settings.ts` | `AppSettings` type, `DEFAULT_SETTINGS`, `ThemeColors`/`ThemeDefinition`, `BUILTIN_THEMES`, theme CSS generation, settings persistence |
-| `components/SettingsPanel.tsx` | Settings UI |
+| `App.tsx` | **Monolith (~6100 lines).** App shell, file tree, tabs, nested editor splits (`SplitContainer`, `EditorPane`), image viewer, command palette, context menus, search, workspace/watcher state, keybindings. Most UI work happens here |
+| `lib/pluginRuntime.ts` | Plugin loader + full plugin API (`api.files`, `api.editor`, `api.terminal`, `api.ui`, `api.events`, `api.storage`, `api.process`, `api.mcp`, ...). Plugin ZIP import, built-in plugin inlining via `import.meta.glob`, language/editor contributions |
+| `lib/settings.ts` | `AppSettings` type, `DEFAULT_SETTINGS`, `ThemeColors`/`ThemeDefinition`, `BUILTIN_THEMES`, app themes, theme CSS generation, settings persistence/migration |
+| `lib/terminalOutput.ts` | Global `terminal-output` event buffer (2 MB cap/session) so terminals survive tab switches |
+| `lib/updater.ts` | Shared updater types used by the Rust updater commands |
+| `lib/dialog.ts` | Native-looking Arc dialog wrapper around plugin-dialog |
+| `lib/agent/kit.ts`, `lib/agent/builders.ts` | Build tab prompts, agent CLI commands, plugin/theme brief generation |
+| `components/SettingsPanel.tsx` | Settings UI for editor, terminal, appearance, AI agent, updates, notifications, plugins |
 | `components/GithubPanel.tsx` | GitHub panel UI (calls `github_*` Tauri commands) |
-| `components/PluginPanel.tsx` | Plugin manager UI (install/enable/disable/remove) |
+| `components/PluginPanel.tsx` | Plugin manager UI (ZIP import, enable/disable, uninstall, API docs) |
+| `components/BuildWizard.tsx` | Plugin/theme brief wizard and AI launch/copy-prompt flow |
+| `components/WebPreview.tsx` | Iframe preview for dev servers and workspace files (calls `preview_*` commands) |
 | `components/ThemeMaker.tsx`, `components/ThemeColorPicker.tsx` | Custom theme editor |
 | `components/TerminalView.tsx` | rioterm terminal component (lazy loaded) |
-| `lib/terminalOutput.ts` | Global `terminal-output` event buffer (2 MB cap/session) so terminals survive tab switches |
+| `components/TitleBar.tsx`, `components/Select.tsx` | Custom title bar and shared select control |
 | `main.tsx` | React root |
-| `styles/` | Global styles and shared controls |
+| `styles/` | Global styles, shared controls, theme CSS variables |
 | `components/*.css` | Colocated styles per component (e.g. `GithubPanel.auth.css`) |
 
 ### Backend (`src-tauri/src/lib.rs`)
@@ -52,12 +63,17 @@ dist/                    Build output (gitignored)
 All Tauri commands, registered in `run()` via `generate_handler!`:
 
 - **Terminal**: `terminal_spawn`, `terminal_write`, `terminal_resize`, `terminal_close` — portable-pty sessions, output streamed via `terminal-output` event
-- **Workspace access gating**: `workspace_pick`, `workspace_access_allowed`, `workspace_grant_access`, `workspace_allow_hidden_paths`
-- **GitHub**: `github_status`, `github_configure_identity`, `github_stage`, `github_commit`, `github_fetch`, `github_pull`, `github_push`, `github_switch_branch`, `github_create_branch`, `github_create_repo` — shell out to `git` and `gh` CLIs (external dependencies; panel shows setup instructions when missing)
-- **Plugin support**: `plugin_local_server_start`/`stop` (embedded HTTP server with live-reload injection, path-traversal protection), `plugin_process_is_running` (Linux-only)
+- **Workspace access gating**: `workspace_pick`, `workspace_access_allowed`, `workspace_grant_access`, `workspace_allow_hidden_paths`, `save_builder_prompt` — persisted workspace permissions and Build-tab prompt files
+- **File watching**: `watch_project`, `unwatch_project` — notify-debouncer-full watcher, emits `fs-changed` delta events
+- **GitHub**: `github_status`, `github_diff`, `github_configure_identity`, `github_auth_status`, `github_stage`, `github_stage_all`, `github_unstage_all`, `github_commit`, `github_fetch`, `github_pull`, `github_push`, `github_switch_branch`, `github_create_branch`, `github_create_repo` — shell out to `git` and `gh` CLIs (external dependencies; panel shows setup instructions when missing)
+- **Plugin processes**: `plugin_process_is_running`, `plugin_process_spawn`, `plugin_process_write`, `plugin_process_close_stdin`, `plugin_process_stop`, `plugin_process_exec`, `plugin_process_which` — managed by `process.rs`
+- **Plugin network/secrets**: `plugin_socket_connect`, `plugin_socket_write`, `plugin_socket_close`, `plugin_http_server_start`, `plugin_http_respond`, `plugin_http_server_stop`, `plugin_secret_set`, `plugin_secret_get`, `plugin_secret_delete` (keyring)
+- **Plugin files**: `plugin_trash_path`
+- **Local servers and preview**: `plugin_local_server_start`/`stop` (live-reload injection, path-traversal protection), `preview_server_start`/`stop`, `preview_frame_check`, `open_external_url`
+- **Updates**: `updater_check`, `updater_install` — signed GitHub release endpoints, Stable/Beta channels
 - **Window**: `set_native_background_blur` (window-vibrancy; Linux build pins a git rev, see `Cargo.toml`)
 
-Unit tests live in `#[cfg(test)] mod tests` at the bottom of `lib.rs` (git status parsing, local server serving/traversal/reload, URL encoding).
+Unit tests live in `#[cfg(test)] mod tests` at the bottom of `lib.rs` (git status parsing, GitHub remote URLs, local server serving/traversal/reload, URL encoding, frame headers, connection limits, watcher event mapping/ignore rules, updater channels/events, AppImage env handling).
 
 `main.rs` sets `__NV_DISABLE_EXPLICIT_SYNC=1` on NVIDIA/Wayland and migrates app data dir `dev.glasswing.ide` → `dev.arc.ide`.
 
@@ -70,8 +86,8 @@ npm install                 # frontend deps
 npm run tauri dev           # dev app (Vite on :1420, hot reload)
 npm run build               # typecheck (tsc -b) + production frontend build
 npm run tauri build         # full release build (installers)
-cargo test                  # Rust unit tests (run in src-tauri/)
-cargo fmt && cargo clippy   # Rust lint/format
+(cd src-tauri && cargo test)             # Rust unit tests
+(cd src-tauri && cargo fmt && cargo clippy) # Rust lint/format
 ```
 
 There is **no frontend test runner**; `npm run build` doubles as the typecheck gate. Verify frontend changes with `npm run build` plus manual testing via `npm run tauri dev`. Verify Rust changes with `cargo test` in `src-tauri/`.
@@ -80,30 +96,33 @@ There is **no frontend test runner**; `npm run build` doubles as the typecheck g
 
 - **TypeScript is strict** with `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`, `verbatimModuleSyntax` (use `import type` for types).
 - **`App.tsx` is deliberately a monolith.** Follow the existing pattern; don't split it or introduce a state library unless asked.
-- **Frontend reads/writes files directly via `@tauri-apps/plugin-fs`**, not custom commands. Custom Rust commands exist only for what plugin-fs can't do (PTY, git/gh, HTTP server, blur, gating).
+- **Frontend reads/writes files directly via `@tauri-apps/plugin-fs`**, not custom commands. Custom Rust commands exist only for what plugin-fs can't do (PTY, git/gh, HTTP servers, watcher, child processes, secrets, blur, gating).
 - **Tauri capability scopes are security-relevant.** `src-tauri/capabilities/default.json` restricts fs access to `$HOME`, `$DOCUMENT`, `$DOWNLOAD`, `$APPDATA` and allows opening URLs only for `http://127.0.0.1:*`, `github.com`, `cli.github.com`, `git-scm.com`. Update scopes deliberately; don't widen them casually. CSP is `null` (plugin system needs broad JS).
-- **Built-in plugins are bundled raw**: files under `plugins/*/main.js` are self-contained ES modules (no bare package imports), read as strings at build time and executed in the plugin runtime. Keep them dependency-free.
-- **Settings shape is versioned** (`APP_SETTINGS_VERSION` in `lib/settings.ts`). When adding a setting, add it to `AppSettings`, `DEFAULT_SETTINGS`, and the settings merge/migration logic, then wire UI in `components/SettingsPanel.tsx`.
-- **Themes** are `ThemeDefinition` objects (~30 color slots); themes apply by generating CSS (`themeCss`). New UI colors should map to theme slots, not hardcoded hex.
+- **Built-in plugins are bundled raw**: files under `plugins/*/main.js` are self-contained ES modules (no bare package imports), read as strings at build time and executed in the plugin runtime. Keep them dependency-free. The production glob excludes `plugins/api-tester`.
+- **Plugin ZIP import lives in `lib/pluginRuntime.ts`.** It uses JSZip, accepts `plugin.json`/`main.js` at the ZIP root or inside one folder, and must reject imports missing either file. Startup loading also rejects installed plugins with no `main.js`. Preserve both checks.
+- **Settings shape is versioned** (`APP_SETTINGS_VERSION` in `lib/settings.ts`, currently `6`). When adding a setting, add it to `AppSettings`, `DEFAULT_SETTINGS`, and the settings merge/migration logic, then wire UI in `components/SettingsPanel.tsx`.
+- **Themes** are `ThemeDefinition` objects (35 color slots). `appTheme` controls interface style, `selectedTheme` controls editor colors. Themes apply by generating CSS (`themeCss`). New UI colors should map to theme slots, not hardcoded hex.
 - **Versions must stay in sync** across `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` — the release workflow enforces this on tags.
+- **The updater** uses signed GitHub releases. Stable tags point at `releases/latest`; hyphenated pre-release tags publish to a `beta` release pointer. Do not change endpoints without updating `tauri.conf.json` and the release workflow.
 - `dist/`, `src-tauri/target/`, `src-tauri/gen/` are build artifacts (gitignored). Don't edit.
-- Linux-only features (XAMPP plugin, `plugin_process_is_running`) are gated at runtime; don't assume cross-platform.
+- Linux-only features (XAMPP plugin, `plugin_process_is_running`, native background blur) are gated at runtime; don't assume cross-platform.
 
 ## Docs in the repo
 
 | File | Purpose |
 | --- | --- |
-| `README.md` | User-facing overview, shortcuts, install |
+| `README.md` | User-facing overview, shortcuts, install, plugin import |
 | `PLUGIN_API.md` | Full plugin API reference (keep in sync when changing the plugin API) |
 | `ARC_AGENT_KIT.md` | Agent-facing contract for the Build tab wizard (plugin + theme generation, install handshake). Keep in sync with plugin and theme formats |
-| `FILE_WATCHER.md` | Spec + notes for live file watching (notify-debouncer-full → `fs-changed` events → tree reducer). **Implemented**: `watch_project`/`unwatch_project` in `src-tauri/src/lib.rs`, listener + delta reducer in `src/App.tsx` |
-| `apple-design.md` | Design direction: Apple/Xcode-inspired, layered translucent surfaces, content-first, minimal borders. Follow for UI work |
+| `research/webview-panel.md` | Research notes for the web preview feature, including Linux child-webview limits |
+| `graphify-out/GRAPH_REPORT.md` | Generated knowledge graph report; see the graphify section below |
 
 ## Release process
 
 1. Bump version in all three files (`package.json`, `tauri.conf.json`, `Cargo.toml`) to match.
-2. Merge to `main`; tag must be on `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+2. Stable release: tag on `main` as `vX.Y.Z`. Pre-release: use a hyphenated tag such as `vX.Y.Z-beta.1`; the workflow requires it on the `pre-release` branch.
 3. `.github/workflows/release.yml` builds Linux (deb/rpm/AppImage), Windows (msi/nsis), macOS (universal dmg) and publishes a GitHub Release with generated notes.
+4. Hyphenated releases also update the `beta` release pointer used by the Beta update channel.
 
 ## graphify
 

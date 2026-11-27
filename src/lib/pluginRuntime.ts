@@ -8,6 +8,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { readText as readClipboardText, writeHtml as writeClipboardHtml, writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import { copyFile, exists, mkdir, open as openFsFile, readDir, readFile, readTextFile, remove, rename as renameFile, stat as statFile, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import JSZip from "jszip";
 import { EditorState, type Extension, type Range } from "@codemirror/state";
 import { Decoration, EditorView as CodeMirrorView, ViewPlugin, WidgetType, keymap, type EditorView, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
@@ -849,6 +850,7 @@ export function usePluginRuntime(
             const id = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>).id : undefined;
             const isBuiltin = builtinPackages.some((builtin) => builtin.manifest.id === id);
             const manifest = parseManifest(parsed, isBuiltin);
+            if (!(await exists(sourcePath))) throw new Error("Plugin is missing main.js.");
             const enabled = !disabled.has(manifest.id);
             const source = enabled ? await readTextFile(sourcePath) : undefined;
             loaded.push({ ...manifest, enabled, builtin: isBuiltin, ...(source === undefined ? {} : { source }) });
@@ -2537,12 +2539,30 @@ export function usePluginRuntime(
     return next;
   }, [notify]);
 
-  const installFromFolder = useCallback(async () => {
-    const selected = await open({ directory: true, multiple: false, recursive: true, title: "Install plugin folder" });
+  const importFromArchive = useCallback(async () => {
+    const selected = await open({
+      multiple: false,
+      title: "Import plugin ZIP",
+      filters: [{ name: "Plugin archive", extensions: ["zip"] }],
+    });
     if (typeof selected !== "string") return;
-    const manifest = parseManifest(JSON.parse(await readTextFile(await join(selected, "plugin.json"))));
-    const source = await readTextFile(await join(selected, manifest.main));
-    if (!window.confirm(`Install “${manifest.name}”? Plugin JavaScript runs inside Arc and can call its plugin API.`)) return;
+
+    const archive = await JSZip.loadAsync(await readFile(selected));
+    const entries = Object.values(archive.files);
+    const manifestEntries = entries
+      .filter((entry) => !entry.dir && /(^|\/)plugin\.json$/.test(entry.name))
+      .sort((a, b) => a.name.split("/").length - b.name.split("/").length);
+    const manifestEntry = manifestEntries[0];
+    if (!manifestEntry) throw new Error("Plugin ZIP is missing plugin.json.");
+    const base = manifestEntry.name.slice(0, manifestEntry.name.length - "plugin.json".length);
+    if (base.startsWith("/") || /^[a-z]:/i.test(base) || base.split("/").some((part) => part === "..")) {
+      throw new Error("Plugin ZIP contains an unsafe path.");
+    }
+    const sourceEntry = archive.file(`${base}main.js`);
+    if (!sourceEntry) throw new Error("Plugin ZIP is missing main.js.");
+    const manifest = parseManifest(JSON.parse(await manifestEntry.async("string")));
+    const source = await sourceEntry.async("string");
+    if (!window.confirm(`Import “${manifest.name}”? Plugin JavaScript runs inside Arc and can call its plugin API.`)) return;
 
     const root = await join(await appDataDir(), "plugins");
     await mkdir(root, { recursive: true });
@@ -2648,7 +2668,7 @@ export function usePluginRuntime(
     emitEvent,
     pluginDirectory,
     availableBuiltins,
-    installFromFolder,
+    importFromArchive,
     installBuiltin,
     setEnabled,
     uninstall,
