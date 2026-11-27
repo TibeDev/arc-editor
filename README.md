@@ -1,17 +1,20 @@
 # Arc
 
-Arc is a desktop workspace for web development. It puts your project files, code editor, terminal, browser preview, and GitHub tools in one window.
+Arc is a desktop workspace for web development. It puts your project files, code editor, terminal, browser preview, GitHub tools, and plugin/theme builder in one window.
 
 ## What you can do
 
 - Open a project folder and browse, search, create, rename, move, copy, or delete its files.
-- Edit JavaScript, TypeScript, JSX, TSX, HTML, CSS, SCSS, PHP, JSON, and Markdown with syntax highlighting.
+- Edit JavaScript, TypeScript, JSX, TSX, HTML, CSS, SCSS, PHP, JSON, and Markdown with syntax highlighting. Preview images with zoom and pan.
 - Work across multiple tabs and nested editor splits. Drag tabs between panes or drag a tab to a pane edge to create a split.
 - Open terminal tabs in your project folder.
+- Preview a dev server or workspace files in a web preview tab. Sites that refuse framing open in your browser.
 - Preview a project with Live Server. Arc serves the workspace locally and reloads the page when files change.
 - Use the GitHub panel to create or connect a repository, change branches, stage and commit files, and pull or push changes.
-- Adjust editor and terminal settings, choose a built-in color theme, or create a custom theme.
-- Install local JavaScript plugins. Arc includes Live Server and a Linux-only XAMPP plugin.
+- Adjust editor, terminal, and interface settings. Choose a built-in theme, create a custom theme, or use transparency and an app background image.
+- Import JavaScript plugins from ZIP archives. Arc includes Live Server and a Linux-only XAMPP plugin.
+- Build a plugin or theme with the Build tab wizard, which can launch a local AI agent or produce a prompt for any chat AI.
+- Update from signed GitHub releases, on the Stable or Beta channel.
 
 ## Install on Omarchy
 
@@ -46,14 +49,19 @@ The GitHub panel needs Git and GitHub CLI (`gh`). Open the panel, sign in, then 
 | `Ctrl+Shift+P`              | Open the command palette                |
 | `Ctrl+\\` / `Ctrl+Shift+\\` | Split editor vertically / horizontally  |
 | `Ctrl+B`                    | Show or hide the file browser           |
+| `Ctrl+Tab`                  | Switch to the next tab or pane          |
 | `Ctrl+S` / `Ctrl+W`         | Save / save and close the active editor |
+| `Ctrl+,`                    | Open Settings                           |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom app, or editor font size in code |
 | `F2` / `Delete`             | Rename / delete the selected item       |
 | `Alt+Shift+F`               | Format the active file                  |
 
 On macOS, replace `Ctrl` with `Command`. `Alt+Shift+F` uses `Option+Shift+F`.
 
-## Editor and plugins
+## Plugins, themes, and AI builds
 
-Arc provides HTML-tag and PHP completion. It does not include language-server support yet. Prettier formatting supports HTML, SVG, Vue, CSS, SCSS, JavaScript, TypeScript, JSON, Markdown, and YAML.
+Arc provides HTML-tag and PHP completion. Prettier formatting supports HTML, SVG, Vue, CSS, SCSS, JavaScript, TypeScript, JSON, Markdown, and YAML.
 
-Install a plugin from **Plugins → Install from folder**. A plugin folder needs `plugin.json` and a self-contained `main.js`. Plugins can access Arc and workspace APIs, so install them only from sources you trust. See [`PLUGIN_API.md`](PLUGIN_API.md) for the API.
+Import a plugin from **Plugins → Import plugin ZIP**. The ZIP must contain `plugin.json` and a self-contained `main.js`, either at its root or inside one folder. Arc rejects an import when either file is missing. Plugins can be enabled, disabled, and uninstalled, and can access Arc and workspace APIs, so install them only from sources you trust. See [`PLUGIN_API.md`](PLUGIN_API.md) for the API.
+
+The **Build** tab walks you through a plugin or theme brief, then opens your configured terminal agent or exports a prompt for a free chat AI. Themes can also be created and edited in Theme Maker.
