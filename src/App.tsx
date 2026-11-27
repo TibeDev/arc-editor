@@ -10,6 +10,7 @@ import {
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type CSSProperties,
   type ReactNode,
 } from 'react';
 import {
@@ -1738,6 +1739,7 @@ function SplitContainer({
 
 function App() {
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
+  const [editorBackgroundUrl, setEditorBackgroundUrl] = useState("");
   const [themes, setThemes] = useState<ThemeDefinition[]>(BUILTIN_THEMES);
   const [customThemeIds, setCustomThemeIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1890,6 +1892,9 @@ function App() {
     [
       activeTheme,
       settings.editorGlassEnabled,
+      settings.editorBackgroundImage,
+      settings.editorBackgroundTransparency,
+      settings.editorBackgroundBlur,
       settings.glassAppTransparency,
       settings.glassSidebarTransparency,
       settings.editorGlassTransparency,
@@ -1921,6 +1926,29 @@ function App() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [settings]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = "";
+    setEditorBackgroundUrl("");
+    if (!settings.editorBackgroundImage || settings.editorGlassEnabled) return;
+    void (async () => {
+      try {
+        const bytes = await readFile(settings.editorBackgroundImage);
+        const mime =
+          IMAGE_MIME[extensionOf(settings.editorBackgroundImage)] ??
+          "application/octet-stream";
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+        if (!cancelled) setEditorBackgroundUrl(objectUrl);
+      } catch {
+        // Unreadable or missing image falls back to the theme background.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [settings.editorBackgroundImage, settings.editorGlassEnabled]);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -5373,8 +5401,13 @@ function App() {
 
   return (
     <main
-      className={`app-shell app-theme-${settings.appTheme} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''}`}
-      style={{ fontFamily: resolveInterfaceFont(settings) }}
+      className={`app-shell app-theme-${settings.appTheme} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${editorBackgroundUrl ? 'has-editor-background' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''}`}
+      style={{
+        fontFamily: resolveInterfaceFont(settings),
+        '--editor-background-image': editorBackgroundUrl
+          ? `url("${editorBackgroundUrl}")`
+          : 'none',
+      } as CSSProperties}
       onClick={() => {
         if (contextMenu) setContextMenu(null);
       }}

@@ -71,6 +71,9 @@ export type AppSettings = {
   editorGlassEnabled: boolean;
   nativeBackgroundBlurEnabled: boolean;
   editorGlassTransparency: number;
+  editorBackgroundImage: string;
+  editorBackgroundTransparency: number;
+  editorBackgroundBlur: number;
   glassAppTransparency: number;
   glassSidebarTransparency: number;
   glassTabsTransparency: number;
@@ -85,7 +88,7 @@ export type AppSettings = {
   agentCommand: string;
 };
 
-export const APP_SETTINGS_VERSION = 3;
+export const APP_SETTINGS_VERSION = 4;
 
 export const GLASS_BLUR = 18;
 
@@ -159,6 +162,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   editorGlassEnabled: true,
   nativeBackgroundBlurEnabled: true,
   editorGlassTransparency: 28,
+  editorBackgroundImage: "",
+  editorBackgroundTransparency: 55,
+  editorBackgroundBlur: 6,
   glassAppTransparency: 20,
   glassSidebarTransparency: 20,
   glassTabsTransparency: 14,
@@ -345,6 +351,11 @@ export function loadSettings(): AppSettings {
       : DEFAULT_SETTINGS.agentCommand;
     if (!Number.isFinite(settings.zoomLevel)) settings.zoomLevel = DEFAULT_SETTINGS.zoomLevel;
     settings.zoomLevel = Math.min(2, Math.max(0.5, settings.zoomLevel));
+    settings.editorBackgroundImage = typeof settings.editorBackgroundImage === "string" ? settings.editorBackgroundImage : "";
+    if (!Number.isFinite(settings.editorBackgroundTransparency)) settings.editorBackgroundTransparency = DEFAULT_SETTINGS.editorBackgroundTransparency;
+    settings.editorBackgroundTransparency = Math.min(100, Math.max(0, settings.editorBackgroundTransparency));
+    if (!Number.isFinite(settings.editorBackgroundBlur)) settings.editorBackgroundBlur = DEFAULT_SETTINGS.editorBackgroundBlur;
+    settings.editorBackgroundBlur = Math.min(40, Math.max(0, settings.editorBackgroundBlur));
     return settings;
   } catch {
     return DEFAULT_SETTINGS;
@@ -413,7 +424,10 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
   const glass = (color: string, value: number) => themeColorWithOpacity(color, 1 - transparency(value) / 100);
   const appBackground = glass(c.background, settings.glassAppTransparency);
   const sidebarBackground = glass(c.sidebar, settings.glassSidebarTransparency);
-  const editorBackground = glass(c.editor, settings.editorGlassTransparency);
+  const editorImageActive = !settings.editorGlassEnabled && Boolean(settings.editorBackgroundImage);
+  const editorBackground = editorImageActive ? "transparent" : glass(c.editor, settings.editorGlassTransparency);
+  const editorBackgroundOpacity = 1 - Math.max(0, Math.min(100, settings.editorBackgroundTransparency)) / 100;
+  const editorBackgroundBlur = Math.max(0, Math.min(40, settings.editorBackgroundBlur));
   const terminalBackground = glass(c.editor, settings.glassTerminalTransparency);
   const tabsBackground = glass(c.raised, settings.glassTabsTransparency);
   const floatingBackground = glass(c.raised, settings.glassFloatingTransparency);
@@ -424,7 +438,7 @@ export function themeCss(theme: ThemeDefinition, settings: AppSettings): string 
     ? 0.5 * (1 - transparency(settings.glassFloatingTransparency) / 100)
     : 0.55;
   return `
-    .app-shell { --settings-bg:${c.background}; --settings-muted:${c.muted}; --settings-secondary-text:${c.secondaryText}; --settings-text:${c.text}; --settings-raised:${c.raised}; --settings-border:${c.border}; --settings-accent:${c.accent}; --settings-track:${c.hover}; --settings-selected:${c.selected}; --settings-hover:${c.hover}; --app-accent:${c.accent}; --app-accent-text:${c.accentText}; --app-input:${c.input}; --app-warning:${c.warning}; --app-error:${c.error}; --app-canvas:${c.background}; --app-surface:${c.sidebar}; --app-raised:${c.raised}; --app-border:${c.border}; --app-text:${c.text}; --app-secondary:${c.secondaryText}; --app-muted:${c.muted}; --app-hover:${c.hover}; --app-selected:${c.selected}; --app-highlight:${themeColorWithOpacity(c.text, 0.07)}; --editor-glass-blur:${GLASS_BLUR}px; --glass-app-transparency:${transparency(settings.glassAppTransparency)}%; --glass-sidebar-transparency:${transparency(settings.glassSidebarTransparency)}%; --glass-tabs-transparency:${transparency(settings.glassTabsTransparency)}%; --glass-terminal-transparency:${transparency(settings.glassTerminalTransparency)}%; --glass-floating-transparency:${transparency(settings.glassFloatingTransparency)}%; --glass-settings-transparency:${transparency(settings.glassSettingsTransparency)}%; --glass-controls-transparency:${transparency(settings.glassControlsTransparency)}%; --glass-overlay-alpha:${overlayAlpha}; background:${appBackground}; color:${c.text}; }
+    .app-shell { --settings-bg:${c.background}; --settings-muted:${c.muted}; --settings-secondary-text:${c.secondaryText}; --settings-text:${c.text}; --settings-raised:${c.raised}; --settings-border:${c.border}; --settings-accent:${c.accent}; --settings-track:${c.hover}; --settings-selected:${c.selected}; --settings-hover:${c.hover}; --app-accent:${c.accent}; --app-accent-text:${c.accentText}; --app-input:${c.input}; --app-warning:${c.warning}; --app-error:${c.error}; --app-canvas:${c.background}; --app-surface:${c.sidebar}; --app-raised:${c.raised}; --app-border:${c.border}; --app-text:${c.text}; --app-secondary:${c.secondaryText}; --app-muted:${c.muted}; --app-hover:${c.hover}; --app-selected:${c.selected}; --app-highlight:${themeColorWithOpacity(c.text, 0.07)}; --editor-background-opacity:${editorBackgroundOpacity}; --editor-background-blur:${editorBackgroundBlur}px; --editor-glass-blur:${GLASS_BLUR}px; --glass-app-transparency:${transparency(settings.glassAppTransparency)}%; --glass-sidebar-transparency:${transparency(settings.glassSidebarTransparency)}%; --glass-tabs-transparency:${transparency(settings.glassTabsTransparency)}%; --glass-terminal-transparency:${transparency(settings.glassTerminalTransparency)}%; --glass-floating-transparency:${transparency(settings.glassFloatingTransparency)}%; --glass-settings-transparency:${transparency(settings.glassSettingsTransparency)}%; --glass-controls-transparency:${transparency(settings.glassControlsTransparency)}%; --glass-overlay-alpha:${overlayAlpha}; background:${appBackground}; color:${c.text}; }
     .settings-backdrop { background:rgba(0,0,0,${overlayAlpha}); }
     .file-explorer { background:${sidebarBackground}; border-color:${c.border}; }
     .terminal-stack,.terminal-host,.terminal-view { background:${terminalBackground}; }

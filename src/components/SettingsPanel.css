@@ -642,3 +642,12 @@
     padding: 16px 18px 24px;
   }
 }
+
+.settings-main .settings-button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-main .settings-button-row .settings-action {
+  margin: 8px 0 12px;
+}

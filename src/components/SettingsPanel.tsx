@@ -1,5 +1,6 @@
 import { ChevronRight, LoaderCircle, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { APP_THEME_OPTIONS, appThemeDefinition, DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "../lib/settings";
 import type { UpdateInfo } from "../lib/updater";
 import type { PluginConfigurationContribution, PluginConfigurationProperty } from "../lib/pluginRuntime";
@@ -11,7 +12,7 @@ import "./SettingsPanel.css";
 const settingsCategories = [
   { id: "editor", label: "Editor", description: "Formatting and editing behavior.", sections: [{ id: "formatting", label: "Formatting" }, { id: "editing", label: "Editing" }] },
   { id: "typography", label: "Fonts & Typography", description: "Choose typefaces and tune reading density.", sections: [{ id: "interface", label: "App interface" }, { id: "editor", label: "Code editor" }, { id: "terminal", label: "Terminal" }] },
-  { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes.", sections: [{ id: "interface", label: "Interface" }, { id: "editor-colors", label: "Editor colors" }, { id: "transparency", label: "Transparency and blur" }] },
+  { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes.", sections: [{ id: "interface", label: "Interface" }, { id: "editor-colors", label: "Editor colors" }, { id: "transparency", label: "Transparency and blur" }, { id: "background", label: "App background" }] },
   { id: "terminal", label: "Terminal", description: "Cursor and scrollback behavior.", sections: [{ id: "terminal", label: "Terminal" }] },
   { id: "files", label: "Files", description: "Workspace browsing preferences.", sections: [{ id: "file-explorer", label: "File viewer" }] },
   { id: "ai", label: "AI", description: "Default terminal agent for building plugins and themes.", sections: [{ id: "agent", label: "Terminal agent" }] },
@@ -253,6 +254,20 @@ export default function SettingsPanel({
     <span><strong>{label}</strong><small>{description}</small></span>
     <input type="checkbox" checked={Boolean(settings[key])} onChange={(event) => onChange({ [key]: event.target.checked })} />
   </label>;
+  const editorBackgroundName = settings.editorBackgroundImage.split(/[\\/]/).pop() ?? "";
+  const chooseEditorBackground = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: "Choose app background",
+        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"] }],
+      });
+      if (typeof selected === "string") onChange({ editorBackgroundImage: selected });
+    } catch {
+      // Dialog is unavailable outside Tauri.
+    }
+  };
 
   const selectedCategory = settingsCategories.find((category) => category.id === activeCategory)!;
   const sectionsForCategory = (category: typeof settingsCategories[number]) => {
@@ -401,6 +416,18 @@ export default function SettingsPanel({
                   {transparency("glassTerminalTransparency", "Terminal")}
                   {transparency("glassFloatingTransparency", "Menus and popovers")}
                   {transparency("glassControlsTransparency", "Inputs and controls")}
+                </>}
+              </section>
+              <section className="settings-section" id="settings-section-appearance-background"><h3>App background</h3>
+                <div className="settings-button-row">
+                  <button className="settings-action" onClick={() => void chooseEditorBackground()}>Choose image</button>
+                  {settings.editorBackgroundImage && <button className="settings-action" onClick={() => onChange({ editorBackgroundImage: "" })}>Remove</button>}
+                </div>
+                {settings.editorBackgroundImage ? <div className="setting-note">{editorBackgroundName}</div> : <div className="setting-note">Show an image behind the whole app.</div>}
+                {settings.editorBackgroundImage && settings.editorGlassEnabled && <div className="setting-note">Disabled while transparency is enabled. Turn off Transparency above to use it.</div>}
+                {settings.editorBackgroundImage && !settings.editorGlassEnabled && <>
+                  <label className="setting-field"><span>Transparency <b>{settings.editorBackgroundTransparency}%</b></span><input type="range" min="0" max="100" step="1" value={settings.editorBackgroundTransparency} onChange={(event) => onChange({ editorBackgroundTransparency: Number(event.target.value) })} /></label>
+                  <label className="setting-field"><span>Blur <b>{settings.editorBackgroundBlur}px</b></span><input type="range" min="0" max="40" step="1" value={settings.editorBackgroundBlur} onChange={(event) => onChange({ editorBackgroundBlur: Number(event.target.value) })} /></label>
                 </>}
               </section>
             </>}
