@@ -19,6 +19,7 @@ import * as codeMirrorState from "@codemirror/state";
 import * as codeMirrorAutocomplete from "@codemirror/autocomplete";
 import * as codeMirrorHighlight from "@lezer/highlight";
 import type { AppSettings, ThemeDefinition } from "./settings";
+import { loadSettings } from "./settings";
 
 const builtinManifestSources: Record<string, string> = import.meta.env.PROD
   ? import.meta.glob<string>(["../../plugins/*/plugin.json", "!../../plugins/api-tester/plugin.json"], { eager: true, query: "?raw", import: "default" })
@@ -3773,6 +3774,8 @@ function showInputBoxModal(options?: { prompt?: string; value?: string; password
 
 function showNotificationToast(message: string, options?: { severity?: "info" | "warning" | "error"; actions?: { label: string; run: () => void }[]; progress?: boolean }): string {
   const id = `notification-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const { notificationsEnabled, notificationAutoDismiss, notificationDuration } = loadSettings();
+  if (!notificationsEnabled) return id;
   const toast = document.createElement("div");
   toast.className = `arc-plugin-toast ${options?.severity ?? "info"}`;
   const text = document.createElement("span");
@@ -3785,8 +3788,23 @@ function showNotificationToast(message: string, options?: { severity?: "info" | 
     button.addEventListener("click", () => { action.run(); toast.remove(); });
     toast.append(button);
   }
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.textContent = "×";
+  dismiss.title = "Dismiss";
+  dismiss.setAttribute("aria-label", "Dismiss notification");
+  dismiss.addEventListener("click", () => toast.remove());
+  toast.append(dismiss);
   document.body.append(toast);
-  window.setTimeout(() => toast.remove(), 6000);
+  let timer = 0;
+  const arm = (delay: number) => {
+    window.clearTimeout(timer);
+    if (!notificationAutoDismiss) return;
+    timer = window.setTimeout(() => toast.remove(), delay);
+  };
+  toast.addEventListener("mouseenter", () => window.clearTimeout(timer));
+  toast.addEventListener("mouseleave", () => arm(Math.max(1, notificationDuration) * 1000));
+  arm(Math.max(1, notificationDuration) * 1000);
   return id;
 }
 

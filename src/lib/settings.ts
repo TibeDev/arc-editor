@@ -52,6 +52,9 @@ export type AppSettings = {
   autoIndent: boolean;
   showHiddenFiles: boolean;
   sidebarWidth: number;
+  notificationsEnabled: boolean;
+  notificationAutoDismiss: boolean;
+  notificationDuration: number;
   terminalFontFamily: string;
   terminalFontSize: number;
   terminalCursorStyle: "block" | "underline" | "bar";
@@ -88,7 +91,7 @@ export type AppSettings = {
   agentCommand: string;
 };
 
-export const APP_SETTINGS_VERSION = 4;
+export const APP_SETTINGS_VERSION = 6;
 
 export const GLASS_BLUR = 18;
 
@@ -143,6 +146,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoIndent: true,
   showHiddenFiles: false,
   sidebarWidth: 244,
+  notificationsEnabled: true,
+  notificationAutoDismiss: true,
+  notificationDuration: 6,
   terminalFontFamily: "",
   terminalFontSize: 12,
   terminalCursorStyle: "block",
@@ -349,6 +355,16 @@ export function loadSettings(): AppSettings {
     settings.agentCommand = typeof settings.agentCommand === "string"
       ? settings.agentCommand.slice(0, 500)
       : DEFAULT_SETTINGS.agentCommand;
+    if (typeof settings.notificationsEnabled !== "boolean") {
+      settings.notificationsEnabled = DEFAULT_SETTINGS.notificationsEnabled;
+    }
+    if (typeof settings.notificationAutoDismiss !== "boolean") {
+      settings.notificationAutoDismiss = DEFAULT_SETTINGS.notificationAutoDismiss;
+    }
+    if (!Number.isFinite(settings.notificationDuration)) {
+      settings.notificationDuration = DEFAULT_SETTINGS.notificationDuration;
+    }
+    settings.notificationDuration = Math.min(30, Math.max(1, settings.notificationDuration));
     if (!Number.isFinite(settings.zoomLevel)) settings.zoomLevel = DEFAULT_SETTINGS.zoomLevel;
     settings.zoomLevel = Math.min(2, Math.max(0.5, settings.zoomLevel));
     settings.editorBackgroundImage = typeof settings.editorBackgroundImage === "string" ? settings.editorBackgroundImage : "";

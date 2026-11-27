@@ -1,4 +1,4 @@
-import { ChevronRight, LoaderCircle, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { ChevronRight, LoaderCircle, Menu, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { APP_THEME_OPTIONS, appThemeDefinition, DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "../lib/settings";
@@ -15,6 +15,7 @@ const settingsCategories = [
   { id: "appearance", label: "Appearance", description: "Transparency, interface style, and color themes.", sections: [{ id: "interface", label: "Interface" }, { id: "editor-colors", label: "Editor colors" }, { id: "transparency", label: "Transparency and blur" }, { id: "background", label: "App background" }] },
   { id: "terminal", label: "Terminal", description: "Cursor and scrollback behavior.", sections: [{ id: "terminal", label: "Terminal" }] },
   { id: "files", label: "Files", description: "Workspace browsing preferences.", sections: [{ id: "file-explorer", label: "File viewer" }] },
+  { id: "notifications", label: "Notifications", description: "Choose how in-app notifications behave.", sections: [{ id: "behavior", label: "Notification behavior" }] },
   { id: "ai", label: "AI", description: "Default terminal agent for building plugins and themes.", sections: [{ id: "agent", label: "Terminal agent" }] },
   { id: "updates", label: "Updates", description: "Release channel and automatic updates.", sections: [{ id: "channel", label: "Release channel" }, { id: "behavior", label: "Automatic updates" }] },
   { id: "plugins", label: "Plugins", description: "Settings contributed by installed plugins.", sections: [] },
@@ -227,6 +228,7 @@ export default function SettingsPanel({
   onInstallUpdate: () => void;
 }) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("editor");
+  const [navOpen, setNavOpen] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<Set<SettingsCategory>>(() => new Set(["editor"]));
   const [categorySearch, setCategorySearch] = useState("");
   const [themeSearch, setThemeSearch] = useState("");
@@ -297,8 +299,20 @@ export default function SettingsPanel({
   return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="settings-panel" role="dialog" aria-modal="true" aria-label="Settings">
       <button className="settings-close" aria-label="Close settings" title="Close settings" onClick={onClose}><X size={16} /></button>
+      <div className="settings-mobile-bar">
+        <button
+          className="settings-nav-toggle"
+          aria-label="Toggle settings menu"
+          aria-expanded={navOpen}
+          onClick={() => setNavOpen((current) => !current)}
+        >
+          <Menu size={16} />
+          <span>{selectedCategory.label}</span>
+        </button>
+      </div>
       <div className="settings-layout">
-        <nav className="settings-nav" aria-label="Settings categories">
+        {navOpen && <button className="settings-nav-scrim" aria-label="Close settings menu" onClick={() => setNavOpen(false)} />}
+        <nav className={`settings-nav${navOpen ? " open" : ""}`} aria-label="Settings categories">
           <label className="settings-search">
             <Search size={14} aria-hidden="true" />
             <input type="text" value={categorySearch} placeholder="Search categories" aria-label="Search settings categories" onChange={(event) => {
@@ -338,6 +352,7 @@ export default function SettingsPanel({
                       setActiveCategory(category.id);
                       setTimeout(() => scrollToSection(section.id), 0);
                     }
+                    setNavOpen(false);
                   }}>{section.label}</button>)}
                 </div>}
               </div>;
@@ -477,6 +492,14 @@ export default function SettingsPanel({
                 </div>}
               </section>
             </>}
+            {activeCategory === "notifications" && <section className="settings-section" id="settings-section-notifications-behavior"><h3>Notification behavior</h3>
+              {toggle("notificationsEnabled", "Enable notifications", "Show status messages and plugin toasts.")}
+              {settings.notificationsEnabled && <>
+                {toggle("notificationAutoDismiss", "Auto-dismiss notifications", "Close status messages and plugin toasts by themselves.")}
+                {settings.notificationAutoDismiss && <label className="setting-field"><span>Auto-dismiss after <b>{settings.notificationDuration}s</b></span><input type="range" min="1" max="30" step="1" value={settings.notificationDuration} onChange={(event) => onChange({ notificationDuration: Number(event.target.value) })} /></label>}
+                <div className="setting-note">Hover over a notification to pause its timer.</div>
+              </>}
+            </section>}
             {activeCategory === "plugins" && <>
               {(!pluginConfigurations || pluginConfigurations.length === 0) && <section className="settings-section" id="settings-section-plugins-none"><h3>Plugin settings</h3><p>No installed plugin contributes settings.</p></section>}
               {pluginConfigurations?.map((contribution) => <section className="settings-section" id={`settings-section-plugins-${contribution.id}`} key={contribution.id}>

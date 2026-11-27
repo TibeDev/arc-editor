@@ -141,6 +141,7 @@
   line-height: 1.5;
   resize: none;
   overflow-y: auto;
+  overflow-x: hidden;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .bw-input-large {
@@ -164,6 +165,7 @@
 .bw-list {
   max-height: 320px;
   overflow: auto;
+  overflow-x: hidden;
   padding: 2px;
   border-radius: 9px;
 }
@@ -274,7 +276,7 @@
   opacity: 0.45;
   filter: grayscale(1);
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease, filter 0.2s ease;
 }
 .bw-colors {
   display: grid;
@@ -314,6 +316,10 @@
   animation: bw-surface-in 0.34s ease backwards;
   animation-delay: var(--bw-delay, 0s);
   transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.bw-color .theme-color-picker,
+.bw-color .theme-color-picker * {
+  animation: none !important;
 }
 
 .bw-review {

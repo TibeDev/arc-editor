@@ -1821,6 +1821,14 @@ function App() {
   const [filter, setFilter] = useState('');
   const [message, setMessage] = useState('');
   const messageHovered = useRef(false);
+  useEffect(() => {
+    if (!message || !settings.notificationsEnabled || !settings.notificationAutoDismiss) return;
+    const timer = window.setTimeout(() => {
+      if (messageHovered.current) return;
+      setMessage((current) => (current === message ? '' : current));
+    }, Math.max(1, settings.notificationDuration) * 1000);
+    return () => window.clearTimeout(timer);
+  }, [message, settings.notificationsEnabled, settings.notificationAutoDismiss, settings.notificationDuration]);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
@@ -1835,6 +1843,7 @@ function App() {
     startWidth: number;
     pointerId: number;
     pendingWidth: number;
+    collapsed: boolean;
   } | null>(null);
   const viewerDragFrame = useRef<number | null>(null);
   const fileExplorerRef = useRef<HTMLElement>(null);
@@ -2203,6 +2212,7 @@ function App() {
       startWidth: viewerOpen ? settings.sidebarWidth : MIN_VIEWER_WIDTH,
       pointerId: event.pointerId,
       pendingWidth: viewerOpen ? settings.sidebarWidth : MIN_VIEWER_WIDTH,
+      collapsed: false,
     };
   };
 
@@ -2211,6 +2221,7 @@ function App() {
     if (!element) return;
     element.style.width = `${width}px`;
     element.style.flexBasis = `${width}px`;
+    element.style.minWidth = width < MIN_VIEWER_WIDTH ? '0px' : '';
   };
 
   useEffect(() => {
@@ -2219,12 +2230,15 @@ function App() {
       if (!drag || drag.pointerId !== event.pointerId) return;
       event.preventDefault();
       const width = Math.round(drag.startWidth + event.clientX - drag.startX);
+      drag.collapsed = width < MIN_VIEWER_WIDTH;
       drag.pendingWidth = Math.max(MIN_VIEWER_WIDTH, Math.min(480, width));
       if (viewerDragFrame.current !== null) return;
       viewerDragFrame.current = window.requestAnimationFrame(() => {
         viewerDragFrame.current = null;
         if (viewerDrag.current)
-          applyViewerWidth(viewerDrag.current.pendingWidth);
+          applyViewerWidth(
+            viewerDrag.current.collapsed ? 0 : viewerDrag.current.pendingWidth,
+          );
       });
     };
     const finishResize = (event: PointerEvent) => {
@@ -2235,10 +2249,9 @@ function App() {
         window.cancelAnimationFrame(viewerDragFrame.current);
         viewerDragFrame.current = null;
       }
-      applyViewerWidth(drag.pendingWidth);
-      const collapsed = drag.startWidth + event.clientX - drag.startX < MIN_VIEWER_WIDTH;
-      setViewerOpen(!collapsed);
-      if (!collapsed) updateSettings({ sidebarWidth: drag.pendingWidth });
+      applyViewerWidth(drag.collapsed ? 0 : drag.pendingWidth);
+      setViewerOpen(!drag.collapsed);
+      if (!drag.collapsed) updateSettings({ sidebarWidth: drag.pendingWidth });
     };
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', finishResize);
@@ -5560,7 +5573,7 @@ function App() {
                 <span>New folder</span>
               </div>
             </div>
-            {message && (
+            {message && settings.notificationsEnabled && (
               <div
                 className={`welcome-message ${message.startsWith('Could not') ? 'error' : ''}`}
               >
@@ -5880,7 +5893,7 @@ function App() {
                 </button>
               ))}
             </div>
-            {message && (
+            {message && settings.notificationsEnabled && (
               <div
                 className={`message ${message.startsWith('Could not') ? 'error' : ''}`}
                 onMouseDown={(event) => {
