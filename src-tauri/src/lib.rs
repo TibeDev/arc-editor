@@ -3749,6 +3749,44 @@ pub fn run() {
             updater_check,
             updater_install
         ])
+        .setup(|app| {
+            #[cfg(target_os = "linux")]
+            {
+                use gtk::prelude::*;
+                use std::sync::{Arc, Mutex};
+
+                let handle = app.handle().clone();
+                if let Some(window) = app.get_webview_window("main") {
+                    window.with_webview(move |webview| {
+                        let webview = webview.inner();
+                        let previous_scale = Arc::new(Mutex::new(1.0_f64));
+                        webview.connect_event(move |_, event| {
+                            if let Some(pinch) = event.downcast_ref::<gdk::EventTouchpadPinch>() {
+                                let mut previous = previous_scale.lock().unwrap();
+                                let scale = pinch.scale();
+                                let factor = if (scale - 1.0).abs() < f64::EPSILON {
+                                    1.0
+                                } else {
+                                    scale / *previous
+                                };
+                                *previous = scale;
+                                let _ = handle.emit("pinch-zoom", factor);
+                                return gtk::glib::Propagation::Stop;
+                            }
+                            if let Some(scroll) = event.downcast_ref::<gdk::EventScroll>() {
+                                if scroll.state().contains(gdk::ModifierType::CONTROL_MASK) {
+                                    let (_, dy) = scroll.delta();
+                                    let _ = handle.emit("pinch-zoom", (-dy * 0.08).exp());
+                                    return gtk::glib::Propagation::Stop;
+                                }
+                            }
+                            gtk::glib::Propagation::Proceed
+                        });
+                    })?;
+                }
+            }
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while running Arc");
     app.run(|app_handle, event| {

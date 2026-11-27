@@ -64,6 +64,7 @@ import {
   mkdir,
   open as openFs,
   readDir,
+  readFile,
   readTextFile,
   remove,
   rename,
@@ -78,14 +79,13 @@ import {
   ChevronRight,
   Circle,
   File,
+  FileImage,
   FilePlus2,
   Folder,
   FolderOpen,
   Github,
   Globe,
   FolderPlus,
-  Maximize2,
-  Minimize2,
   PanelLeftClose,
   PanelLeftOpen,
   Puzzle,
@@ -95,6 +95,8 @@ import {
   WandSparkles,
   Terminal as TerminalIcon,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import {
   SiCss,
@@ -329,21 +331,6 @@ function pruneLayout(
   if (!first) return second;
   if (!second) return first;
   return { ...layout, first, second };
-}
-
-function removeLayoutGroup(
-  layout: LayoutNode,
-  groupId: GroupId,
-): LayoutNode | null {
-  if (layout.type === 'group')
-    return layout.groupId === groupId ? null : layout;
-  const first = removeLayoutGroup(layout.first, groupId);
-  const second = removeLayoutGroup(layout.second, groupId);
-  if (!first) return second;
-  if (!second) return first;
-  return first === layout.first && second === layout.second
-    ? layout
-    : { ...layout, first, second };
 }
 
 function collectGroupIds(layout: LayoutNode): GroupId[] {
@@ -623,6 +610,19 @@ function expandDocumentTemplate(view: EditorView, extension: string): boolean {
 const extensionOf = (name: string) =>
   name.split('.').pop()?.toLowerCase() ?? '';
 
+const IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  avif: 'image/avif',
+};
+
+const isImageName = (name: string) => extensionOf(name) in IMAGE_MIME;
+
 function contentFingerprint(value: string): string {
   let hashA = 0x811c9dc5;
   let hashB = 0x9e3779b9;
@@ -776,6 +776,7 @@ function FileIcon({ name }: { name: string }) {
   if (['md', 'mdx'].includes(ext))
     return <SiMarkdown className="file-icon icon-md" />;
   if (ext === 'svg') return <SiSvg className="file-icon icon-svg" />;
+  if (isImageName(name)) return <FileImage className="file-icon icon-image" />;
   if (['yaml', 'yml'].includes(ext))
     return <SiYaml className="file-icon icon-yaml" />;
   return <File size={14} className="file-icon" />;
@@ -828,6 +829,188 @@ async function loadCodeLanguage(extension: string): Promise<Extension> {
   return [];
 }
 
+function ImageView({
+  path,
+  name,
+  workspace,
+}: {
+  path: string;
+  name: string;
+  workspace: string;
+}) {
+  const [src, setSrc] = useState('');
+  const [error, setError] = useState('');
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const stage = useRef<HTMLDivElement>(null);
+  const scaleRef = useRef(1);
+  scaleRef.current = scale;
+  const drag = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = '';
+    void (async () => {
+      try {
+        const bytes = await readFile(`${workspace}/${path}`);
+        const mime = IMAGE_MIME[extensionOf(name)] ?? 'application/octet-stream';
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+        if (!cancelled) setSrc(objectUrl);
+      } catch (cause) {
+        if (!cancelled) setError(String(cause));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [path, name, workspace]);
+
+  const zoomBy = useCallback((factor: number) => {
+    setScale((current) =>
+      Math.min(20, Math.max(0.1, Number((current * factor).toFixed(3)))),
+    );
+  }, []);
+
+  const reset = useCallback(() => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  }, []);
+
+  useEffect(() => {
+    const node = stage.current;
+    if (!node) return;
+    const clampScale = (value: number) =>
+      Math.min(20, Math.max(0.1, Number(value.toFixed(3))));
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (gestureActive) return;
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
+      zoomBy(Math.exp(-delta * 0.0015));
+    };
+    let gestureActive = false;
+    let pinchBase = 1;
+    const onGestureStart = (event: Event) => {
+      event.preventDefault();
+      gestureActive = true;
+      pinchBase = scaleRef.current;
+    };
+    const onGestureChange = (event: Event) => {
+      event.preventDefault();
+      const scaleFactor = (event as Event & { scale?: number }).scale ?? 1;
+      setScale(clampScale(pinchBase * scaleFactor));
+    };
+    const onGestureEnd = (event: Event) => {
+      event.preventDefault();
+      gestureActive = false;
+    };
+    node.addEventListener('wheel', onWheel, { passive: false });
+    node.addEventListener('gesturestart', onGestureStart, { passive: false });
+    node.addEventListener('gesturechange', onGestureChange, { passive: false });
+    node.addEventListener('gestureend', onGestureEnd, { passive: false });
+    return () => {
+      node.removeEventListener('wheel', onWheel);
+      node.removeEventListener('gesturestart', onGestureStart);
+      node.removeEventListener('gesturechange', onGestureChange);
+      node.removeEventListener('gestureend', onGestureEnd);
+    };
+  }, [zoomBy]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key === '=' || event.key === '+' || event.code === 'NumpadAdd') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        zoomBy(1.25);
+      } else if (event.key === '-' || event.code === 'NumpadSubtract') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        zoomBy(1 / 1.25);
+      } else if (event.key === '0' || event.code === 'Numpad0') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        reset();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [reset, zoomBy]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<number>('pinch-zoom', (event) => {
+      const factor = event.payload;
+      if (Number.isFinite(factor) && factor > 0) zoomBy(factor);
+    }).then((stop) => {
+      unlisten = stop;
+    });
+    return () => unlisten?.();
+  }, [zoomBy]);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !src) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = {
+      x: event.clientX,
+      y: event.clientY,
+      originX: offset.x,
+      originY: offset.y,
+    };
+  };
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    if (!current) return;
+    setOffset({
+      x: current.originX + (event.clientX - current.x),
+      y: current.originY + (event.clientY - current.y),
+    });
+  };
+  const endDrag = () => {
+    drag.current = null;
+  };
+
+  return (
+    <div className="image-view">
+      <div className="image-toolbar">
+        <button onClick={() => zoomBy(1 / 1.25)} title="Zoom out">
+          <ZoomOut size={15} />
+        </button>
+        <span className="image-zoom-level">{Math.round(scale * 100)}%</span>
+        <button onClick={() => zoomBy(1.25)} title="Zoom in">
+          <ZoomIn size={15} />
+        </button>
+        <button onClick={reset} title="Reset zoom and position">
+          Reset
+        </button>
+      </div>
+      <div
+        ref={stage}
+        className="image-stage"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
+        onDoubleClick={reset}
+      >
+        {error ? (
+          <span className="image-error">{error}</span>
+        ) : src ? (
+          <img
+            src={src}
+            alt={name}
+            draggable={false}
+            style={{
+              transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+            }}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function EditorPane({
   group,
   file,
@@ -859,8 +1042,6 @@ function EditorPane({
   onSelectionChange,
   settings,
   theme,
-  floating,
-  onToggleFloat,
 }: {
   group: EditorGroup;
   file?: EditorFile;
@@ -895,8 +1076,6 @@ function EditorPane({
   onSelectionChange?: (path: string) => void;
   settings: AppSettings;
   theme: ThemeDefinition;
-  floating?: boolean;
-  onToggleFloat?: () => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -916,7 +1095,7 @@ function EditorPane({
   const [dragActive, setDragActive] = useState(false);
 
   useEffect(() => {
-    if (!file || !host.current) {
+    if (!file || !host.current || isImageName(file.name)) {
       view.current?.destroy();
       view.current = null;
       return;
@@ -1367,17 +1546,6 @@ function EditorPane({
           ),
         )}
         <div className="tab-spacer" />
-        <button
-          className="pane-float-button"
-          title={floating ? 'Dock panel' : 'Float panel'}
-          aria-label={floating ? 'Dock panel' : 'Float panel'}
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleFloat?.();
-          }}
-        >
-          {floating ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-        </button>
       </div>
       {file && diskConflict && (
         <div className="disk-conflict">
@@ -1386,7 +1554,12 @@ function EditorPane({
           <button onClick={() => onConflictKeep?.(file.path)}>Keep mine</button>
         </div>
       )}
-      {file && <div className="editor-host" ref={host} />}
+      {file &&
+        (isImageName(file.name) ? (
+          <ImageView path={file.path} name={file.name} workspace={workspace} />
+        ) : (
+          <div className="editor-host" ref={host} />
+        ))}
       {group.activePath === GITHUB_TAB_KEY && (
         <Suspense fallback={<div className="editor-empty" />}>
           <GithubPanel workspace={workspace} />
@@ -1628,24 +1801,6 @@ function App() {
     groupId: 'group-1',
   });
   const [activeGroupId, setActiveGroupId] = useState<GroupId>('group-1');
-  const [floatingGroupId, setFloatingGroupId] = useState<GroupId | null>(null);
-  const [floatingBounds, setFloatingBounds] = useState(() => {
-    const width = Math.min(760, Math.max(360, window.innerWidth - 96));
-    const height = Math.min(560, Math.max(280, window.innerHeight - 120));
-    return {
-      x: Math.max(24, Math.round((window.innerWidth - width) / 2)),
-      y: Math.max(24, Math.round((window.innerHeight - height) / 2)),
-      width,
-      height,
-    };
-  });
-  const floatingDrag = useRef<{
-    mode: 'move' | 'resize';
-    pointerId: number;
-    startX: number;
-    startY: number;
-    bounds: { x: number; y: number; width: number; height: number };
-  } | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedDirectory, setSelectedDirectory] = useState('');
   const [selectedPath, setSelectedPath] = useState('');
@@ -2067,56 +2222,6 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    const handleMove = (event: PointerEvent) => {
-      const drag = floatingDrag.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      const dx = event.clientX - drag.startX;
-      const dy = event.clientY - drag.startY;
-      if (drag.mode === 'move') {
-        setFloatingBounds({
-          ...drag.bounds,
-          x: Math.max(
-            0,
-            Math.min(window.innerWidth - 80, drag.bounds.x + dx),
-          ),
-          y: Math.max(
-            0,
-            Math.min(window.innerHeight - 40, drag.bounds.y + dy),
-          ),
-        });
-      } else {
-        setFloatingBounds({
-          ...drag.bounds,
-          width: Math.max(
-            280,
-            Math.min(window.innerWidth - drag.bounds.x, drag.bounds.width + dx),
-          ),
-          height: Math.max(
-            180,
-            Math.min(
-              window.innerHeight - drag.bounds.y,
-              drag.bounds.height + dy,
-            ),
-          ),
-        });
-      }
-    };
-    const finish = (event: PointerEvent) => {
-      if (floatingDrag.current?.pointerId === event.pointerId)
-        floatingDrag.current = null;
-    };
-    window.addEventListener('pointermove', handleMove);
-    window.addEventListener('pointerup', finish);
-    window.addEventListener('pointercancel', finish);
-    return () => {
-      window.removeEventListener('pointermove', handleMove);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', finish);
-    };
-  }, []);
-
   const persistTheme = async (theme: ThemeDefinition, custom: boolean) => {
     const saved = { ...theme, name: theme.name.trim() };
     try {
@@ -2220,21 +2325,27 @@ function App() {
       if (event.ctrlKey || event.metaKey) event.preventDefault();
     };
     const preventGestureZoom = (event: Event) => event.preventDefault();
-    window.addEventListener('wheel', preventWheelZoom, { passive: false });
+    window.addEventListener('wheel', preventWheelZoom, {
+      passive: false,
+      capture: true,
+    });
     window.addEventListener('gesturestart', preventGestureZoom, {
       passive: false,
+      capture: true,
     });
     window.addEventListener('gesturechange', preventGestureZoom, {
       passive: false,
+      capture: true,
     });
     window.addEventListener('gestureend', preventGestureZoom, {
       passive: false,
+      capture: true,
     });
     return () => {
-      window.removeEventListener('wheel', preventWheelZoom);
-      window.removeEventListener('gesturestart', preventGestureZoom);
-      window.removeEventListener('gesturechange', preventGestureZoom);
-      window.removeEventListener('gestureend', preventGestureZoom);
+      window.removeEventListener('wheel', preventWheelZoom, true);
+      window.removeEventListener('gesturestart', preventGestureZoom, true);
+      window.removeEventListener('gesturechange', preventGestureZoom, true);
+      window.removeEventListener('gestureend', preventGestureZoom, true);
     };
   }, []);
 
@@ -2282,43 +2393,6 @@ function App() {
     setActiveGroupId(newGroupId);
     return newGroupId;
   };
-
-  const toggleFloatingGroup = (groupId: GroupId) => {
-    if (floatingGroupId === groupId) {
-      setFloatingGroupId(null);
-      setLayout((current) =>
-        collectGroupIds(current).includes(groupId)
-          ? current
-          : (() => {
-              const targetId = collectGroupIds(current).find(
-                (id) => id !== groupId,
-              );
-              return targetId
-                ? insertSplit(
-                    current,
-                    targetId,
-                    groupId,
-                    { direction: 'vertical', after: true },
-                    `split-${++splitCounter.current}`,
-                  )
-                : current;
-            })(),
-      );
-      setActiveGroupId(groupId);
-      return;
-    }
-    const nextActive =
-      collectGroupIds(layout).find((id) => id !== groupId) ??
-      groups.find((group) => group.id !== groupId)?.id;
-    setFloatingGroupId(groupId);
-    setLayout((current) => removeLayoutGroup(current, groupId) ?? current);
-    if (activeGroupId === groupId && nextActive) setActiveGroupId(nextActive);
-  };
-
-  useEffect(() => {
-    if (floatingGroupId && !groups.some((group) => group.id === floatingGroupId))
-      setFloatingGroupId(null);
-  }, [floatingGroupId, groups]);
 
   // ---- Live file tree updates (backend watcher) ----
 
@@ -2664,6 +2738,7 @@ function App() {
       return null;
     }
     const id = `terminal-${Date.now()}-${++terminalCounter.current}`;
+    const targetGroupId = activeGroupId;
     const session = {
       id,
       key: `terminal:${id}`,
@@ -2674,7 +2749,7 @@ function App() {
     setTerminals((current) => [...current, session]);
     setGroups((current) =>
       current.map((group) =>
-        group.id === activeGroupId
+        group.id === targetGroupId
           ? {
               ...group,
               activePath: session.key,
@@ -2683,7 +2758,7 @@ function App() {
           : group,
       ),
     );
-    setActiveGroupId(activeGroupId);
+    setActiveGroupId(targetGroupId);
     setSettingsOpen(false);
     setThemeMakerOpen(false);
     setMessage('');
@@ -2696,9 +2771,10 @@ function App() {
       setMessage('Open a folder first.');
       return;
     }
+    const targetGroupId = activeGroupId;
     setGroups((current) =>
       current.map((group) =>
-        group.id === activeGroupId
+        group.id === targetGroupId
           ? {
               ...group,
               activePath: GITHUB_TAB_KEY,
@@ -2715,9 +2791,10 @@ function App() {
   };
 
   const openPluginPanel = () => {
+    const targetGroupId = activeGroupId;
     setGroups((current) =>
       current.map((group) =>
-        group.id === activeGroupId
+        group.id === targetGroupId
           ? {
               ...group,
               activePath: PLUGIN_TAB_KEY,
@@ -2734,9 +2811,10 @@ function App() {
   };
 
   const openBuilderPanel = () => {
+    const targetGroupId = activeGroupId;
     setGroups((current) =>
       current.map((group) =>
-        group.id === activeGroupId
+        group.id === targetGroupId
           ? {
               ...group,
               activePath: BUILDER_TAB_KEY,
@@ -2754,10 +2832,11 @@ function App() {
 
   const openPreview = (url = '') => {
     const key = `${PREVIEW_PREFIX}${Date.now()}-${++previewCounter.current}`;
+    const targetGroupId = activeGroupId;
     setPreviews((current) => [...current, { key, url, title: '' }]);
     setGroups((current) =>
       current.map((group) =>
-        group.id === activeGroupId
+        group.id === targetGroupId
           ? {
               ...group,
               activePath: key,
@@ -3235,7 +3314,6 @@ function App() {
       setGroups([{ id: 'group-1', activePath: '', tabs: [] }]);
       setLayout({ type: 'group', groupId: 'group-1' });
       setActiveGroupId('group-1');
-      setFloatingGroupId(null);
       groupCounter.current = 1;
       splitCounter.current = 0;
       setExpanded(new Set());
@@ -3256,15 +3334,16 @@ function App() {
     }
   };
 
-  const openFile = async (file: DiskFile, targetGroupId = activeGroupId) => {
+  const openFile = async (file: DiskFile, targetGroupId?: GroupId) => {
     if (file.kind !== 'file' || !workspace) return;
+    const groupId = targetGroupId ?? activeGroupId;
     const existing = openFiles.find((entry) => entry.path === file.path);
     const assignToGroup = () => {
-      const currentGroups = groups.some((group) => group.id === targetGroupId)
+      const currentGroups = groups.some((group) => group.id === groupId)
         ? groups
-        : [...groups, { id: targetGroupId, activePath: '', tabs: [] }];
+        : [...groups, { id: groupId, activePath: '', tabs: [] }];
       const nextGroups = currentGroups.map((group) => {
-        if (group.id === targetGroupId) {
+        if (group.id === groupId) {
           return {
             ...group,
             activePath: file.path,
@@ -3284,7 +3363,7 @@ function App() {
               : group.activePath,
         };
       });
-      normalizeGroups(nextGroups, targetGroupId);
+      normalizeGroups(nextGroups, groupId);
     };
     if (existing || openingPaths.current.has(file.path)) {
       assignToGroup();
@@ -3307,8 +3386,10 @@ function App() {
         setMessage('');
         return;
       }
-      const content = await readTextFile(absolutePath);
-      fileContents.current.set(file.path, content);
+      const content = isImageName(file.name)
+        ? null
+        : await readTextFile(absolutePath);
+      if (content !== null) fileContents.current.set(file.path, content);
       setOpenFiles((current) => [
         ...current,
         { path: file.path, name: file.name, revision: 0, dirty: false },
@@ -3344,6 +3425,7 @@ function App() {
     async (path: string): Promise<boolean> => {
       const file = openFiles.find((entry) => entry.path === path);
       if (!file || !workspace) return false;
+      if (isImageName(file.name)) return false;
       if (pendingEditorContent.current.size) flushPendingEditorContent();
       const currentContent = fileContents.current.get(path) ?? '';
       let content: string;
@@ -3674,9 +3756,10 @@ function App() {
       setSelectedPath(path);
       setSelectedPaths(new Set([path]));
       selectionAnchor.current = path;
+      const targetGroupId = activeGroupId;
       setGroups((current) =>
         current.map((group) =>
-          group.id === activeGroupId
+          group.id === targetGroupId
             ? {
                 ...group,
                 activePath: path,
@@ -4765,9 +4848,10 @@ function App() {
 
   const openPluginView = (id: string) => {
     const path = `${PLUGIN_VIEW_PREFIX}${id}`;
+    const targetGroupId = activeGroupId;
     setGroups((current) =>
       current.map((group) =>
-        group.id === activeGroupId
+        group.id === targetGroupId
           ? {
               ...group,
               activePath: path,
@@ -5169,7 +5253,7 @@ function App() {
     }
   };
 
-  const renderEditorGroup = (group: EditorGroup, floating = false) => (
+  const renderEditorGroup = (group: EditorGroup) => (
     <EditorPane
       key={group.id}
       group={group}
@@ -5240,8 +5324,6 @@ function App() {
       }
       settings={settings}
       theme={activeTheme}
-      floating={floating}
-      onToggleFloat={() => toggleFloatingGroup(group.id)}
     />
   );
 
@@ -5257,15 +5339,10 @@ function App() {
         />
       );
     }
-    if (node.groupId === floatingGroupId) return null;
     const group = groups.find((entry) => entry.id === node.groupId);
     if (!group) return null;
     return renderEditorGroup(group);
   };
-
-  const floatingGroup = floatingGroupId
-    ? groups.find((group) => group.id === floatingGroupId)
-    : undefined;
 
   const themeMaker = themeMakerOpen ? (
     <div className="theme-maker-overlay">
@@ -5689,52 +5766,6 @@ function App() {
           )}
           <section className="editor-root">
             <div className="editor-content">{renderLayout(layout)}</div>
-            {floatingGroup && (
-              <div
-                className="floating-panel"
-                style={{
-                  left: floatingBounds.x,
-                  top: floatingBounds.y,
-                  width: floatingBounds.width,
-                  height: floatingBounds.height,
-                }}
-                onPointerDown={(event) => {
-                  const target = event.target as HTMLElement;
-                  if (
-                    event.button !== 0 ||
-                    !target.closest('.tab-strip') ||
-                    target.closest('button, input')
-                  )
-                    return;
-                  event.preventDefault();
-                  floatingDrag.current = {
-                    mode: 'move',
-                    pointerId: event.pointerId,
-                    startX: event.clientX,
-                    startY: event.clientY,
-                    bounds: floatingBounds,
-                  };
-                }}
-              >
-                {renderEditorGroup(floatingGroup, true)}
-                <div
-                  className="floating-resize-handle"
-                  title="Resize panel"
-                  onPointerDown={(event) => {
-                    if (event.button !== 0) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    floatingDrag.current = {
-                      mode: 'resize',
-                      pointerId: event.pointerId,
-                      startX: event.clientX,
-                      startY: event.clientY,
-                      bounds: floatingBounds,
-                    };
-                  }}
-                />
-              </div>
-            )}
             {pluginRuntime.statusItems.length > 0 && (
               <div className="plugin-status-bar">
                 {pluginRuntime.statusItems

@@ -94,6 +94,8 @@ dependencies = [
 name = "arc"
 version = "0.1.2"
 dependencies = [
+ "gdk",
+ "gtk",
  "ignore",
  "keyring",
  "libc",

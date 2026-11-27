@@ -35,6 +35,8 @@ windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Securit
 
 [target.'cfg(target_os = "linux")'.dependencies]
 window-vibrancy-wayland = { package = "window-vibrancy", git = "https://github.com/tauri-apps/window-vibrancy.git", rev = "0d2bf22b77318690b54a27fa0505437718fd69f6" }
+gtk = "0.18.2"
+gdk = "0.18.2"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 window-vibrancy = "0.8.1"
