@@ -1,4 +1,5 @@
 import {
+  Fragment,
   lazy,
   Suspense,
   useCallback,
@@ -1840,6 +1841,19 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const [message, setMessage] = useState('');
+  const [toolbarOrder, setToolbarOrder] = useState<string[]>(() => {
+    try {
+      const value: unknown = JSON.parse(localStorage.getItem('arc.toolbar-order') ?? '[]');
+      return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const [toolbarDrag, setToolbarDrag] = useState<{
+    sourceId: string;
+    targetId: string;
+    after: boolean;
+  } | null>(null);
   const messageHovered = useRef(false);
   useEffect(() => {
     if (!message || !settings.notificationsEnabled || !settings.notificationAutoDismiss) return;
@@ -5485,6 +5499,159 @@ function App() {
     </div>
   ) : null;
 
+  const toolbarDragProps = (id: string) => ({
+    draggable: true,
+    onDragStart: (event: ReactDragEvent<HTMLButtonElement>) => {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', id);
+      setToolbarDrag({ sourceId: id, targetId: '', after: false });
+    },
+    onDragEnd: () => setToolbarDrag(null),
+  });
+
+  const toolbarButtonClass = (id: string) => {
+    if (!toolbarDrag || toolbarDrag.targetId !== id || toolbarDrag.targetId === toolbarDrag.sourceId) {
+      return 'settings-launch';
+    }
+    return `settings-launch ${toolbarDrag.after ? 'toolbar-drop-after' : 'toolbar-drop-before'}`;
+  };
+
+  const toolbarDropTarget = (footer: HTMLDivElement, clientX: number) => {
+    let targetId = '';
+    let after = false;
+    for (const button of footer.querySelectorAll<HTMLElement>('[data-toolbar-id]')) {
+      const rect = button.getBoundingClientRect();
+      if (clientX < rect.left + rect.width / 2) {
+        return { targetId: button.dataset.toolbarId ?? '', after: false };
+      }
+      targetId = button.dataset.toolbarId ?? '';
+      after = true;
+    }
+    return { targetId, after };
+  };
+
+  const reorderToolbar = (sourceId: string, targetId: string, after: boolean) => {
+    if (sourceId === targetId) return;
+    const ids = orderedToolbarItems.map((item) => item.id);
+    const from = ids.indexOf(sourceId);
+    if (from < 0) return;
+    const next = [...ids];
+    const [moved] = next.splice(from, 1);
+    const targetIndex = next.indexOf(targetId);
+    if (targetIndex < 0) return;
+    next.splice(targetIndex + (after ? 1 : 0), 0, moved);
+    localStorage.setItem('arc.toolbar-order', JSON.stringify(next));
+    setToolbarOrder(next);
+  };
+
+  const toolbarItems: { id: string; node: ReactNode }[] = [
+    {
+      id: 'plugins',
+      node: (
+        <button
+          className={toolbarButtonClass('plugins')}
+          data-toolbar-id="plugins"
+          aria-label="Open plugins"
+          title="Open plugins"
+          onClick={openPluginPanel}
+          {...toolbarDragProps('plugins')}
+        >
+          <Puzzle size={15} />
+        </button>
+      ),
+    },
+    {
+      id: 'github',
+      node: (
+        <button
+          className={toolbarButtonClass('github')}
+          data-toolbar-id="github"
+          aria-label="Open GitHub"
+          title="Open GitHub"
+          onClick={() => openGithubPanel()}
+          {...toolbarDragProps('github')}
+        >
+          <Github size={15} />
+        </button>
+      ),
+    },
+    {
+      id: 'agents',
+      node: (
+        <button
+          className={toolbarButtonClass('agents')}
+          data-toolbar-id="agents"
+          aria-label="Open Agents"
+          title="Open Agents (Ctrl+Shift+A)"
+          onClick={openAgentsPanel}
+          {...toolbarDragProps('agents')}
+        >
+          <MessagesSquare size={15} />
+        </button>
+      ),
+    },
+    {
+      id: 'builder',
+      node: (
+        <button
+          className={toolbarButtonClass('builder')}
+          data-toolbar-id="builder"
+          aria-label="Create plugin or theme"
+          title="Create plugin or theme"
+          onClick={openBuilderPanel}
+          {...toolbarDragProps('builder')}
+        >
+          <WandSparkles size={15} />
+        </button>
+      ),
+    },
+    {
+      id: 'terminal',
+      node: (
+        <button
+          className={toolbarButtonClass('terminal')}
+          data-toolbar-id="terminal"
+          aria-label="New terminal (Ctrl+T)"
+          title="New terminal (Ctrl+T)"
+          onClick={() => openTerminal()}
+          {...toolbarDragProps('terminal')}
+        >
+          <TerminalIcon size={15} />
+        </button>
+      ),
+    },
+    ...pluginRuntime.actions.map((action) => ({
+      id: action.id,
+      node: (
+        <button
+          className={toolbarButtonClass(action.id)}
+          data-toolbar-id={action.id}
+          aria-label={action.label}
+          title={action.title ?? action.label}
+          onClick={() => void runPluginAction(action)}
+          {...toolbarDragProps(action.id)}
+        >
+          <PluginToolbarIcon
+            name={action.icon}
+            svg={
+              action.icon
+                ? pluginRuntime.icons[`${action.pluginId}:${action.icon}`]
+                : undefined
+            }
+          />
+        </button>
+      ),
+    })),
+  ];
+  const toolbarRanks = new Map(toolbarOrder.map((id, index) => [id, index]));
+  const orderedToolbarItems = toolbarItems
+    .map((item, index) => ({
+      item,
+      rank: toolbarRanks.get(item.id) ?? toolbarOrder.length + index,
+    }))
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ item }) => item);
+
   return (
     <main
       className={`app-shell app-theme-${settings.appTheme} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${editorBackgroundUrl ? 'has-editor-background' : ''}       ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''}`}
@@ -5914,66 +6081,50 @@ function App() {
                   ))}
               </div>
             )}
-            <div className="editor-footer">
-              <button
-                className="settings-launch"
-                aria-label="Open plugins"
-                title="Open plugins"
-                onClick={openPluginPanel}
-              >
-                <Puzzle size={15} />
-              </button>
-              <button
-                className="settings-launch"
-                aria-label="Open GitHub"
-                title="Open GitHub"
-                onClick={() => openGithubPanel()}
-              >
-                <Github size={15} />
-              </button>
-              <button
-                className="settings-launch"
-                aria-label="Open Agents"
-                title="Open Agents (Ctrl+Shift+A)"
-                onClick={openAgentsPanel}
-              >
-                <MessagesSquare size={15} />
-              </button>
-              <button
-                className="settings-launch"
-                aria-label="Create plugin or theme"
-                title="Create plugin or theme"
-                onClick={openBuilderPanel}
-              >
-                <WandSparkles size={15} />
-              </button>
-              <button
-                className="settings-launch"
-                aria-label="New terminal (Ctrl+T)"
-                title="New terminal (Ctrl+T)"
-                onClick={() => openTerminal()}
-              >
-                <TerminalIcon size={15} />
-              </button>
-              {pluginRuntime.actions.map((action) => (
-                <button
-                  key={action.id}
-                  className="settings-launch"
-                  aria-label={action.label}
-                  title={action.title ?? action.label}
-                  onClick={() => void runPluginAction(action)}
-                >
-                  <PluginToolbarIcon
-                    name={action.icon}
-                    svg={
-                      action.icon
-                        ? pluginRuntime.icons[
-                            `${action.pluginId}:${action.icon}`
-                          ]
-                        : undefined
-                    }
-                  />
-                </button>
+            <div
+              className="editor-footer"
+              onDragOver={(event) => {
+                if (!toolbarDrag) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                const { targetId, after } = toolbarDropTarget(
+                  event.currentTarget,
+                  event.clientX,
+                );
+                setToolbarDrag((current) =>
+                  current &&
+                  (current.targetId !== targetId || current.after !== after)
+                    ? { ...current, targetId, after }
+                    : current,
+                );
+              }}
+              onDragLeave={(event) => {
+                if (
+                  event.currentTarget.contains(event.relatedTarget as Node | null)
+                ) {
+                  return;
+                }
+                setToolbarDrag((current) =>
+                  current ? { ...current, targetId: '' } : current,
+                );
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const sourceId =
+                  event.dataTransfer.getData('text/plain') ||
+                  toolbarDrag?.sourceId;
+                const { targetId, after } = toolbarDropTarget(
+                  event.currentTarget,
+                  event.clientX,
+                );
+                if (sourceId && targetId) {
+                  reorderToolbar(sourceId, targetId, after);
+                }
+                setToolbarDrag(null);
+              }}
+            >
+              {orderedToolbarItems.map((item) => (
+                <Fragment key={item.id}>{item.node}</Fragment>
               ))}
             </div>
             {message && settings.notificationsEnabled && (

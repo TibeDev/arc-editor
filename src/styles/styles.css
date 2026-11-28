@@ -1677,16 +1677,42 @@ input:focus-visible {
   box-shadow: 0 0 0 1px #111a;
 }
 .editor-footer .settings-launch {
-  position: static;
+  position: relative;
+  top: auto;
+  right: auto;
   width: 24px;
   height: 24px;
   background: transparent;
   border: 0;
   color: var(--settings-muted, var(--secondary-text));
 }
+.editor-footer .settings-launch.toolbar-drop-before::before,
+.editor-footer .settings-launch.toolbar-drop-after::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  width: 2px;
+  height: 16px;
+  border-radius: 1px;
+  background: var(--app-accent, var(--settings-text, #fff));
+  transform: translateY(-50%);
+}
+.editor-footer .settings-launch.toolbar-drop-before::before {
+  left: -2px;
+}
+.editor-footer .settings-launch.toolbar-drop-after::after {
+  right: -2px;
+}
 .editor-footer .settings-launch:hover {
   background: transparent;
   color: var(--settings-text, #fff);
+}
+.editor-footer .settings-launch[draggable="true"] {
+  cursor: grab;
+}
+.editor-footer .settings-launch[draggable="true"]:active {
+  cursor: grabbing;
 }
 .editor-footer {
   min-width: 0;
