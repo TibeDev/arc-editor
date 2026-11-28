@@ -155,6 +155,7 @@ const GithubPanel = lazy(() => import('./components/GithubPanel'));
 const PluginPanel = lazy(() => import('./components/PluginPanel'));
 const ThemeMaker = lazy(() => import('./components/ThemeMaker'));
 const BuildWizard = lazy(() => import('./components/BuildWizard'));
+const AgentsWorkspace = lazy(() => import('./components/agents/AgentsWorkspace'));
 const WebPreview = lazy(() => import('./components/WebPreview'));
 
 type DiskFile = { name: string; path: string; kind: 'file' | 'directory' };
@@ -1744,6 +1745,7 @@ function App() {
   const [customThemeIds, setCustomThemeIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [themeMakerOpen, setThemeMakerOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(settings.agentLastMode === 'agents');
   const [appVersion, setAppVersion] = useState('');
   const [availableUpdate, setAvailableUpdate] = useState<
     (UpdateInfo & { channel: UpdateChannel; manual: boolean }) | null
@@ -3322,11 +3324,16 @@ function App() {
     })();
   }, [refreshWorkspace]);
 
-  const openWorkspace = async () => {
-    if (folderDialogOpen.current) return;
-    folderDialogOpen.current = true;
+  const openWorkspaceAtPath = async (path?: string) => {
+    const useDialog = path === undefined;
+    if (useDialog) {
+      if (folderDialogOpen.current) return;
+      folderDialogOpen.current = true;
+    }
     try {
-      const selected = await invoke<string | null>('workspace_pick');
+      const selected = useDialog
+        ? await invoke<string | null>('workspace_pick')
+        : path;
       if (!selected) return;
       if (!(await requestWorkspaceAccess(selected))) {
         setMessage('Folder access declined.');
@@ -3371,9 +3378,11 @@ function App() {
     } catch (error) {
       setMessage(`Could not open workspace: ${String(error)}`);
     } finally {
-      folderDialogOpen.current = false;
+      if (useDialog) folderDialogOpen.current = false;
     }
   };
+
+  const openWorkspace = () => openWorkspaceAtPath();
 
   const openFile = async (file: DiskFile, targetGroupId?: GroupId) => {
     if (file.kind !== 'file' || !workspace) return;
@@ -4337,6 +4346,15 @@ function App() {
       event.preventDefault();
       setCommandPaletteOpen(true);
       setCommandQuery('');
+      return;
+    }
+    if (modifier && event.shiftKey && key === 'a') {
+      event.preventDefault();
+      setAgentsOpen((current) => {
+        const next = !current;
+        updateSettings({ agentLastMode: next ? 'agents' : 'editor' });
+        return next;
+      });
       return;
     }
     if (modifier && event.altKey && key === 'p') {
@@ -5412,9 +5430,34 @@ function App() {
     </div>
   ) : null;
 
+  const agentsWorkspace = agentsOpen ? (
+    <div className="agents-overlay">
+      <Suspense fallback={null}>
+        <AgentsWorkspace
+          titleBarEnabled={settings.titleBarEnabled}
+          editorWorkspace={workspace}
+          editorDirtyPaths={openFiles
+            .filter((file) => file.dirty)
+            .map((file) => file.path)}
+          confirmDirtyFiles={settings.agentConfirmDirtyFiles}
+          onOpenProjectInEditor={(path) => {
+            void openWorkspaceAtPath(path);
+            setAgentsOpen(false);
+            updateSettings({ agentLastMode: 'editor' });
+          }}
+          onSaveAllDirty={() => saveDirtyRef.current()}
+          onClose={() => {
+            setAgentsOpen(false);
+            updateSettings({ agentLastMode: 'editor' });
+          }}
+        />
+      </Suspense>
+    </div>
+  ) : null;
+
   return (
     <main
-      className={`app-shell app-theme-${settings.appTheme} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${editorBackgroundUrl ? 'has-editor-background' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''}`}
+      className={`app-shell app-theme-${settings.appTheme} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${editorBackgroundUrl ? 'has-editor-background' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''} ${agentsOpen ? 'agents-mode-active' : ''}`}
       style={{
         fontFamily: resolveInterfaceFont(settings),
         '--editor-background-image': editorBackgroundUrl
@@ -6142,6 +6185,7 @@ function App() {
         </Suspense>
       )}
       {themeMaker}
+      {agentsWorkspace}
     </main>
   );
 }

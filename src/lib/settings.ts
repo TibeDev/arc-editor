@@ -89,9 +89,14 @@ export type AppSettings = {
   autoInstallUpdates: boolean;
   agentCli: AgentCli;
   agentCommand: string;
+  agentLastMode: "editor" | "agents";
+  agentDefaultProviderInstanceId: string;
+  agentDefaultPermissionMode: "supervised";
+  agentConfirmDirtyFiles: boolean;
+  agentNotifications: boolean;
 };
 
-export const APP_SETTINGS_VERSION = 6;
+export const APP_SETTINGS_VERSION = 7;
 
 export const GLASS_BLUR = 18;
 
@@ -183,6 +188,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoInstallUpdates: false,
   agentCli: "opencode",
   agentCommand: "",
+  agentLastMode: "editor",
+  agentDefaultProviderInstanceId: "opencode-default",
+  agentDefaultPermissionMode: "supervised",
+  agentConfirmDirtyFiles: true,
+  agentNotifications: true,
 };
 
 export function appThemeDefinition(id: AppTheme): AppThemeDefinition {
@@ -355,6 +365,21 @@ export function loadSettings(): AppSettings {
     settings.agentCommand = typeof settings.agentCommand === "string"
       ? settings.agentCommand.slice(0, 500)
       : DEFAULT_SETTINGS.agentCommand;
+    if (settings.agentLastMode !== "editor" && settings.agentLastMode !== "agents") {
+      settings.agentLastMode = DEFAULT_SETTINGS.agentLastMode;
+    }
+    if (typeof settings.agentDefaultProviderInstanceId !== "string" || !settings.agentDefaultProviderInstanceId) {
+      settings.agentDefaultProviderInstanceId = DEFAULT_SETTINGS.agentDefaultProviderInstanceId;
+    }
+    if (settings.agentDefaultPermissionMode !== "supervised") {
+      settings.agentDefaultPermissionMode = DEFAULT_SETTINGS.agentDefaultPermissionMode;
+    }
+    if (typeof settings.agentConfirmDirtyFiles !== "boolean") {
+      settings.agentConfirmDirtyFiles = DEFAULT_SETTINGS.agentConfirmDirtyFiles;
+    }
+    if (typeof settings.agentNotifications !== "boolean") {
+      settings.agentNotifications = DEFAULT_SETTINGS.agentNotifications;
+    }
     if (typeof settings.notificationsEnabled !== "boolean") {
       settings.notificationsEnabled = DEFAULT_SETTINGS.notificationsEnabled;
     }

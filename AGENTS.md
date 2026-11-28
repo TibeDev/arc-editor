@@ -20,11 +20,14 @@ index.html               Vite entry
 src/                     Frontend (React + TS)
   App.tsx                App shell and most UI
   components/            React components with colocated CSS
-  lib/                   Plugin runtime, settings, agent kit, terminal and updater logic
+  lib/                   Plugin runtime, settings, agent kit, agents workspace, terminal and updater logic
+  lib/agents/            Agent store, typed IPC wrappers, event listeners, sanitization
+  components/agents/     Agents overlay UI (sidebar, transcript, composer, approvals, questions)
   styles/                Global and shared CSS
 src-tauri/               Rust backend (Tauri 2)
   src/lib.rs             ALL Tauri commands + tests (~4100 lines)
   src/process.rs         Managed child-process registry (process groups / Windows job objects)
+  src/agent/             Rust AgentManager, OpenCode adapter, persistence, recovery, permissions
   src/main.rs            Entry: NVIDIA/Wayland workaround + app-data migration
   capabilities/          Tauri permission scopes
 plugins/                 Built-in plugins (live-server, xampp; api-tester is dev-only)
@@ -100,7 +103,9 @@ There is **no frontend test runner**; `npm run build` doubles as the typecheck g
 - **Tauri capability scopes are security-relevant.** `src-tauri/capabilities/default.json` restricts fs access to `$HOME`, `$DOCUMENT`, `$DOWNLOAD`, `$APPDATA` and allows opening URLs only for `http://127.0.0.1:*`, `github.com`, `cli.github.com`, `git-scm.com`. Update scopes deliberately; don't widen them casually. CSP is `null` (plugin system needs broad JS).
 - **Built-in plugins are bundled raw**: files under `plugins/*/main.js` are self-contained ES modules (no bare package imports), read as strings at build time and executed in the plugin runtime. Keep them dependency-free. The production glob excludes `plugins/api-tester`.
 - **Plugin ZIP import lives in `lib/pluginRuntime.ts`.** It uses JSZip, accepts `plugin.json`/`main.js` at the ZIP root or inside one folder, and must reject imports missing either file. Startup loading also rejects installed plugins with no `main.js`. Preserve both checks.
-- **Settings shape is versioned** (`APP_SETTINGS_VERSION` in `lib/settings.ts`, currently `6`). When adding a setting, add it to `AppSettings`, `DEFAULT_SETTINGS`, and the settings merge/migration logic, then wire UI in `components/SettingsPanel.tsx`.
+- **Agents state lives in Rust, not React.** `AgentManager` owns projects, threads, runs, transcripts, approvals, and the OpenCode provider process. App data lives under `$APPDATA/dev.arc.ide/agent/` as JSON indexes plus per-thread JSONL. Do not put agent projects, threads, or messages in settings or `localStorage`. `App.tsx` keeps only the `agentsOpen` flag. Provider switching requires a new thread.
+- **Agents support OpenCode and Codex behind one manager.** `src/agent/opencode.rs` pins the OpenCode 1.x legacy `/session` surface (`>=1.19.5, <2.0.0`, loopback, Basic auth). `src/agent/codex.rs` speaks the Codex `app-server` JSON-RPC protocol over stdio. One provider process runs at a time. Supervised mode maps to native provider approvals; it is not a sandbox. Keep prompts, passwords, and environment values out of logs and JSON files.
+- **Settings shape is versioned** (`APP_SETTINGS_VERSION` in `lib/settings.ts`, currently `7`). When adding a setting, add it to `AppSettings`, `DEFAULT_SETTINGS`, and the settings merge/migration logic, then wire UI in `components/SettingsPanel.tsx`.
 - **Themes** are `ThemeDefinition` objects (35 color slots). `appTheme` controls interface style, `selectedTheme` controls editor colors. Themes apply by generating CSS (`themeCss`). New UI colors should map to theme slots, not hardcoded hex.
 - **Versions must stay in sync** across `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` — the release workflow enforces this on tags.
 - **The updater** uses signed GitHub releases. Stable tags point at `releases/latest`; hyphenated pre-release tags publish to a `beta` release pointer. Do not change endpoints without updating `tauri.conf.json` and the release workflow.

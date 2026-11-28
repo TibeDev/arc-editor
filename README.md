@@ -14,6 +14,7 @@ Arc is a desktop workspace for web development. It puts your project files, code
 - Adjust editor, terminal, and interface settings. Choose a built-in theme, create a custom theme, or use transparency and an app background image.
 - Import JavaScript plugins from ZIP archives. Arc includes Live Server and a Linux-only XAMPP plugin.
 - Build a plugin or theme with the Build tab wizard, which can launch a local AI agent or produce a prompt for any chat AI.
+- Chat with OpenCode in the Agents workspace, with project trust, saved transcripts, approvals, and questions.
 - Update from signed GitHub releases, on the Stable or Beta channel.
 
 ## Install on Omarchy
@@ -47,6 +48,7 @@ The GitHub panel needs Git and GitHub CLI (`gh`). Open the panel, sign in, then 
 | `Ctrl+T`                    | Open a terminal                         |
 | `Ctrl+Alt+P`                | Open a web preview                      |
 | `Ctrl+Shift+P`              | Open the command palette                |
+| `Ctrl+Shift+A`              | Toggle the Agents workspace             |
 | `Ctrl+\\` / `Ctrl+Shift+\\` | Split editor vertically / horizontally  |
 | `Ctrl+B`                    | Show or hide the file browser           |
 | `Ctrl+Tab`                  | Switch to the next tab or pane          |
@@ -57,6 +59,12 @@ The GitHub panel needs Git and GitHub CLI (`gh`). Open the panel, sign in, then 
 | `Alt+Shift+F`               | Format the active file                  |
 
 On macOS, replace `Ctrl` with `Command`. `Alt+Shift+F` uses `Option+Shift+F`.
+
+## Agents
+
+Press `Ctrl+Shift+A` to open Agents. Add a project, grant trust, choose a provider, then start a chat. Arc supports OpenCode and Codex behind one workspace. OpenCode runs a loopback `opencode serve` process and pins 1.19.5 or newer 1.x. Codex runs `codex app-server` over stdio and needs a logged-in Codex CLI. Arc does not install or upgrade providers.
+
+Project trust is consent, not a sandbox: providers run commands with your OS user permissions. The default permission mode is Supervised, using each provider's native approval rules. Chats and transcripts stay in Arc app data; skills and MCP configuration stay provider-native. Conversations never move between providers; use a new chat to switch. Only one provider process runs at a time, and chats can be searched, pinned, and archived.
 
 ## Plugins, themes, and AI builds
 

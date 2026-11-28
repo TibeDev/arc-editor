@@ -1,3 +1,4 @@
+mod agent;
 mod process;
 
 use notify_debouncer_full::{
@@ -3747,7 +3748,34 @@ pub fn run() {
             preview_frame_check,
             open_external_url,
             updater_check,
-            updater_install
+            updater_install,
+            agent::manager::agent_project_list,
+            agent::manager::agent_project_pick,
+            agent::manager::agent_project_add,
+            agent::manager::agent_project_remove,
+            agent::manager::agent_project_set_trust,
+            agent::manager::agent_provider_list,
+            agent::manager::agent_provider_status,
+            agent::manager::agent_provider_start,
+            agent::manager::agent_provider_stop,
+            agent::manager::agent_provider_restart,
+            agent::manager::agent_thread_list,
+            agent::manager::agent_thread_create,
+            agent::manager::agent_thread_open,
+            agent::manager::agent_thread_rename,
+            agent::manager::agent_thread_archive,
+            agent::manager::agent_thread_pin,
+            agent::manager::agent_thread_delete,
+            agent::manager::agent_thread_send,
+            agent::manager::agent_thread_interrupt,
+            agent::manager::agent_model_list,
+            agent::manager::agent_agent_list,
+            agent::manager::agent_command_list,
+            agent::manager::agent_skill_list,
+            agent::manager::agent_approval_respond,
+            agent::manager::agent_question_respond,
+            agent::manager::agent_question_reject,
+            agent::manager::agent_reconcile
         ])
         .setup(|app| {
             #[cfg(target_os = "linux")]
@@ -3785,6 +3813,9 @@ pub fn run() {
                     })?;
                 }
             }
+            let agent = agent::AgentManager::new(app.handle())
+                .map_err(|error| format!("Could not start the Agents workspace: {error}"))?;
+            app.manage(agent);
             Ok(())
         })
         .build(tauri::generate_context!())

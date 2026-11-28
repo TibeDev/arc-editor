@@ -1136,6 +1136,16 @@ input:focus-visible {
 .app-shell.theme-maker-active > .update-banner {
   visibility: hidden;
 }
+.agents-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+}
+.app-shell.agents-mode-active > .app-body,
+.app-shell.agents-mode-active > .titlebar,
+.app-shell.agents-mode-active > .update-banner {
+  visibility: hidden;
+}
 .theme-maker-page {
   height: 100vh;
   min-height: 420px;
