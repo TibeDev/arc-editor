@@ -59,6 +59,7 @@ pub(crate) struct AgentState {
     event_stop: Option<Arc<AtomicBool>>,
     event_sender: Option<Sender<StreamMessage>>,
     event_streams: Vec<JoinHandle<()>>,
+    event_project_stops: HashMap<String, Arc<AtomicBool>>,
     consumer_thread: Option<JoinHandle<()>>,
     restart_attempts: Vec<u64>,
     warnings: Vec<String>,
@@ -99,6 +100,13 @@ impl AgentManager {
 
 fn active_run(status: &str) -> bool {
     ACTIVE_RUN_STATES.contains(&status)
+}
+
+fn trim_items(items: &mut Vec<AgentItem>) {
+    if items.len() > 2000 {
+        let excess = items.len() - 2000;
+        items.drain(0..excess);
+    }
 }
 
 fn fold_records(state: &mut AgentState, thread_id: &str, records: Vec<AgentRecord>) {
@@ -156,10 +164,7 @@ fn fold_records(state: &mut AgentState, thread_id: &str, records: Vec<AgentRecor
             }
         }
     }
-    if items.len() > 2000 {
-        let excess = items.len() - 2000;
-        items.drain(0..excess);
-    }
+    trim_items(&mut items);
     state.items.insert(thread_id.to_string(), items);
     state.loaded_threads.insert(thread_id.to_string());
 }
@@ -318,23 +323,13 @@ impl AgentManager {
             event_stop: None,
             event_sender: None,
             event_streams: Vec::new(),
+            event_project_stops: HashMap::new(),
             consumer_thread: None,
             restart_attempts: Vec::new(),
             warnings,
         };
         if let Err(error) = save_providers(&state) {
             state.warnings.push(error);
-        }
-        let mut trust_migrated = false;
-        for project in &mut state.projects {
-            if !project.trusted {
-                project.trusted = true;
-                project.updated_at = iso_now();
-                trust_migrated = true;
-            }
-        }
-        if trust_migrated {
-            save_projects(&state)?;
         }
         let mut pins_cleared = false;
         for thread in &mut state.threads {
@@ -391,9 +386,7 @@ fn project_path(state: &AgentState, project_id: &str) -> Option<String> {
 
 fn thread_working_path(state: &AgentState, thread: &AgentThread) -> Option<String> {
     if let Some(path) = thread.worktree_path.as_deref() {
-        if Path::new(path).is_dir() {
-            return Some(path.to_string());
-        }
+        return Path::new(path).is_dir().then(|| path.to_string());
     }
     project_path(state, &thread.project_id)
 }
@@ -584,7 +577,7 @@ pub async fn agent_project_add(
         id: new_id("project"),
         path: canonical_path,
         name,
-        trusted: true,
+        trusted: false,
         created_at: now.clone(),
         updated_at: now,
     };
@@ -653,7 +646,9 @@ pub async fn agent_project_remove(
         let _ = state.store.delete_thread_file(thread_id);
     }
     if let Some(project) = project_path_value {
+        stop_project_stream(&mut state, &project);
         for worktree in worktrees {
+            stop_project_stream(&mut state, &worktree);
             remove_worktree(&project, &worktree);
         }
     }
@@ -784,6 +779,18 @@ pub async fn agent_thread_create(
     state.threads.push(thread.clone());
     state.items.insert(thread.id.clone(), Vec::new());
     state.loaded_threads.insert(thread.id.clone());
+    if let Err(error) = save_threads(&state) {
+        state.threads.retain(|entry| entry.id != thread.id);
+        state.items.remove(&thread.id);
+        state.loaded_threads.remove(&thread.id);
+        if let (Some(project), Some(worktree)) = (
+            project_path(&state, &thread.project_id),
+            thread.worktree_path.as_deref(),
+        ) {
+            remove_worktree(&project, worktree);
+        }
+        return Err(error);
+    }
     if let Some(worktree) = thread.worktree_path.clone() {
         if let (Some(server), Some(stop), Some(sender)) = (
             state
@@ -796,7 +803,6 @@ pub async fn agent_thread_create(
             spawn_project_stream(&mut state, server.0, &server.1, &stop, &sender, worktree);
         }
     }
-    save_threads(&state)?;
     events::emit(&app, events::THREAD_UPDATED, &thread);
     Ok(thread)
 }
@@ -991,6 +997,7 @@ pub async fn agent_thread_delete(
         .retain(|_, question| question.thread_id != thread_id);
     let _ = state.store.delete_thread_file(&thread_id);
     if let Some(worktree) = thread.worktree_path.as_deref() {
+        stop_project_stream(&mut state, worktree);
         if let Some(project) = project_path(&state, &thread.project_id) {
             remove_worktree(&project, worktree);
         }
@@ -1136,6 +1143,7 @@ fn start_opencode_provider(
     }
     state.event_sender = Some(sender.clone());
     state.event_streams.clear();
+    state.event_project_stops.clear();
     let mut directories: Vec<String> = state
         .projects
         .iter()
@@ -1691,6 +1699,7 @@ fn append_codex_text(
             .push_str(delta);
     }
     let stored = items[index].clone();
+    trim_items(items);
     let _ = state.store.append_record(
         thread_id,
         &AgentRecord::Item {
@@ -1720,6 +1729,7 @@ fn append_codex_output(
     output.push_str(delta);
     item.output = Some(Value::String(output));
     let stored = item.clone();
+    trim_items(items);
     let _ = state.store.append_record(
         thread_id,
         &AgentRecord::Item {
@@ -2786,7 +2796,14 @@ fn stop_event_threads(state: &mut AgentState) {
     }
     state.event_sender = None;
     state.event_streams.clear();
+    state.event_project_stops.clear();
     state.consumer_thread.take();
+}
+
+fn stop_project_stream(state: &mut AgentState, directory: &str) {
+    if let Some(stop) = state.event_project_stops.remove(directory) {
+        stop.store(true, Ordering::Relaxed);
+    }
 }
 
 fn spawn_project_stream(
@@ -2799,9 +2816,20 @@ fn spawn_project_stream(
 ) {
     let password = password.to_string();
     let stop = stop.clone();
+    let project_stop = Arc::new(AtomicBool::new(false));
+    state
+        .event_project_stops
+        .insert(directory.clone(), project_stop.clone());
     let sender = sender.clone();
     let handle = thread::spawn(move || {
-        opencode::event_stream_loop(port, &password, &stop, sender, Some(&directory));
+        opencode::event_stream_loop(
+            port,
+            &password,
+            &stop,
+            &project_stop,
+            sender,
+            Some(&directory),
+        );
     });
     state.event_streams.push(handle);
 }
@@ -3656,6 +3684,7 @@ fn flush_pending(
         let text = items[index].text.get_or_insert_with(String::new);
         text.push_str(&delta);
         let item = items[index].clone();
+        trim_items(items);
         let _ = state.store.append_record(
             &thread_id,
             &AgentRecord::ItemPatch {
@@ -3779,6 +3808,7 @@ fn upsert_part_item(app: &AppHandle, state: &mut AgentState, thread_id: &str, it
         }
     };
     let stored = items[index].clone();
+    trim_items(items);
     let _ = state.store.append_record(
         thread_id,
         &AgentRecord::Item {

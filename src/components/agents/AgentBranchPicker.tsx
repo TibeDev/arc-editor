@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, ChevronDown, GitBranch } from "lucide-react";
+import usePopoverMaxHeight from "./usePopoverMaxHeight";
 
 type BranchStatus = {
   isRepo: boolean;
@@ -14,6 +15,7 @@ export default function AgentBranchPicker({ root }: { root: string }) {
   const [error, setError] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
+  const maxHeight = usePopoverMaxHeight(open, rootRef);
 
   const load = async () => {
     const request = ++requestRef.current;
@@ -88,7 +90,12 @@ export default function AgentBranchPicker({ root }: { root: string }) {
         <ChevronDown size={12} />
       </button>
       {open ? (
-        <div className="agents-branch-popover" role="menu" aria-label="Branches">
+        <div
+          className="agents-branch-popover"
+          role="menu"
+          aria-label="Branches"
+          style={maxHeight ? { maxHeight } : undefined}
+        >
           {status.branches.map((branch) => (
             <button
               type="button"

@@ -130,11 +130,7 @@ export default function AgentsWorkspace({
   const enabledProviders = state.providers.filter((provider) =>
     enabledProviderIds.includes(provider.id),
   );
-  const defaultProviderId =
-    enabledProviders[0]?.id ||
-    state.status?.instanceId ||
-    state.providers[0]?.id ||
-    "";
+  const defaultProviderId = enabledProviders[0]?.id || "";
 
   const activeProject = state.projects.find(
     (project) => project.id === state.activeProjectId,
@@ -202,6 +198,9 @@ export default function AgentsWorkspace({
             onAddProject={() => void store.addProject()}
             onSelectProject={(projectId) => void store.selectProject(projectId)}
             onRemoveProject={(projectId) => void store.removeProject(projectId)}
+            onSetTrust={(projectId, trusted) =>
+              void store.setTrust(projectId, trusted)
+            }
             onOpenProjectInEditor={onOpenProjectInEditor}
             onNewThread={() => void store.createThread(defaultProviderId)}
             onOpenThread={(threadId) => void store.openThread(threadId)}
@@ -268,11 +267,16 @@ export default function AgentsWorkspace({
           <section className="agents-empty-conversation">
             <MessagesSquare size={28} />
             <h2>
-              {activeProject ? "Start a chat" : "Add a project to begin"}
+              {!enabledProviders.length
+                ? "Enable a provider"
+                : activeProject
+                  ? "Start a chat"
+                  : "Add a project to begin"}
             </h2>
             <p>
-              Chats are stored by Arc in app data. Skills and MCP configuration stay
-              provider-native. Arc does not sandbox the agent.
+              {!enabledProviders.length
+                ? "Enable an AI provider in Settings before starting a chat."
+                : "Chats are stored by Arc in app data. Skills and MCP configuration stay provider-native. Arc does not sandbox the agent."}
             </p>
 
           </section>

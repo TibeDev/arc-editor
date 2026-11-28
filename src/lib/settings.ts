@@ -89,11 +89,9 @@ export type AppSettings = {
   autoInstallUpdates: boolean;
   agentCli: AgentCli;
   agentCommand: string;
-  agentLastMode: "editor" | "agents";
   agentEnabledProviderIds: string[];
   agentSidebarWidth: number;
   agentSidebarHidden: boolean;
-  agentDefaultPermissionMode: "supervised";
   agentConfirmDirtyFiles: boolean;
   agentNotifications: boolean;
 };
@@ -190,11 +188,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoInstallUpdates: false,
   agentCli: "opencode",
   agentCommand: "",
-  agentLastMode: "editor",
   agentEnabledProviderIds: ["opencode-default"],
   agentSidebarWidth: 258,
   agentSidebarHidden: false,
-  agentDefaultPermissionMode: "supervised",
   agentConfirmDirtyFiles: true,
   agentNotifications: true,
 };
@@ -369,9 +365,6 @@ export function loadSettings(): AppSettings {
     settings.agentCommand = typeof settings.agentCommand === "string"
       ? settings.agentCommand.slice(0, 500)
       : DEFAULT_SETTINGS.agentCommand;
-    if (settings.agentLastMode !== "editor" && settings.agentLastMode !== "agents") {
-      settings.agentLastMode = DEFAULT_SETTINGS.agentLastMode;
-    }
     if (!Array.isArray(settings.agentEnabledProviderIds)) {
       settings.agentEnabledProviderIds = DEFAULT_SETTINGS.agentEnabledProviderIds;
     } else {
@@ -385,9 +378,6 @@ export function loadSettings(): AppSettings {
     settings.agentSidebarWidth = Math.min(520, Math.max(200, settings.agentSidebarWidth));
     if (typeof settings.agentSidebarHidden !== "boolean") {
       settings.agentSidebarHidden = DEFAULT_SETTINGS.agentSidebarHidden;
-    }
-    if (settings.agentDefaultPermissionMode !== "supervised") {
-      settings.agentDefaultPermissionMode = DEFAULT_SETTINGS.agentDefaultPermissionMode;
     }
     if (typeof settings.agentConfirmDirtyFiles !== "boolean") {
       settings.agentConfirmDirtyFiles = DEFAULT_SETTINGS.agentConfirmDirtyFiles;

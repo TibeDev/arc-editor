@@ -406,19 +406,20 @@ pub fn event_stream_loop(
     port: u16,
     password: &str,
     stop: &AtomicBool,
+    project_stop: &AtomicBool,
     sender: Sender<StreamMessage>,
     directory: Option<&str>,
 ) {
     let target = url(port, "/event", directory);
     let auth = auth_header(password);
     let mut backoff = Duration::from_millis(250);
-    while !stop.load(Ordering::Relaxed) {
+    while !stop.load(Ordering::Relaxed) && !project_stop.load(Ordering::Relaxed) {
         match ureq::get(&target).set("Authorization", &auth).call() {
             Ok(response) => {
                 backoff = Duration::from_millis(250);
                 let reader = BufReader::new(response.into_reader());
                 for line in reader.lines().map_while(Result::ok) {
-                    if stop.load(Ordering::Relaxed) {
+                    if stop.load(Ordering::Relaxed) || project_stop.load(Ordering::Relaxed) {
                         return;
                     }
                     let Some(data) = line.strip_prefix("data:") else {
@@ -446,7 +447,7 @@ pub fn event_stream_loop(
                 let _ = sender.send(StreamMessage::Disconnected);
             }
         }
-        if stop.load(Ordering::Relaxed) {
+        if stop.load(Ordering::Relaxed) || project_stop.load(Ordering::Relaxed) {
             return;
         }
         thread::sleep(backoff);

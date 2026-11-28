@@ -2567,13 +2567,37 @@ export function usePluginRuntime(
     const root = await join(await appDataDir(), "plugins");
     await mkdir(root, { recursive: true });
     const destination = await join(root, manifest.id);
-    if (await exists(destination)) {
-      if (!window.confirm(`Replace installed plugin “${manifest.name}”?`)) return;
-      await remove(destination, { recursive: true });
+    const replacing = await exists(destination);
+    if (replacing && !window.confirm(`Replace installed plugin “${manifest.name}”?`)) return;
+    const staging = await join(
+      await appDataDir(),
+      `.plugin-import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    try {
+      await mkdir(staging, { recursive: true });
+      await writeTextFile(await join(staging, "plugin.json"), JSON.stringify(manifest, null, 2));
+      await writeTextFile(await join(staging, manifest.main), source);
+    } catch (error) {
+      await remove(staging, { recursive: true }).catch(() => undefined);
+      throw error;
     }
-    await mkdir(destination, { recursive: true });
-    await writeTextFile(await join(destination, "plugin.json"), JSON.stringify(manifest, null, 2));
-    await writeTextFile(await join(destination, manifest.main), source);
+    if (replacing) {
+      const backup = await join(
+        await appDataDir(),
+        `.plugin-backup-${manifest.id}-${Date.now()}`,
+      );
+      await renameFile(destination, backup);
+      try {
+        await renameFile(staging, destination);
+      } catch (error) {
+        await renameFile(backup, destination).catch(() => undefined);
+        await remove(staging, { recursive: true }).catch(() => undefined);
+        throw error;
+      }
+      await remove(backup, { recursive: true }).catch(() => undefined);
+    } else {
+      await renameFile(staging, destination);
+    }
     const disabled = readDisabledIds();
     disabled.delete(manifest.id);
     localStorage.setItem(disabledStorageKey, JSON.stringify([...disabled]));

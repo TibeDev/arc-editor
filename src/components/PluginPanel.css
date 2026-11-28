@@ -231,36 +231,6 @@
 .plugin-card-list .plugin-card {
   margin: 0;
 }
-.plugin-view-grid .plugin-card-list {
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 9px;
-}
-.plugin-view-grid .plugin-card {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-  min-height: 0;
-  padding: 14px;
-}
-.plugin-view-grid .plugin-card-icon {
-  width: 32px;
-  height: 32px;
-  flex-basis: 32px;
-}
-.plugin-view-grid .plugin-card-details > span {
-  display: -webkit-box;
-  white-space: normal;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-.plugin-view-grid .plugin-card-actions {
-  justify-content: flex-end;
-  margin-top: auto;
-}
-.plugin-view-grid .plugin-empty {
-  grid-column: 1/-1;
-}
 .plugin-docs-content {
   scrollbar-color: #424850 transparent;
   scrollbar-width: thin;

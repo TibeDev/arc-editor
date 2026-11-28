@@ -7,6 +7,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { AgentPermissionMode } from "../../lib/agents/types";
+import usePopoverMaxHeight from "./usePopoverMaxHeight";
 
 const MODES: Array<{
   value: AgentPermissionMode;
@@ -33,6 +34,7 @@ export default function AgentModePicker({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const maxHeight = usePopoverMaxHeight(open, rootRef);
   const selected = MODES.find((entry) => entry.value === mode) ?? MODES[0];
   const SelectedIcon = selected.icon;
 
@@ -67,7 +69,12 @@ export default function AgentModePicker({
         <ChevronDown size={12} />
       </button>
       {open ? (
-        <div className="agents-mode-popover" role="menu" aria-label="Permission mode">
+        <div
+          className="agents-mode-popover"
+          role="menu"
+          aria-label="Permission mode"
+          style={maxHeight ? { maxHeight } : undefined}
+        >
           {MODES.map((entry) => {
             const Icon = entry.icon;
             return (

@@ -1785,7 +1785,6 @@ function App() {
   const fileContents = useRef(new Map<string, string>());
   const pendingEditorContent = useRef(new Set<string>());
   const pendingEditorFrame = useRef<number | null>(null);
-  const selfWritePaths = useRef(new Map<string, number>());
   const [groups, setGroups] = useState<EditorGroup[]>([
     { id: 'group-1', activePath: '', tabs: [] },
   ]);
@@ -2667,11 +2666,6 @@ function App() {
         (file) => file.path === relativePath,
       );
       if (!open) continue;
-      const selfWriteAt = selfWritePaths.current.get(relativePath);
-      if (selfWriteAt !== undefined && Date.now() - selfWriteAt < 3000) {
-        selfWritePaths.current.delete(relativePath);
-        continue;
-      }
       try {
         const content = await readTextFile(`${root}/${relativePath}`);
         const lastWritten = lastDiskWrite.current.get(relativePath);
@@ -3540,7 +3534,7 @@ function App() {
       }
       try {
         const target = `${workspace}/${file.path}`;
-        const temporary = `${target}.${Date.now()}.arc-tmp`;
+        const temporary = `${target}.${Date.now()}-${Math.random().toString(36).slice(2, 8)}.arc-tmp`;
         await writeTextFile(temporary, content);
         try {
           await rename(temporary, target);
@@ -3550,7 +3544,6 @@ function App() {
         }
         fileContents.current.set(path, content);
         lastDiskWrite.current.set(path, contentFingerprint(content));
-        selfWritePaths.current.set(path, Date.now());
         setDiskConflicts((current) => {
           if (!current.has(path)) return current;
           const next = new Set(current);

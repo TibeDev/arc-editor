@@ -8,6 +8,7 @@ import {
   PanelLeftClose,
   Pencil,
   Plus,
+  ShieldCheck,
   Trash2,
 } from "lucide-react";
 import type {
@@ -24,6 +25,7 @@ export default function AgentSidebar({
   onAddProject,
   onSelectProject,
   onRemoveProject,
+  onSetTrust,
   onOpenProjectInEditor,
   onNewThread,
   onOpenThread,
@@ -39,6 +41,7 @@ export default function AgentSidebar({
   onAddProject: () => void;
   onSelectProject: (projectId: string) => void;
   onRemoveProject: (projectId: string) => void;
+  onSetTrust: (projectId: string, trusted: boolean) => void;
   onOpenProjectInEditor: (path: string) => void;
   onNewThread: () => void;
   onOpenThread: (threadId: string) => void;
@@ -207,6 +210,17 @@ export default function AgentSidebar({
               >
                 <Code2 size={13} />
               </button>
+              {!project.trusted ? (
+                <button
+                  type="button"
+                  className="agents-icon-button"
+                  title="Trust project"
+                  aria-label={`Trust ${project.name}`}
+                  onClick={() => onSetTrust(project.id, true)}
+                >
+                  <ShieldCheck size={13} />
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="agents-icon-button"

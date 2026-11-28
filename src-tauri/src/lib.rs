@@ -1,6 +1,7 @@
 mod agent;
 mod process;
 
+use agent::ids::percent_encode_path;
 use notify_debouncer_full::{
     new_debouncer,
     notify::{event::EventKind, event::ModifyKind, event::RenameMode, Event, RecommendedWatcher},
@@ -431,12 +432,38 @@ fn read_terminal_output(app: tauri::AppHandle, id: String, mut reader: Box<dyn R
     }
 }
 
+fn decode_utf8_chunk(bytes: &mut Vec<u8>) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => {
+            let decoded = text.to_string();
+            bytes.clear();
+            decoded
+        }
+        Err(error) => {
+            let valid = error.valid_up_to();
+            let mut decoded = String::from_utf8_lossy(&bytes[..valid]).into_owned();
+            match error.error_len() {
+                None => {
+                    bytes.drain(..valid);
+                }
+                Some(_) => {
+                    decoded.push_str(&String::from_utf8_lossy(&bytes[valid..]));
+                    bytes.clear();
+                }
+            }
+            decoded
+        }
+    }
+}
+
 fn emit_terminal_output(app: &tauri::AppHandle, id: &str, pending: &mut Vec<u8>) -> bool {
     if pending.is_empty() {
         return true;
     }
-    let data = String::from_utf8_lossy(pending).into_owned();
-    pending.clear();
+    let data = decode_utf8_chunk(pending);
+    if data.is_empty() {
+        return true;
+    }
     app.emit(
         "terminal-output",
         TerminalOutput {
@@ -730,8 +757,16 @@ fn stream_process_output(
     });
 
     let mut pending: Vec<u8> = Vec::with_capacity(32 * 1024);
-    let emit = |pending: &mut Vec<u8>| {
+    let emit = |pending: &mut Vec<u8>, finalize: bool| {
         if pending.is_empty() {
+            return;
+        }
+        let mut data = decode_utf8_chunk(pending);
+        if finalize && !pending.is_empty() {
+            data.push_str(&String::from_utf8_lossy(pending));
+            pending.clear();
+        }
+        if data.is_empty() {
             return;
         }
         let _ = app.emit(
@@ -739,22 +774,21 @@ fn stream_process_output(
             PluginProcessOutput {
                 id: id.clone(),
                 stream: stream.to_string(),
-                data: String::from_utf8_lossy(pending).into_owned(),
+                data,
             },
         );
-        pending.clear();
     };
     loop {
         match receiver.recv_timeout(Duration::from_millis(8)) {
             Ok(chunk) => {
                 pending.extend_from_slice(&chunk);
                 if pending.len() >= 32 * 1024 {
-                    emit(&mut pending);
+                    emit(&mut pending, false);
                 }
             }
-            Err(RecvTimeoutError::Timeout) => emit(&mut pending),
+            Err(RecvTimeoutError::Timeout) => emit(&mut pending, false),
             Err(RecvTimeoutError::Disconnected) => {
-                emit(&mut pending);
+                emit(&mut pending, true);
                 break;
             }
         }
@@ -1027,14 +1061,18 @@ fn plugin_process_exec(
         let _ = child.wait();
         return Err("Application is shutting down.".to_string());
     }
-    let stdout_reader = child
-        .stdout
-        .take()
-        .map(|stdout| thread::spawn(move || read_capped(stdout, MAX_EXEC_OUTPUT)));
-    let stderr_reader = child
-        .stderr
-        .take()
-        .map(|stderr| thread::spawn(move || read_capped(stderr, MAX_EXEC_OUTPUT)));
+    let (stdout_tx, stdout_rx) = channel();
+    if let Some(stdout) = child.stdout.take() {
+        thread::spawn(move || {
+            let _ = stdout_tx.send(read_capped(stdout, MAX_EXEC_OUTPUT));
+        });
+    }
+    let (stderr_tx, stderr_rx) = channel();
+    if let Some(stderr) = child.stderr.take() {
+        thread::spawn(move || {
+            let _ = stderr_tx.send(read_capped(stderr, MAX_EXEC_OUTPUT));
+        });
+    }
     let deadline = timeout_ms
         .filter(|millis| *millis > 0)
         .map(|millis| Instant::now() + Duration::from_millis(millis));
@@ -1066,12 +1104,19 @@ fn plugin_process_exec(
             processes.unregister(managed);
         }
     }
-    let stdout = stdout_reader
-        .and_then(|reader| reader.join().ok())
-        .unwrap_or_default();
-    let stderr = stderr_reader
-        .and_then(|reader| reader.join().ok())
-        .unwrap_or_default();
+    let reader_timeout = Duration::from_millis(500);
+    let stdout = stdout_rx.recv_timeout(reader_timeout);
+    let stderr = stderr_rx.recv_timeout(reader_timeout);
+    // A grandchild can inherit stdout/stderr and keep the pipe open after the
+    // child exits. Kill the process group so the pipes close instead of
+    // blocking this command past its deadline.
+    if (stdout.is_err() || stderr.is_err()) && !timed_out {
+        if let Some(managed) = managed {
+            processes.stop(managed, Duration::from_millis(200));
+        }
+    }
+    let stdout = stdout.unwrap_or_default();
+    let stderr = stderr.unwrap_or_default();
     Ok(ProcessExecResult {
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
         stderr: String::from_utf8_lossy(&stderr).into_owned(),
@@ -2525,7 +2570,7 @@ fn framing_allowed(x_frame_options: Option<&str>, csp: Option<&str>) -> bool {
 }
 
 fn local_server_info(root: &Path, port: u16, entry: &str) -> LocalServerInfo {
-    let encoded_entry = encode_url_path(entry);
+    let encoded_entry = percent_encode_path(entry);
     let path = if encoded_entry.is_empty() {
         "/".to_string()
     } else {
@@ -2692,6 +2737,15 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
+fn allowed_local_host(value: &str) -> bool {
+    let host = value.trim().to_ascii_lowercase();
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if port.chars().all(|character| character.is_ascii_digit()) => name,
+        _ => host.as_str(),
+    };
+    matches!(name, "127.0.0.1" | "localhost")
+}
+
 fn handle_local_request(mut stream: TcpStream, root: &Path, generation: &AtomicU64) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut request = Vec::with_capacity(1024);
@@ -2740,6 +2794,24 @@ fn handle_local_request(mut stream: TcpStream, root: &Path, generation: &AtomicU
         return;
     }
 
+    let headers = String::from_utf8_lossy(&request[..header_end]);
+    let host_allowed = headers
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("host"))
+        .is_some_and(|(_, value)| allowed_local_host(value));
+    if !host_allowed {
+        respond_live_request(
+            &mut stream,
+            "403 Forbidden",
+            "text/plain",
+            b"Forbidden",
+            is_head,
+        );
+        return;
+    }
+
     let raw_path = raw_path.split(['?', '#']).next().unwrap_or("/");
     let Some(relative) = decode_url_path(raw_path) else {
         respond_live_request(
@@ -2764,10 +2836,10 @@ fn handle_local_request(mut stream: TcpStream, root: &Path, generation: &AtomicU
     }
 
     let relative_path = Path::new(&relative);
-    if relative_path
-        .components()
-        .any(|component| !matches!(component, Component::Normal(_)))
-    {
+    if relative_path.components().any(|component| match component {
+        Component::Normal(name) => name.to_string_lossy().starts_with('.'),
+        _ => true,
+    }) {
         respond_live_request(
             &mut stream,
             "403 Forbidden",
@@ -2920,18 +2992,6 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-fn encode_url_path(path: &str) -> String {
-    let mut encoded = String::with_capacity(path.len());
-    for byte in path.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'/') {
-            encoded.push(byte as char);
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
-}
-
 fn mime_type(path: &Path) -> &'static str {
     match path
         .extension()
@@ -3001,9 +3061,9 @@ fn directory_listing(root: &Path, directory: &Path) -> String {
             let prefix = if relative_url.is_empty() {
                 String::new()
             } else {
-                format!("{}/", encode_url_path(&relative_url))
+                format!("{}/", percent_encode_path(&relative_url))
             };
-            let href = format!("/{prefix}{}{suffix}", encode_url_path(&name));
+            let href = format!("/{prefix}{}{suffix}", percent_encode_path(&name));
             format!(
                 "<li><a href=\"{href}\">{}{suffix}</a></li>",
                 html_escape(&name)
@@ -3084,6 +3144,9 @@ fn local_file_signature(root: &Path) -> u64 {
             }
             count += 1;
             if count >= 20_000 {
+                // shortcut: entries past 20,000 are not in the signature, so their
+                // changes do not trigger the polling reload; upgrade to an ordered
+                // full-tree hash if large workspaces need live reload.
                 return hasher.finish();
             }
         }
@@ -3847,6 +3910,18 @@ mod tests {
         response
     }
 
+    fn request_with_host(port: u16, path: &str, host: &str) -> String {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(
+            stream,
+            "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        response
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn strips_appimage_environment_for_child_processes() {
@@ -3963,6 +4038,23 @@ mod tests {
     }
 
     #[test]
+    fn decodes_split_utf8_across_chunks() {
+        let bytes = "é".as_bytes();
+        let mut pending = vec![bytes[0]];
+        assert_eq!(decode_utf8_chunk(&mut pending), "");
+        pending.push(bytes[1]);
+        assert_eq!(decode_utf8_chunk(&mut pending), "é");
+        assert!(pending.is_empty());
+
+        let emoji = "🚀".as_bytes();
+        let mut pending = emoji[..2].to_vec();
+        assert_eq!(decode_utf8_chunk(&mut pending), "");
+        pending.extend_from_slice(&emoji[2..]);
+        assert_eq!(decode_utf8_chunk(&mut pending), "🚀");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
     fn local_server_serves_files_blocks_traversal_and_reloads() {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3971,6 +4063,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("arc-local-server-{suffix}"));
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("index.html"), "<!doctype html><body>hello</body>").unwrap();
+        fs::write(root.join(".env"), "SECRET=1").unwrap();
         let server = create_local_http_server(root.clone()).unwrap();
 
         let page = request(server.port, "/");
@@ -3978,6 +4071,11 @@ mod tests {
         assert!(page.contains("hello"));
         assert!(page.contains("__arc_live_reload"));
         assert!(request(server.port, "/..%2Fsecret").starts_with("HTTP/1.1 403 Forbidden"));
+        assert!(request(server.port, "/.env").starts_with("HTTP/1.1 403 Forbidden"));
+        assert!(
+            request_with_host(server.port, "/", "evil.example").starts_with("HTTP/1.1 403 Forbidden")
+        );
+        assert!(request_with_host(server.port, "/", "localhost:5500").starts_with("HTTP/1.1 200 OK"));
 
         let before = request(server.port, "/__arc_live_reload")
             .split("\r\n\r\n")
@@ -4017,7 +4115,7 @@ mod tests {
     #[test]
     fn local_server_encodes_file_urls() {
         assert_eq!(
-            encode_url_path("folder/a file.html"),
+            percent_encode_path("folder/a file.html"),
             "folder/a%20file.html"
         );
         assert_eq!(
