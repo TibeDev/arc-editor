@@ -1,3 +1,4 @@
+pub mod acp;
 pub mod codex;
 pub mod events;
 pub mod ids;

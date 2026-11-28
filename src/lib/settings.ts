@@ -90,13 +90,13 @@ export type AppSettings = {
   agentCli: AgentCli;
   agentCommand: string;
   agentLastMode: "editor" | "agents";
-  agentDefaultProviderInstanceId: string;
+  agentEnabledProviderIds: string[];
   agentDefaultPermissionMode: "supervised";
   agentConfirmDirtyFiles: boolean;
   agentNotifications: boolean;
 };
 
-export const APP_SETTINGS_VERSION = 7;
+export const APP_SETTINGS_VERSION = 8;
 
 export const GLASS_BLUR = 18;
 
@@ -189,7 +189,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   agentCli: "opencode",
   agentCommand: "",
   agentLastMode: "editor",
-  agentDefaultProviderInstanceId: "opencode-default",
+  agentEnabledProviderIds: ["opencode-default"],
   agentDefaultPermissionMode: "supervised",
   agentConfirmDirtyFiles: true,
   agentNotifications: true,
@@ -368,8 +368,12 @@ export function loadSettings(): AppSettings {
     if (settings.agentLastMode !== "editor" && settings.agentLastMode !== "agents") {
       settings.agentLastMode = DEFAULT_SETTINGS.agentLastMode;
     }
-    if (typeof settings.agentDefaultProviderInstanceId !== "string" || !settings.agentDefaultProviderInstanceId) {
-      settings.agentDefaultProviderInstanceId = DEFAULT_SETTINGS.agentDefaultProviderInstanceId;
+    if (!Array.isArray(settings.agentEnabledProviderIds)) {
+      settings.agentEnabledProviderIds = DEFAULT_SETTINGS.agentEnabledProviderIds;
+    } else {
+      settings.agentEnabledProviderIds = settings.agentEnabledProviderIds.filter(
+        (id) => typeof id === "string" && id,
+      );
     }
     if (settings.agentDefaultPermissionMode !== "supervised") {
       settings.agentDefaultPermissionMode = DEFAULT_SETTINGS.agentDefaultPermissionMode;

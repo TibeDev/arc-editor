@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::process::Child;
+use std::path::Path;
+use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -14,6 +15,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::process::ProcessManager;
 
+use super::acp::{self, AcpClient};
 use super::codex::{self, CodexClient};
 use super::events;
 use super::ids::{iso_now, new_id, random_hex};
@@ -51,6 +53,9 @@ pub(crate) struct AgentState {
     codex_questions: HashMap<String, Value>,
     codex_turns: HashMap<String, (String, String)>,
     codex_loaded_threads: HashSet<String>,
+    acp: Option<AcpRuntime>,
+    acp_sessions: HashMap<String, String>,
+    acp_requests: HashMap<String, AcpApprovalRequest>,
     event_stop: Option<Arc<AtomicBool>>,
     event_sender: Option<Sender<StreamMessage>>,
     event_streams: Vec<JoinHandle<()>>,
@@ -67,6 +72,21 @@ struct CodexRuntime {
     binary: String,
     managed_id: Option<u64>,
     started_at: String,
+}
+
+struct AcpRuntime {
+    client: AcpClient,
+    child: Child,
+    reader: JoinHandle<()>,
+    version: String,
+    binary: String,
+    managed_id: Option<u64>,
+    started_at: String,
+}
+
+struct AcpApprovalRequest {
+    raw_id: Value,
+    options: Vec<Value>,
 }
 
 impl AgentManager {
@@ -263,6 +283,16 @@ impl AgentManager {
                 created_at: iso_now(),
             });
         }
+        if !providers.iter().any(|provider| provider.driver == "claude") {
+            providers.push(AgentProviderInstance {
+                id: "claude-default".to_string(),
+                driver: "claude".to_string(),
+                label: "Claude".to_string(),
+                binary_path: None,
+                config_dir: None,
+                created_at: iso_now(),
+            });
+        }
 
         let mut state = AgentState {
             store,
@@ -282,6 +312,9 @@ impl AgentManager {
             codex_questions: HashMap::new(),
             codex_turns: HashMap::new(),
             codex_loaded_threads: HashSet::new(),
+            acp: None,
+            acp_sessions: HashMap::new(),
+            acp_requests: HashMap::new(),
             event_stop: None,
             event_sender: None,
             event_streams: Vec::new(),
@@ -291,6 +324,26 @@ impl AgentManager {
         };
         if let Err(error) = save_providers(&state) {
             state.warnings.push(error);
+        }
+        let mut trust_migrated = false;
+        for project in &mut state.projects {
+            if !project.trusted {
+                project.trusted = true;
+                project.updated_at = iso_now();
+                trust_migrated = true;
+            }
+        }
+        if trust_migrated {
+            save_projects(&state)?;
+        }
+        let mut pins_cleared = false;
+        for thread in &mut state.threads {
+            if thread.pinned_at.take().is_some() {
+                pins_cleared = true;
+            }
+        }
+        if pins_cleared {
+            save_threads(&state)?;
         }
         repair_all(&mut state)?;
         for warning in &state.warnings {
@@ -336,6 +389,61 @@ fn project_path(state: &AgentState, project_id: &str) -> Option<String> {
         .map(|project| project.path.clone())
 }
 
+fn thread_working_path(state: &AgentState, thread: &AgentThread) -> Option<String> {
+    if let Some(path) = thread.worktree_path.as_deref() {
+        if Path::new(path).is_dir() {
+            return Some(path.to_string());
+        }
+    }
+    project_path(state, &thread.project_id)
+}
+
+fn create_worktree(project: &str, root: &Path, thread_id: &str) -> Option<String> {
+    let inside = Command::new("git")
+        .arg("-C")
+        .arg(project)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+        .ok()?;
+    if !inside.status.success() || String::from_utf8_lossy(&inside.stdout).trim() != "true" {
+        return None;
+    }
+    fs::create_dir_all(root).ok()?;
+    let path = root.join(thread_id);
+    let path_string = path.to_string_lossy().into_owned();
+    let created = Command::new("git")
+        .arg("-C")
+        .arg(project)
+        .args(["worktree", "add", "--detach", &path_string, "HEAD"])
+        .output()
+        .ok()?;
+    if !created.status.success() {
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(project)
+            .args(["worktree", "remove", "--force", &path_string])
+            .output();
+        return None;
+    }
+    Some(path_string)
+}
+
+fn remove_worktree(project: &str, path: &str) {
+    if !Path::new(path).exists() {
+        return;
+    }
+    let _ = Command::new("git")
+        .arg("-C")
+        .arg(project)
+        .args(["worktree", "remove", "--force", path])
+        .output();
+    let _ = Command::new("git")
+        .arg("-C")
+        .arg(project)
+        .args(["worktree", "prune"])
+        .output();
+}
+
 fn project_trusted(state: &AgentState, project_id: &str) -> bool {
     state
         .projects
@@ -373,7 +481,14 @@ fn provider_status(state: &AgentState) -> ProviderStatus {
         .find(|provider| provider.id == active_id)
         .map(|provider| provider.driver.clone())
         .unwrap_or_else(|| "opencode".to_string());
-    let (running, version, binary, started_at) = if let Some(codex) = state.codex.as_ref() {
+    let (running, version, binary, started_at) = if let Some(acp) = state.acp.as_ref() {
+        (
+            true,
+            Some(acp.version.clone()),
+            Some(acp.binary.clone()),
+            Some(acp.started_at.clone()),
+        )
+    } else if let Some(codex) = state.codex.as_ref() {
         (
             true,
             Some(codex.version.clone()),
@@ -469,7 +584,7 @@ pub async fn agent_project_add(
         id: new_id("project"),
         path: canonical_path,
         name,
-        trusted: false,
+        trusted: true,
         created_at: now.clone(),
         updated_at: now,
     };
@@ -503,11 +618,18 @@ pub async fn agent_project_remove(
     project_id: String,
 ) -> Result<(), String> {
     let mut state = state.lock();
+    let project_path_value = project_path(&state, &project_id);
     let thread_ids: Vec<String> = state
         .threads
         .iter()
         .filter(|thread| thread.project_id == project_id)
         .map(|thread| thread.id.clone())
+        .collect();
+    let worktrees: Vec<String> = state
+        .threads
+        .iter()
+        .filter(|thread| thread.project_id == project_id)
+        .filter_map(|thread| thread.worktree_path.clone())
         .collect();
     let has_active = state
         .runs
@@ -529,6 +651,11 @@ pub async fn agent_project_remove(
             .questions
             .retain(|_, question| question.thread_id != *thread_id);
         let _ = state.store.delete_thread_file(thread_id);
+    }
+    if let Some(project) = project_path_value {
+        for worktree in worktrees {
+            remove_worktree(&project, &worktree);
+        }
     }
     save_projects(&state)?;
     save_threads(&state)?;
@@ -577,14 +704,17 @@ pub fn agent_thread_list(
                 .map(|id| thread.project_id == *id)
                 .unwrap_or(true)
         })
-        .map(AgentThreadSummary::from)
+        .map(|thread| {
+            let mut summary = AgentThreadSummary::from(thread);
+            summary.has_messages = state
+                .items
+                .get(&thread.id)
+                .map(|items| items.iter().any(|item| item.kind == "user"))
+                .unwrap_or(false);
+            summary
+        })
         .collect();
-    threads.sort_by(|a, b| {
-        b.pinned_at
-            .is_some()
-            .cmp(&a.pinned_at.is_some())
-            .then_with(|| b.updated_at.cmp(&a.updated_at))
-    });
+    threads.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     threads
 }
 
@@ -607,15 +737,43 @@ pub async fn agent_thread_create(
     {
         return Err("Provider instance not found.".to_string());
     }
+    let has_empty_chat = state
+        .threads
+        .iter()
+        .filter(|thread| thread.project_id == project_id)
+        .any(|thread| {
+            state
+                .items
+                .get(&thread.id)
+                .map(|items| !items.iter().any(|item| item.kind == "user"))
+                .unwrap_or(true)
+        });
+    if has_empty_chat {
+        return Err("Send a message in your empty chat before creating a new one.".to_string());
+    }
     let now = iso_now();
+    let thread_id = new_id("thread");
+    let existing_chats = state
+        .threads
+        .iter()
+        .filter(|thread| thread.project_id == project_id && thread.archived_at.is_none())
+        .count();
+    let worktree_path = if existing_chats > 0 {
+        project_path(&state, &project_id).and_then(|project| {
+            create_worktree(&project, &state.store.root().join("worktrees"), &thread_id)
+        })
+    } else {
+        None
+    };
     let thread = AgentThread {
-        id: new_id("thread"),
+        id: thread_id,
         project_id,
         provider_instance_id,
         title: "New chat".to_string(),
         model,
         permission_mode: PERMISSION_MODE_SUPERVISED.to_string(),
         native_session_id: None,
+        worktree_path,
         ui_status: "idle".to_string(),
         created_at: now.clone(),
         updated_at: now,
@@ -626,6 +784,18 @@ pub async fn agent_thread_create(
     state.threads.push(thread.clone());
     state.items.insert(thread.id.clone(), Vec::new());
     state.loaded_threads.insert(thread.id.clone());
+    if let Some(worktree) = thread.worktree_path.clone() {
+        if let (Some(server), Some(stop), Some(sender)) = (
+            state
+                .server
+                .as_ref()
+                .map(|server| (server.port, server.password.clone())),
+            state.event_stop.clone(),
+            state.event_sender.clone(),
+        ) {
+            spawn_project_stream(&mut state, server.0, &server.1, &stop, &sender, worktree);
+        }
+    }
     save_threads(&state)?;
     events::emit(&app, events::THREAD_UPDATED, &thread);
     Ok(thread)
@@ -698,19 +868,52 @@ pub async fn agent_thread_rename(
 }
 
 #[tauri::command(async)]
-pub async fn agent_thread_pin(
+pub async fn agent_thread_set_provider(
     app: AppHandle,
     state: State<'_, AgentManager>,
     thread_id: String,
-    pinned: bool,
-) -> Result<(), String> {
+    provider_instance_id: String,
+) -> Result<AgentThread, String> {
     let mut state = state.lock();
+    if !state
+        .providers
+        .iter()
+        .any(|provider| provider.id == provider_instance_id)
+    {
+        return Err("Provider instance not found.".to_string());
+    }
     let index = thread_index(&state, &thread_id).ok_or_else(|| "Chat not found.".to_string())?;
-    state.threads[index].pinned_at = pinned.then(iso_now);
+    if active_run_id(&state, &thread_id).is_some() {
+        return Err("Stop the running agent before switching providers.".to_string());
+    }
+    state.threads[index].provider_instance_id = provider_instance_id.clone();
+    state.threads[index].native_session_id = None;
+    state.threads[index].model = None;
+    state.threads[index].ui_status = "idle".to_string();
+    state.threads[index].updated_at = iso_now();
+    state.codex_loaded_threads.remove(&thread_id);
+    state.acp_sessions.remove(&thread_id);
     let thread = state.threads[index].clone();
     save_threads(&state)?;
     events::emit(&app, events::THREAD_UPDATED, &thread);
-    Ok(())
+    Ok(thread)
+}
+
+#[tauri::command(async)]
+pub async fn agent_thread_set_model(
+    app: AppHandle,
+    state: State<'_, AgentManager>,
+    thread_id: String,
+    model: Option<AgentModelRef>,
+) -> Result<AgentThread, String> {
+    let mut state = state.lock();
+    let index = thread_index(&state, &thread_id).ok_or_else(|| "Chat not found.".to_string())?;
+    state.threads[index].model = model;
+    state.threads[index].updated_at = iso_now();
+    let thread = state.threads[index].clone();
+    save_threads(&state)?;
+    events::emit(&app, events::THREAD_UPDATED, &thread);
+    Ok(thread)
 }
 
 #[tauri::command(async)]
@@ -738,8 +941,15 @@ pub async fn agent_thread_delete(
 ) -> Result<(), String> {
     let mut state = state.lock();
     let index = thread_index(&state, &thread_id).ok_or_else(|| "Chat not found.".to_string())?;
+    if state
+        .runs
+        .values()
+        .any(|run| run.thread_id == thread_id && active_run(run.status.as_str()))
+    {
+        return Err("Stop the running agent before deleting this chat.".to_string());
+    }
     let thread = state.threads.remove(index);
-    let project = project_path(&state, &thread.project_id);
+    let project = thread_working_path(&state, &thread);
     if let (Some(server), Some(native), Some(project)) = (
         state.server.as_ref(),
         thread.native_session_id.as_deref(),
@@ -750,6 +960,11 @@ pub async fn agent_thread_delete(
     state.runs.retain(|_, run| run.thread_id != thread_id);
     state.items.remove(&thread_id);
     state.loaded_threads.remove(&thread_id);
+    state.acp_sessions.remove(&thread_id);
+    let approval_ids: HashSet<String> = state.approvals.keys().cloned().collect();
+    state
+        .acp_requests
+        .retain(|approval_id, _| approval_ids.contains(approval_id));
     state
         .approvals
         .retain(|_, approval| approval.thread_id != thread_id);
@@ -757,6 +972,11 @@ pub async fn agent_thread_delete(
         .questions
         .retain(|_, question| question.thread_id != thread_id);
     let _ = state.store.delete_thread_file(&thread_id);
+    if let Some(worktree) = thread.worktree_path.as_deref() {
+        if let Some(project) = project_path(&state, &thread.project_id) {
+            remove_worktree(&project, worktree);
+        }
+    }
     save_threads(&state)?;
     events::emit(&app, events::NOTICE, json!({ "kind": "threads" }));
     Ok(())
@@ -814,7 +1034,7 @@ pub async fn agent_provider_restart(
             .retain(|stamp| now.saturating_sub(*stamp) < 60_000);
         if state.restart_attempts.len() >= 3 {
             return Err(
-                "OpenCode was restarted too often. Wait a minute and try again.".to_string(),
+                "The provider was restarted too often. Wait a minute and try again.".to_string(),
             );
         }
         state.restart_attempts.push(now);
@@ -847,6 +1067,9 @@ fn start_provider(
         if state.codex.is_some() && state.active_provider.as_deref() == Some(provider.id.as_str()) {
             return Ok(provider_status(&state));
         }
+        if state.acp.is_some() && state.active_provider.as_deref() == Some(provider.id.as_str()) {
+            return Ok(provider_status(&state));
+        }
         provider
     };
     stop_provider(app, manager, processes);
@@ -856,6 +1079,9 @@ fn start_provider(
     }
     if provider.driver == "codex" {
         return start_codex_provider(app, manager, processes, &provider);
+    }
+    if provider.driver == "claude" {
+        return start_acp_provider(app, manager, processes, &provider);
     }
     start_opencode_provider(app, manager, processes, &provider)
 }
@@ -1593,8 +1819,8 @@ fn codex_send(
             .as_ref()
             .map(|runtime| runtime.client.clone())
             .ok_or_else(|| "Codex is not running. Start it first.".to_string())?;
-        let project = project_path(&state, &thread.project_id)
-            .ok_or_else(|| "Project not found.".to_string())?;
+        let project =
+            thread_working_path(&state, &thread).ok_or_else(|| "Project not found.".to_string())?;
         if model.is_some() && model != thread.model {
             state.threads[index].model = model.clone();
         }
@@ -1826,6 +2052,623 @@ fn codex_models(client: &CodexClient) -> Result<Vec<AgentModel>, String> {
         .collect())
 }
 
+fn start_acp_provider(
+    app: &AppHandle,
+    manager: &AgentManager,
+    processes: &ProcessManager,
+    provider: &AgentProviderInstance,
+) -> Result<ProviderStatus, String> {
+    let (binary, args, display) =
+        match provider_process::resolve_binary("claude-agent-acp", provider.binary_path.as_deref())
+        {
+            Ok(path) => (path, Vec::new(), "claude-agent-acp".to_string()),
+            Err(_) => {
+                let npx = provider_process::resolve_binary("npx", None)?;
+                (
+                    npx,
+                    vec![
+                        "--yes".to_string(),
+                        "@agentclientprotocol/claude-agent-acp".to_string(),
+                    ],
+                    "npx @agentclientprotocol/claude-agent-acp".to_string(),
+                )
+            }
+        };
+    let acp::SpawnedAcp {
+        client,
+        child,
+        stdout,
+        version,
+        managed_id,
+        started_at,
+    } = acp::spawn(&binary, &args, processes)?;
+    let reader_app = app.clone();
+    let inner = manager.inner.clone();
+    let reader_client = client.clone();
+    let reader = thread::spawn(move || {
+        acp_reader(reader_app, inner, reader_client, stdout);
+    });
+    if let Err(error) = client.initialize() {
+        client.fail_pending();
+        if let Some(managed) = managed_id {
+            processes.stop(managed, Duration::from_millis(200));
+        }
+        let mut child = child;
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("Claude ACP handshake failed: {error}"));
+    }
+    let mut state = manager.lock();
+    state.acp = Some(AcpRuntime {
+        client,
+        child,
+        reader,
+        version: version.clone(),
+        binary: display.clone(),
+        managed_id,
+        started_at,
+    });
+    state.active_provider = Some(provider.id.clone());
+    state.acp_sessions.clear();
+    state.acp_requests.clear();
+    let status = provider_status(&state);
+    events::emit(app, events::PROVIDER_STATUS, &status);
+    Ok(status)
+}
+
+fn acp_reader(
+    app: AppHandle,
+    inner: Arc<Mutex<AgentState>>,
+    client: AcpClient,
+    stdout: std::process::ChildStdout,
+) {
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if value.get("method").and_then(Value::as_str).is_some() {
+            if value.get("id").is_some() {
+                handle_acp_request(&app, &inner, &client, &value);
+            } else {
+                handle_acp_notification(&app, &inner, &value);
+            }
+        } else {
+            client.dispatch_response(&value);
+        }
+    }
+    client.fail_pending();
+    mark_acp_down(&app, &inner);
+}
+
+fn mark_acp_down(app: &AppHandle, inner: &Arc<Mutex<AgentState>>) {
+    let mut state = inner
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(mut runtime) = state.acp.take() {
+        let _ = runtime.child.wait();
+    }
+    state.acp_sessions.clear();
+    state.acp_requests.clear();
+    let now = iso_now();
+    let run_ids: Vec<String> = state
+        .runs
+        .values()
+        .filter(|run| active_run(run.status.as_str()))
+        .map(|run| run.id.clone())
+        .collect();
+    for run_id in run_ids {
+        if let Some(run) = state.runs.get_mut(&run_id) {
+            run.status = "failed".to_string();
+            run.ended_at = Some(now.clone());
+            run.error = Some("The Claude provider disconnected.".to_string());
+            let run = run.clone();
+            let _ = state
+                .store
+                .append_record(&run.thread_id, &AgentRecord::Run { run: run.clone() });
+            events::emit(app, events::RUN_UPDATED, &run);
+        }
+    }
+    let status = status_payload(
+        &state,
+        Some("The Claude provider disconnected.".to_string()),
+    );
+    events::emit(app, events::PROVIDER_STATUS, &status);
+}
+
+fn handle_acp_request(
+    app: &AppHandle,
+    inner: &Arc<Mutex<AgentState>>,
+    client: &AcpClient,
+    value: &Value,
+) {
+    let method = value.get("method").and_then(Value::as_str).unwrap_or("");
+    let Some(raw_id) = value.get("id").cloned() else {
+        return;
+    };
+    if method != "session/request_permission" {
+        let _ = client.reply_error(&raw_id, -32601, "Method not supported by Arc.");
+        return;
+    }
+    let params = value.get("params").cloned().unwrap_or(Value::Null);
+    let session_id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let mut state = inner
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(thread_id) = state.acp_sessions.get(&session_id).cloned() else {
+        let _ = client.reply(&raw_id, json!({ "outcome": { "outcome": "cancelled" } }));
+        return;
+    };
+    let tool = params.get("toolCall").cloned().unwrap_or(Value::Null);
+    let title = tool
+        .get("title")
+        .and_then(Value::as_str)
+        .filter(|title| !title.is_empty())
+        .unwrap_or("Permission required")
+        .to_string();
+    let detail = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| tool.get("kind").and_then(Value::as_str))
+        .unwrap_or("Tool call")
+        .to_string();
+    let options = params
+        .get("options")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let approval = AgentApproval {
+        id: new_id("approval"),
+        thread_id: thread_id.clone(),
+        run_id: active_run_id(&state, &thread_id).unwrap_or_default(),
+        provider_request_id: raw_id.to_string(),
+        title,
+        detail,
+        action: tool.get("name").and_then(Value::as_str).map(str::to_string),
+        resources: tool
+            .get("locations")
+            .and_then(Value::as_array)
+            .map(|locations| {
+                locations
+                    .iter()
+                    .filter_map(|location| {
+                        location
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                    .collect()
+            }),
+        decision: None,
+        created_at: iso_now(),
+        resolved_at: None,
+    };
+    state
+        .approvals
+        .insert(approval.id.clone(), approval.clone());
+    state
+        .acp_requests
+        .insert(approval.id.clone(), AcpApprovalRequest { raw_id, options });
+    let _ = state.store.append_record(
+        &thread_id,
+        &AgentRecord::Approval {
+            approval: approval.clone(),
+        },
+    );
+    if let Some(index) = thread_index(&state, &thread_id) {
+        state.threads[index].ui_status = "needs-input".to_string();
+        let thread = state.threads[index].clone();
+        let _ = save_threads(&state);
+        events::emit(app, events::THREAD_UPDATED, &thread);
+    }
+    events::emit(app, events::APPROVAL_REQUESTED, &approval);
+}
+
+fn acp_thread_for_session(state: &AgentState, session_id: &str) -> Option<String> {
+    state.acp_sessions.get(session_id).cloned()
+}
+
+fn handle_acp_notification(app: &AppHandle, inner: &Arc<Mutex<AgentState>>, value: &Value) {
+    let method = value.get("method").and_then(Value::as_str).unwrap_or("");
+    if method != "session/update" {
+        return;
+    }
+    let params = value.get("params").cloned().unwrap_or(Value::Null);
+    let Some(session_id) = params.get("sessionId").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(update) = params.get("update") else {
+        return;
+    };
+    let kind = update
+        .get("sessionUpdate")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let mut state = inner
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(thread_id) = acp_thread_for_session(&state, session_id) else {
+        return;
+    };
+    let run_id = active_run_id(&state, &thread_id).unwrap_or_default();
+    match kind {
+        "agent_message_chunk" => {
+            if let Some(text) = update
+                .get("content")
+                .filter(|content| content.get("type").and_then(Value::as_str) == Some("text"))
+                .and_then(|content| content.get("text"))
+                .and_then(Value::as_str)
+            {
+                let item_id = update
+                    .get("messageId")
+                    .and_then(Value::as_str)
+                    .map(|id| format!("acp-{id}"))
+                    .unwrap_or_else(|| format!("acp-{run_id}-message"));
+                append_codex_text(app, &mut state, &thread_id, &run_id, &item_id, text, false);
+            }
+        }
+        "agent_thought_chunk" => {
+            if let Some(text) = update
+                .get("content")
+                .filter(|content| content.get("type").and_then(Value::as_str) == Some("text"))
+                .and_then(|content| content.get("text"))
+                .and_then(Value::as_str)
+            {
+                let item_id = update
+                    .get("messageId")
+                    .and_then(Value::as_str)
+                    .map(|id| format!("acp-{id}-thought"))
+                    .unwrap_or_else(|| format!("acp-{run_id}-thought"));
+                append_codex_text(app, &mut state, &thread_id, &run_id, &item_id, text, true);
+            }
+        }
+        "tool_call" => {
+            if let Some(item) = acp_tool_item(update, &run_id) {
+                upsert_part_item(app, &mut state, &thread_id, item);
+            }
+        }
+        "tool_call_update" => {
+            let Some(tool_id) = update.get("toolCallId").and_then(Value::as_str) else {
+                return;
+            };
+            let item_id = tool_id.to_string();
+            let existing = state
+                .items
+                .get(&thread_id)
+                .and_then(|items| items.iter().find(|item| item.id == item_id))
+                .cloned();
+            let mut item = existing.unwrap_or_else(|| AgentItem {
+                id: item_id.clone(),
+                run_id: run_id.clone(),
+                kind: "tool".to_string(),
+                text: None,
+                reasoning: None,
+                name: Some("tool".to_string()),
+                input: None,
+                output: None,
+                status: Some("running".to_string()),
+                message: None,
+                created_at: iso_now(),
+            });
+            if let Some(title) = update.get("title").and_then(Value::as_str) {
+                item.name = Some(title.to_string());
+            } else if let Some(name) = update.get("name").and_then(Value::as_str) {
+                item.name = Some(name.to_string());
+            }
+            if let Some(status) = update.get("status").and_then(Value::as_str) {
+                item.status = Some(acp_tool_status(status).to_string());
+            }
+            if let Some(raw_input) = update.get("rawInput").filter(|value| !value.is_null()) {
+                item.input = Some(raw_input.clone());
+            }
+            if let Some(raw_output) = update.get("rawOutput").filter(|value| !value.is_null()) {
+                item.output = Some(raw_output.clone());
+            }
+            if let Some(text) = update.get("content").and_then(acp_content_text) {
+                item.output = Some(Value::String(text));
+            }
+            upsert_part_item(app, &mut state, &thread_id, item);
+        }
+        "plan" => {
+            let text = update
+                .get("entries")
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(|entry| {
+                            entry.get("content").and_then(Value::as_str).map(|content| {
+                                let status = entry
+                                    .get("status")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("pending");
+                                format!("[{status}] {content}")
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            if !text.is_empty() {
+                upsert_part_item(
+                    app,
+                    &mut state,
+                    &thread_id,
+                    AgentItem {
+                        id: format!("acp-{run_id}-plan"),
+                        run_id: run_id.clone(),
+                        kind: "info".to_string(),
+                        text: Some(text),
+                        reasoning: None,
+                        name: None,
+                        input: None,
+                        output: None,
+                        status: None,
+                        message: None,
+                        created_at: iso_now(),
+                    },
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn acp_tool_status(status: &str) -> &'static str {
+    match status {
+        "pending" | "in_progress" => "running",
+        "failed" => "failed",
+        _ => "success",
+    }
+}
+
+fn acp_content_text(content: &Value) -> Option<String> {
+    let entries = content.as_array()?;
+    let text = entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .get("content")
+                .or_else(|| entry.get("text").map(|_| entry))
+                .and_then(|inner| {
+                    if inner.get("type").and_then(Value::as_str) == Some("text") {
+                        inner.get("text").and_then(Value::as_str)
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.is_empty()).then_some(text)
+}
+
+fn acp_tool_item(item: &Value, run_id: &str) -> Option<AgentItem> {
+    let id = item.get("toolCallId").and_then(Value::as_str)?.to_string();
+    let name = item
+        .get("title")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("name").and_then(Value::as_str))
+        .unwrap_or("tool")
+        .to_string();
+    Some(AgentItem {
+        id,
+        run_id: run_id.to_string(),
+        kind: "tool".to_string(),
+        text: None,
+        reasoning: None,
+        name: Some(name),
+        input: item
+            .get("rawInput")
+            .cloned()
+            .filter(|value| !value.is_null()),
+        output: item
+            .get("rawOutput")
+            .cloned()
+            .filter(|value| !value.is_null()),
+        status: Some(
+            acp_tool_status(
+                item.get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("pending"),
+            )
+            .to_string(),
+        ),
+        message: None,
+        created_at: iso_now(),
+    })
+}
+
+fn acp_send(
+    app: &AppHandle,
+    manager: &AgentManager,
+    thread_id: String,
+    text: String,
+    model: Option<AgentModelRef>,
+) -> Result<String, String> {
+    let (run_id, thread, project, client, session) = {
+        let mut state = manager.lock();
+        let index =
+            thread_index(&state, &thread_id).ok_or_else(|| "Chat not found.".to_string())?;
+        let thread = state.threads[index].clone();
+        if !project_trusted(&state, &thread.project_id) {
+            return Err("Grant trust to this project before sending a message.".to_string());
+        }
+        if active_run_id(&state, &thread_id).is_some() {
+            return Err("This chat already has a running request. Stop it first.".to_string());
+        }
+        let provider = state
+            .providers
+            .iter()
+            .find(|provider| provider.id == thread.provider_instance_id)
+            .cloned()
+            .ok_or_else(|| "Provider instance not found.".to_string())?;
+        if provider.driver != "claude" {
+            return Err("This chat does not use Claude.".to_string());
+        }
+        if state.active_provider.as_deref() != Some(provider.id.as_str()) {
+            return Err("Start the Claude provider before sending.".to_string());
+        }
+        let client = state
+            .acp
+            .as_ref()
+            .map(|runtime| runtime.client.clone())
+            .ok_or_else(|| "Claude is not running. Start it first.".to_string())?;
+        let project =
+            thread_working_path(&state, &thread).ok_or_else(|| "Project not found.".to_string())?;
+        if model.is_some() && model != thread.model {
+            state.threads[index].model = model.clone();
+        }
+        let now = iso_now();
+        let run = AgentRun {
+            id: new_id("run"),
+            thread_id: thread_id.clone(),
+            status: "starting".to_string(),
+            started_at: now.clone(),
+            ended_at: None,
+            error: None,
+        };
+        let run_id = run.id.clone();
+        state.runs.insert(run.id.clone(), run.clone());
+        state.threads[index].ui_status = "working".to_string();
+        state.threads[index].updated_at = now;
+        ensure_thread_loaded(&mut state, &thread_id);
+        state
+            .store
+            .append_record(&thread_id, &AgentRecord::Run { run: run.clone() })?;
+        let user_item = AgentItem {
+            id: new_id("user"),
+            run_id: run_id.clone(),
+            kind: "user".to_string(),
+            text: Some(text.clone()),
+            reasoning: None,
+            name: None,
+            input: None,
+            output: None,
+            status: None,
+            message: None,
+            created_at: iso_now(),
+        };
+        state
+            .items
+            .entry(thread_id.clone())
+            .or_default()
+            .push(user_item.clone());
+        state.store.append_record(
+            &thread_id,
+            &AgentRecord::Item {
+                item: user_item.clone(),
+            },
+        )?;
+        let thread = state.threads[index].clone();
+        save_threads(&state)?;
+        events::emit(app, events::THREAD_UPDATED, &thread);
+        events::emit(app, events::RUN_UPDATED, &run);
+        events::emit(app, events::ITEM_UPDATED, &user_item);
+        let session = state.acp_sessions.get(&thread_id).cloned();
+        (run_id, thread, project, client, session)
+    };
+    let session = match session {
+        Some(session) => session,
+        None => {
+            let response =
+                match client.request("session/new", json!({ "cwd": project, "mcpServers": [] })) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        fail_run(&app, &manager.inner, &thread_id, &run_id, &error);
+                        return Err(error);
+                    }
+                };
+            let Some(session) = response
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                let error = "Claude did not return a session id.".to_string();
+                fail_run(&app, &manager.inner, &thread_id, &run_id, &error);
+                return Err(error);
+            };
+            let mut state = manager.lock();
+            state
+                .acp_sessions
+                .insert(thread_id.clone(), session.clone());
+            if let Some(index) = thread_index(&state, &thread_id) {
+                state.threads[index].native_session_id = Some(session.clone());
+                let _ = save_threads(&state);
+                let thread = state.threads[index].clone();
+                events::emit(&app, events::THREAD_UPDATED, &thread);
+            }
+            session
+        }
+    };
+    if let Some(model) = thread.model.as_ref() {
+        if model.model_id != "default" {
+            let _ = client.request(
+                "session/set_config_option",
+                json!({
+                    "sessionId": session,
+                    "configId": "model",
+                    "value": model.model_id,
+                }),
+            );
+        }
+    }
+    let inner = manager.inner.clone();
+    let prompt_app = app.clone();
+    let prompt_client = client.clone();
+    let prompt_thread = thread_id.clone();
+    let prompt_run = run_id.clone();
+    let prompt_session = session.clone();
+    thread::spawn(move || {
+        let result = prompt_client.request_wait(
+            "session/prompt",
+            json!({
+                "sessionId": prompt_session,
+                "prompt": [{ "type": "text", "text": text }],
+            }),
+        );
+        match result {
+            Ok(response) => {
+                let stopped =
+                    response.get("stopReason").and_then(Value::as_str) == Some("cancelled");
+                let mut state = inner
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if stopped {
+                    finish_run(&prompt_app, &mut state, &prompt_thread, "stopped", None);
+                } else {
+                    finish_run(&prompt_app, &mut state, &prompt_thread, "completed", None);
+                }
+            }
+            Err(error) => {
+                fail_run(&prompt_app, &inner, &prompt_thread, &prompt_run, &error);
+            }
+        }
+    });
+    Ok(run_id)
+}
+
+fn acp_interrupt(manager: &AgentManager, thread_id: &str) -> Result<(), String> {
+    let (client, session) = {
+        let state = manager.lock();
+        let client = state
+            .acp
+            .as_ref()
+            .map(|runtime| runtime.client.clone())
+            .ok_or_else(|| "Claude is not running.".to_string())?;
+        let session = state
+            .acp_sessions
+            .get(thread_id)
+            .cloned()
+            .ok_or_else(|| "Claude session not found.".to_string())?;
+        (client, session)
+    };
+    client.notify("session/cancel", json!({ "sessionId": session }))
+}
+
 fn stop_provider(app: &AppHandle, manager: &AgentManager, processes: &ProcessManager) {
     let mut state = manager.lock();
     stop_event_threads(&mut state);
@@ -1855,6 +2698,18 @@ fn stop_provider(app: &AppHandle, manager: &AgentManager, processes: &ProcessMan
     state.codex_turns.clear();
     state.codex_requests.clear();
     state.codex_questions.clear();
+    if let Some(mut runtime) = state.acp.take() {
+        runtime.client.fail_pending();
+        if let Some(managed) = runtime.managed_id {
+            processes.stop(managed, Duration::from_millis(500));
+        } else {
+            let _ = runtime.child.kill();
+        }
+        let _ = runtime.child.wait();
+        let _ = runtime.reader;
+    }
+    state.acp_sessions.clear();
+    state.acp_requests.clear();
     for run in state.runs.values_mut() {
         if active_run(run.status.as_str()) {
             run.status = "stopped".to_string();
@@ -1897,10 +2752,41 @@ pub async fn agent_model_list(
     state: State<'_, AgentManager>,
     _provider_instance_id: String,
 ) -> Result<Vec<AgentModel>, String> {
-    let codex_client = {
+    let (codex_client, claude_running) = {
         let state = state.lock();
-        state.codex.as_ref().map(|runtime| runtime.client.clone())
+        (
+            state.codex.as_ref().map(|runtime| runtime.client.clone()),
+            state.acp.is_some(),
+        )
     };
+    if claude_running {
+        return Ok(vec![
+            AgentModel {
+                provider_id: "claude".to_string(),
+                model_id: "opus".to_string(),
+                name: "Claude Opus".to_string(),
+                provider_name: "Claude".to_string(),
+            },
+            AgentModel {
+                provider_id: "claude".to_string(),
+                model_id: "fable".to_string(),
+                name: "Claude Fable".to_string(),
+                provider_name: "Claude".to_string(),
+            },
+            AgentModel {
+                provider_id: "claude".to_string(),
+                model_id: "sonnet".to_string(),
+                name: "Claude Sonnet".to_string(),
+                provider_name: "Claude".to_string(),
+            },
+            AgentModel {
+                provider_id: "claude".to_string(),
+                model_id: "haiku".to_string(),
+                name: "Claude Haiku".to_string(),
+                provider_name: "Claude".to_string(),
+            },
+        ]);
+    }
     if let Some(client) = codex_client {
         return codex_models(&client);
     }
@@ -1913,8 +2799,11 @@ pub async fn agent_agent_list(
     state: State<'_, AgentManager>,
     _provider_instance_id: String,
 ) -> Result<Vec<AgentOption>, String> {
-    if state.lock().codex.is_some() {
-        return Ok(Vec::new());
+    {
+        let state = state.lock();
+        if state.codex.is_some() || state.acp.is_some() {
+            return Ok(Vec::new());
+        }
     }
     let (port, password) = server_connection(&state)?;
     opencode::agents(port, &password)
@@ -1925,8 +2814,11 @@ pub async fn agent_command_list(
     state: State<'_, AgentManager>,
     _provider_instance_id: String,
 ) -> Result<Vec<ProviderCommand>, String> {
-    if state.lock().codex.is_some() {
-        return Ok(Vec::new());
+    {
+        let state = state.lock();
+        if state.codex.is_some() || state.acp.is_some() {
+            return Ok(Vec::new());
+        }
     }
     let (port, password) = server_connection(&state)?;
     opencode::commands(port, &password)
@@ -1937,8 +2829,11 @@ pub async fn agent_skill_list(
     state: State<'_, AgentManager>,
     _provider_instance_id: String,
 ) -> Result<Vec<ProviderSkill>, String> {
-    if state.lock().codex.is_some() {
-        return Ok(Vec::new());
+    {
+        let state = state.lock();
+        if state.codex.is_some() || state.acp.is_some() {
+            return Ok(Vec::new());
+        }
     }
     let (port, password) = server_connection(&state)?;
     opencode::skills(port, &password)
@@ -1982,6 +2877,9 @@ pub async fn agent_thread_send(
     if driver == "codex" {
         return codex_send(&app, &state, thread_id, text, model);
     }
+    if driver == "claude" {
+        return acp_send(&app, &state, thread_id, text, model);
+    }
     let (run_id, thread, project, port, password) = {
         let mut state = state.lock();
         let index =
@@ -1993,8 +2891,8 @@ pub async fn agent_thread_send(
         if active_run_id(&state, &thread_id).is_some() {
             return Err("This chat already has a running request. Stop it first.".to_string());
         }
-        let project = project_path(&state, &thread.project_id)
-            .ok_or_else(|| "Project not found.".to_string())?;
+        let project =
+            thread_working_path(&state, &thread).ok_or_else(|| "Project not found.".to_string())?;
         let (port, password) = {
             let server = state
                 .server
@@ -2191,14 +3089,17 @@ pub async fn agent_thread_interrupt(
         if driver.as_deref() == Some("codex") {
             return codex_interrupt(&app, &state, &thread_id);
         }
+        if driver.as_deref() == Some("claude") {
+            return acp_interrupt(&state, &thread_id);
+        }
     }
     let (thread, project, run_id, port, password) = {
         let state = state.lock();
         let index =
             thread_index(&state, &thread_id).ok_or_else(|| "Chat not found.".to_string())?;
         let thread = state.threads[index].clone();
-        let project = project_path(&state, &thread.project_id)
-            .ok_or_else(|| "Project not found.".to_string())?;
+        let project =
+            thread_working_path(&state, &thread).ok_or_else(|| "Project not found.".to_string())?;
         let run_id = active_run_id(&state, &thread_id).unwrap_or_default();
         let (port, password) = state
             .server
@@ -2229,6 +3130,37 @@ pub async fn agent_thread_interrupt(
             events::emit(&app, events::THREAD_UPDATED, &thread);
         }
     }
+    Ok(())
+}
+
+fn mark_approval_resolved(
+    app: &AppHandle,
+    manager: &AgentManager,
+    approval_id: &str,
+    decision: &str,
+) -> Result<(), String> {
+    let mut state = manager.lock();
+    state.acp_requests.remove(approval_id);
+    let Some(approval) = state.approvals.get_mut(approval_id) else {
+        return Ok(());
+    };
+    approval.decision = Some(decision.to_string());
+    approval.resolved_at = Some(iso_now());
+    let approval = approval.clone();
+    state.store.append_record(
+        &approval.thread_id,
+        &AgentRecord::ApprovalResolved {
+            approval_id: approval.id.clone(),
+            decision: decision.to_string(),
+        },
+    )?;
+    if let Some(index) = thread_index(&state, &approval.thread_id) {
+        state.threads[index].ui_status = "working".to_string();
+        let thread = state.threads[index].clone();
+        let _ = save_threads(&state);
+        events::emit(app, events::THREAD_UPDATED, &thread);
+    }
+    events::emit(app, events::APPROVAL_RESOLVED, &approval);
     Ok(())
 }
 
@@ -2274,6 +3206,50 @@ pub async fn agent_approval_respond(
         }
         return Ok(());
     }
+    let acp_reply = {
+        let state = state.lock();
+        state.acp.as_ref().and_then(|runtime| {
+            state.acp_requests.get(&approval_id).map(|request| {
+                (
+                    runtime.client.clone(),
+                    request.raw_id.clone(),
+                    request.options.clone(),
+                )
+            })
+        })
+    };
+    if let Some((client, raw_id, options)) = acp_reply {
+        let wanted = match decision_value {
+            "once" => "allow_once",
+            "always" => "allow_always",
+            _ => "reject_once",
+        };
+        let chosen = options
+            .iter()
+            .find(|option| option.get("kind").and_then(Value::as_str) == Some(wanted))
+            .or_else(|| {
+                if decision_value == "reject" {
+                    options.iter().find(|option| {
+                        option
+                            .get("kind")
+                            .and_then(Value::as_str)
+                            .is_some_and(|kind| kind.starts_with("reject"))
+                    })
+                } else {
+                    None
+                }
+            })
+            .and_then(|option| option.get("optionId").and_then(Value::as_str));
+        let outcome = match chosen {
+            Some(option_id) => json!({
+                "outcome": { "outcome": "selected", "optionId": option_id }
+            }),
+            None => json!({ "outcome": { "outcome": "cancelled" } }),
+        };
+        client.reply(&raw_id, outcome)?;
+        mark_approval_resolved(&app, &state, &approval_id, decision_value)?;
+        return Ok(());
+    }
     let (approval, project, session, port, password) = {
         let state = state.lock();
         let approval = state
@@ -2286,8 +3262,8 @@ pub async fn agent_approval_respond(
             .iter()
             .find(|thread| thread.id == approval.thread_id)
             .ok_or_else(|| "Chat not found.".to_string())?;
-        let project = project_path(&state, &thread.project_id)
-            .ok_or_else(|| "Project not found.".to_string())?;
+        let project =
+            thread_working_path(&state, &thread).ok_or_else(|| "Project not found.".to_string())?;
         let session = thread
             .native_session_id
             .clone()
@@ -2712,7 +3688,7 @@ fn finish_run(
     set_thread_ui(
         state,
         thread_id,
-        if status == "completed" {
+        if status == "completed" || status == "stopped" {
             "idle"
         } else {
             "error"
@@ -3190,6 +4166,7 @@ mod tests {
             model: None,
             permission_mode: "supervised".into(),
             native_session_id: None,
+            worktree_path: None,
             ui_status: "idle".into(),
             created_at: "now".into(),
             updated_at: "now".into(),
@@ -3208,6 +4185,39 @@ mod tests {
         assert!(active_run("waiting"));
         assert!(!active_run("completed"));
         assert!(!active_run("stopped"));
+    }
+
+    #[test]
+    fn creates_a_git_worktree_for_a_thread() {
+        let git = |repo: &Path, args: &[&str]| {
+            Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(args)
+                .output()
+                .expect("run git")
+        };
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("arc-worktree-{}", random_hex(6)));
+        let repo = root.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        assert!(git(&repo, &["init"]).status.success());
+        assert!(git(&repo, &["config", "user.email", "test@example.com"])
+            .status
+            .success());
+        assert!(git(&repo, &["config", "user.name", "Test"])
+            .status
+            .success());
+        assert!(git(&repo, &["commit", "--allow-empty", "-m", "init"])
+            .status
+            .success());
+        let worktree = create_worktree(repo.to_str().unwrap(), &root.join("worktrees"), "thread-1")
+            .expect("worktree");
+        assert!(Path::new(&worktree).is_dir());
+        remove_worktree(repo.to_str().unwrap(), &worktree);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -62,9 +62,9 @@ On macOS, replace `Ctrl` with `Command`. `Alt+Shift+F` uses `Option+Shift+F`.
 
 ## Agents
 
-Press `Ctrl+Shift+A` to open Agents. Add a project, grant trust, choose a provider, then start a chat. Arc supports OpenCode and Codex behind one workspace. OpenCode runs a loopback `opencode serve` process and pins 1.19.5 or newer 1.x. Codex runs `codex app-server` over stdio and needs a logged-in Codex CLI. Arc does not install or upgrade providers.
+Press `Ctrl+Shift+A` to open Agents. Add a project, grant trust, choose a provider, then start a chat. Arc supports OpenCode, Codex, and Claude behind one workspace. OpenCode runs a loopback `opencode serve` process and pins 1.19.5 or newer 1.x. Codex runs `codex app-server` over stdio and needs a logged-in Codex CLI. Claude runs through the Agent Client Protocol wrapper, needs Node and a logged-in Claude Code CLI, and uses `claude-agent-acp` when installed (Arc falls back to `npx @agentclientprotocol/claude-agent-acp`). Arc does not install or upgrade providers. In Git projects, the first chat uses the project folder and later chats run in separate detached worktrees under Arc app data; use the branch icon on a chat to open its worktree in the editor.
 
-Project trust is consent, not a sandbox: providers run commands with your OS user permissions. The default permission mode is Supervised, using each provider's native approval rules. Chats and transcripts stay in Arc app data; skills and MCP configuration stay provider-native. Conversations never move between providers; use a new chat to switch. Only one provider process runs at a time, and chats can be searched, pinned, and archived.
+Project trust is consent, not a sandbox: providers run commands with your OS user permissions. The default permission mode is Supervised, using each provider's native approval rules. Chats and transcripts stay in Arc app data; skills and MCP configuration stay provider-native. Conversations never move between providers; use a new chat to switch. Only one provider process runs at a time, and chats can be archived.
 
 ## Plugins, themes, and AI builds
 

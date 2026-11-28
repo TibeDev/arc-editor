@@ -1,23 +1,42 @@
-import { useMemo, useState } from "react";
-import { Send, Square } from "lucide-react";
-import type { ProviderCommand, ProviderSkill } from "../../lib/agents/types";
+import { useMemo, useRef, useState } from "react";
+import { ArrowUp, Paperclip, Square } from "lucide-react";
+import type {
+  AgentModel,
+  AgentProviderInstance,
+  ProviderCommand,
+  ProviderSkill,
+} from "../../lib/agents/types";
+import AgentModelPicker from "./AgentModelPicker";
 
 export default function AgentComposer({
   onSend,
   onStop,
   busy,
-  disabled,
   commands,
   skills,
+  providers,
+  providerId,
+  onProviderChange,
+  models,
+  modelKey,
+  onModelChange,
+  providerRunning,
 }: {
   onSend: (text: string) => void;
   onStop: () => void;
   busy: boolean;
-  disabled: boolean;
   commands: ProviderCommand[];
   skills: ProviderSkill[];
+  providers: AgentProviderInstance[];
+  providerId: string;
+  onProviderChange: (providerId: string) => void;
+  models: AgentModel[];
+  modelKey: string;
+  onModelChange: (key: string) => void;
+  providerRunning: boolean;
 }) {
   const [value, setValue] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const hints = useMemo(() => {
     const trimmed = value.trimStart();
@@ -46,9 +65,20 @@ export default function AgentComposer({
     return [];
   }, [commands, skills, value]);
 
+  const insertMention = () => {
+    const textarea = textareaRef.current;
+    const start = textarea?.selectionStart ?? value.length;
+    const next = `${value.slice(0, start)}@ ${value.slice(start)}`;
+    setValue(next);
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(start + 1, start + 1);
+    });
+  };
+
   const submit = () => {
     const text = value.trim();
-    if (!text || disabled) return;
+    if (!text) return;
     setValue("");
     onSend(text);
   };
@@ -74,15 +104,12 @@ export default function AgentComposer({
           ))}
         </div>
       ) : null}
-      <div className="agents-composer-row">
+      <div className="agents-composer-box">
         <textarea
+          ref={textareaRef}
           value={value}
           rows={3}
-          placeholder={
-            disabled
-              ? "Grant trust to this project to start chatting."
-              : "Send a message. Enter sends, Shift+Enter adds a line."
-          }
+          placeholder="Ask anything. @ files, $ skills, / commands"
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
@@ -90,28 +117,51 @@ export default function AgentComposer({
               submit();
             }
           }}
-          disabled={disabled}
         />
-        {busy ? (
+        <div className="agents-composer-toolbar">
           <button
             type="button"
-            className="action-button action-button--secondary action-button--compact agents-stop"
-            onClick={onStop}
-            title="Stop the running request"
+            className="agents-icon-button"
+            title="Mention files"
+            aria-label="Mention files"
+            onClick={insertMention}
           >
-            <Square size={14} />
+            <Paperclip size={15} />
           </button>
-        ) : (
-          <button
-            type="button"
-            className="action-button action-button--primary action-button--compact"
-            onClick={submit}
-            disabled={disabled || !value.trim()}
-            title="Send"
-          >
-            <Send size={14} />
-          </button>
-        )}
+          <div className="agents-composer-controls">
+            <AgentModelPicker
+              providers={providers}
+              providerId={providerId}
+              onProviderChange={onProviderChange}
+              models={models}
+              modelKey={modelKey}
+              onModelChange={onModelChange}
+              providerRunning={providerRunning}
+            />
+            {busy ? (
+              <button
+                type="button"
+                className="agents-composer-send agents-composer-stop"
+                onClick={onStop}
+                title="Stop the running request"
+                aria-label="Stop"
+              >
+                <Square size={14} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="agents-composer-send"
+                onClick={submit}
+                disabled={!value.trim()}
+                title="Send"
+                aria-label="Send"
+              >
+                <ArrowUp size={16} />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

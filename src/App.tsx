@@ -5446,6 +5446,7 @@ function App() {
             updateSettings({ agentLastMode: 'editor' });
           }}
           onSaveAllDirty={() => saveDirtyRef.current()}
+          enabledProviderIds={settings.agentEnabledProviderIds}
           onClose={() => {
             setAgentsOpen(false);
             updateSettings({ agentLastMode: 'editor' });

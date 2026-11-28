@@ -3,6 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { APP_THEME_OPTIONS, appThemeDefinition, DEFAULT_SETTINGS, DEFAULT_THEME, type AppSettings, type ThemeDefinition } from "../lib/settings";
 import type { UpdateInfo } from "../lib/updater";
+import { agentsApi } from "../lib/agents/api";
+import type { AgentProviderInstance } from "../lib/agents/types";
+import ProviderIcon from "./agents/ProviderIcon";
 import type { PluginConfigurationContribution, PluginConfigurationProperty } from "../lib/pluginRuntime";
 import ThemeColorPicker from "./ThemeColorPicker";
 import Select from "./Select";
@@ -16,7 +19,7 @@ const settingsCategories = [
   { id: "terminal", label: "Terminal", description: "Cursor and scrollback behavior.", sections: [{ id: "terminal", label: "Terminal" }] },
   { id: "files", label: "Files", description: "Workspace browsing preferences.", sections: [{ id: "file-explorer", label: "File viewer" }] },
   { id: "notifications", label: "Notifications", description: "Choose how in-app notifications behave.", sections: [{ id: "behavior", label: "Notification behavior" }] },
-  { id: "ai", label: "AI", description: "Default terminal agent for building plugins and themes.", sections: [{ id: "agent", label: "Terminal agent" }] },
+  { id: "ai", label: "AI", description: "Default terminal agent and Agents provider.", sections: [{ id: "agent", label: "Terminal agent" }, { id: "agents", label: "Agents" }] },
   { id: "updates", label: "Updates", description: "Release channel and automatic updates.", sections: [{ id: "channel", label: "Release channel" }, { id: "behavior", label: "Automatic updates" }] },
   { id: "plugins", label: "Plugins", description: "Settings contributed by installed plugins.", sections: [] },
 ] as const;
@@ -232,6 +235,10 @@ export default function SettingsPanel({
   const [expandedCategories, setExpandedCategories] = useState<Set<SettingsCategory>>(() => new Set(["editor"]));
   const [categorySearch, setCategorySearch] = useState("");
   const [themeSearch, setThemeSearch] = useState("");
+  const [agentProviders, setAgentProviders] = useState<AgentProviderInstance[]>([]);
+  useEffect(() => {
+    void agentsApi.listProviders().then(setAgentProviders).catch(() => {});
+  }, []);
   const visibleCategories = useMemo(() => {
     const query = categorySearch.trim().toLowerCase();
     if (!query) return settingsCategories;
@@ -456,6 +463,31 @@ export default function SettingsPanel({
             </section>}
             {activeCategory === "files" && <section className="settings-section" id="settings-section-files-file-explorer"><h3>File viewer</h3>
               {toggle("showHiddenFiles", "Show hidden files", "Include dotfiles and hidden folders in workspace tree.")}
+            </section>}
+            {activeCategory === "ai" && <section className="settings-section" id="settings-section-ai-agents"><h3>Agents</h3>
+              <div className="settings-provider-grid">
+                {agentProviders.map((provider) => {
+                  const enabled = settings.agentEnabledProviderIds.includes(provider.id);
+                  return <button
+                    type="button"
+                    key={provider.id}
+                    className={`settings-provider-card${enabled ? " enabled" : ""}`}
+                    onClick={() => onChange({
+                      agentEnabledProviderIds: enabled
+                        ? settings.agentEnabledProviderIds.filter((id) => id !== provider.id)
+                        : [...settings.agentEnabledProviderIds, provider.id],
+                    })}
+                  >
+                    <span>
+                      <span className="settings-provider-title"><ProviderIcon driver={provider.driver} size={14} /><strong>{provider.label}</strong></span>
+                      <small>{provider.driver} · {enabled ? "Enabled" : "Disabled"}</small>
+                    </span>
+                    <span className="settings-provider-switch" aria-hidden="true"><i /></span>
+                  </button>;
+                })}
+                {agentProviders.length === 0 && <div className="setting-note">Open Agents once to load providers.</div>}
+              </div>
+              <div className="setting-note">Enabled providers appear in Agents. Arc starts the active provider so models load automatically.</div>
             </section>}
             {activeCategory === "ai" && <section className="settings-section" id="settings-section-ai-agent"><h3>Terminal agent</h3>
               <label className="setting-field"><span>Default agent</span><Select value={settings.agentCli} onChange={(next) => onChange({ agentCli: next as AppSettings["agentCli"] })} options={[

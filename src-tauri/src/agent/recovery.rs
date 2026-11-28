@@ -79,6 +79,7 @@ mod tests {
             model: None,
             permission_mode: "supervised".into(),
             native_session_id: Some("session-1".into()),
+            worktree_path: None,
             ui_status: "working".into(),
             created_at: "2026-01-01T00:00:00.000Z".into(),
             updated_at: "2026-01-01T00:00:00.000Z".into(),

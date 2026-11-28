@@ -9,7 +9,7 @@ export type AgentProject = {
 
 export type AgentProviderInstance = {
   id: string;
-  driver: "opencode";
+  driver: "opencode" | "codex" | "claude";
   label: string;
   binaryPath?: string;
   configDir?: string;
@@ -31,12 +31,12 @@ export type AgentThread = {
   model?: AgentModelRef;
   permissionMode: "supervised";
   nativeSessionId?: string;
+  worktreePath?: string;
   uiStatus: AgentUiStatus;
   createdAt: string;
   updatedAt: string;
   lastVisitedAt?: string;
   archivedAt?: string;
-  pinnedAt?: string;
 };
 
 export type AgentThreadSummary = Pick<
@@ -47,10 +47,10 @@ export type AgentThreadSummary = Pick<
   | "title"
   | "model"
   | "uiStatus"
+  | "worktreePath"
   | "updatedAt"
   | "archivedAt"
-  | "pinnedAt"
->;
+> & { hasMessages: boolean };
 
 export type AgentRun = {
   id: string;

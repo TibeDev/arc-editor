@@ -88,6 +88,21 @@
   color: var(--text);
   line-height: 1.5;
 }
+.arc-dialog-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line, #343a42);
+  border-radius: var(--radius-md, 6px);
+  background: var(--panel, #1d2227);
+  color: var(--text);
+  font: inherit;
+}
+
+.arc-dialog-input:focus {
+  outline: 1px solid var(--accent, #5e6ad2);
+  outline-offset: 0;
+}
+
 .arc-dialog-actions {
   display: flex;
   justify-content: flex-end;

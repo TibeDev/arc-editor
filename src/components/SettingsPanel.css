@@ -690,3 +690,79 @@
 .settings-main .settings-button-row .settings-action {
   margin: 8px 0 12px;
 }
+
+.settings-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.settings-provider-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #343a42);
+  border-radius: var(--radius-md, 6px);
+  background: var(--panel, #1d2227);
+  color: var(--text);
+  text-align: left;
+}
+
+.settings-provider-card:hover {
+  border-color: var(--muted, #8495a8);
+}
+
+.settings-provider-card.enabled {
+  border-color: var(--accent, #5e6ad2);
+  background: color-mix(in srgb, var(--accent, #5e6ad2) 10%, var(--panel, #1d2227));
+}
+
+.settings-provider-card span:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-provider-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-provider-card strong {
+  font-size: var(--font-md, 12px);
+}
+
+.settings-provider-card small {
+  color: var(--muted, #8495a8);
+  font-size: var(--font-sm, 10px);
+}
+
+.settings-provider-switch {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 17px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--line, #343a42);
+}
+
+.settings-provider-switch i {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--muted, #8495a8);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.settings-provider-card.enabled .settings-provider-switch {
+  background: var(--accent, #5e6ad2);
+}
+
+.settings-provider-card.enabled .settings-provider-switch i {
+  transform: translateX(13px);
+  background: #fff;
+}

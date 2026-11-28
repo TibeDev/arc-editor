@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, MessagesSquare, Plus, X } from "lucide-react";
+import { useEffect } from "react";
+import { ArrowLeft, MessagesSquare, X } from "lucide-react";
 import TitleBar from "../TitleBar";
 import { store } from "../../lib/agents/store";
 import { useAgentsStore } from "../../lib/agents/useAgentsStore";
@@ -16,6 +16,7 @@ export default function AgentsWorkspace({
   onOpenProjectInEditor,
   onSaveAllDirty,
   onClose,
+  enabledProviderIds,
 }: {
   titleBarEnabled: boolean;
   editorWorkspace: string;
@@ -24,14 +25,22 @@ export default function AgentsWorkspace({
   onOpenProjectInEditor: (path: string) => void;
   onSaveAllDirty: () => Promise<boolean>;
   onClose: () => void;
+  enabledProviderIds: string[];
 }) {
   const state = useAgentsStore();
-  const [selectedProviderId, setSelectedProviderId] = useState("");
   useEffect(() => {
     void store.ensureLoaded();
   }, []);
-  const effectiveProviderId =
-    selectedProviderId ||
+  useEffect(() => {
+    return () => {
+      void store.stopProvider();
+    };
+  }, []);
+  const enabledProviders = state.providers.filter((provider) =>
+    enabledProviderIds.includes(provider.id),
+  );
+  const defaultProviderId =
+    enabledProviders[0]?.id ||
     state.status?.instanceId ||
     state.providers[0]?.id ||
     "";
@@ -42,6 +51,36 @@ export default function AgentsWorkspace({
   const activeThread = state.threads.find(
     (thread) => thread.id === state.activeThreadId,
   );
+  const activeProviderId =
+    activeThread?.providerInstanceId || defaultProviderId;
+  const conversationProviderId = state.detail?.thread.providerInstanceId;
+  const baseProviders = enabledProviders.length
+    ? enabledProviders
+    : state.providers;
+  const conversationProviders =
+    conversationProviderId &&
+    !baseProviders.some((provider) => provider.id === conversationProviderId)
+      ? [
+          ...baseProviders,
+          ...state.providers.filter(
+            (provider) => provider.id === conversationProviderId,
+          ),
+        ]
+      : baseProviders;
+
+  useEffect(() => {
+    if (!state.loaded || !activeProviderId) return;
+    if (state.status?.running && state.status.instanceId === activeProviderId) {
+      void store.ensureModels(activeProviderId);
+      return;
+    }
+    void store.startProvider(activeProviderId);
+  }, [
+    state.loaded,
+    activeProviderId,
+    state.status?.instanceId,
+    state.status?.running,
+  ]);
 
   return (
     <main className={`agents-workspace-page ${titleBarEnabled ? "" : "titlebar-off"}`}>
@@ -57,13 +96,6 @@ export default function AgentsWorkspace({
           Editor
         </button>
         <h1>Agents</h1>
-        {state.status?.running ? (
-          <span className="agents-header-status">
-            OpenCode {state.status.version ?? ""}
-          </span>
-        ) : (
-          <span className="agents-header-status offline">OpenCode offline</span>
-        )}
       </header>
 
       {state.error ? (
@@ -79,45 +111,25 @@ export default function AgentsWorkspace({
           </button>
         </div>
       ) : null}
-      {state.status?.error ? (
-        <div className="agents-error" role="status">
-          <span>{state.status.error}</span>
-        </div>
-      ) : null}
 
       <div className="agents-workspace-body">
         <AgentSidebar
           projects={state.projects}
-          providers={state.providers}
           threads={state.threads}
           activeProjectId={state.activeProjectId}
           activeThreadId={state.activeThreadId}
-          status={state.status}
-          selectedProviderId={effectiveProviderId}
-          onSelectProvider={setSelectedProviderId}
           onAddProject={() => void store.addProject()}
           onSelectProject={(projectId) => void store.selectProject(projectId)}
           onRemoveProject={(projectId) => void store.removeProject(projectId)}
-          onSetTrust={(projectId, trusted) =>
-            void store.setTrust(projectId, trusted)
-          }
-          onNewThread={() =>
-            void store.createThread(effectiveProviderId || undefined)
-          }
+          onOpenProjectInEditor={onOpenProjectInEditor}
+          onNewThread={() => void store.createThread(defaultProviderId)}
           onOpenThread={(threadId) => void store.openThread(threadId)}
           onDeleteThread={(threadId) => void store.deleteThread(threadId)}
+          onRenameThread={(threadId, title) =>
+            void store.renameThread(threadId, title)
+          }
           onArchiveThread={(threadId, archived) =>
             void store.archiveThread(threadId, archived)
-          }
-          onPinThread={(threadId, pinned) =>
-            void store.pinThread(threadId, pinned)
-          }
-          onStartProvider={() =>
-            void store.startProvider(effectiveProviderId || undefined)
-          }
-          onStopProvider={() => void store.stopProvider()}
-          onRestartProvider={() =>
-            void store.restartProvider(effectiveProviderId || undefined)
           }
         />
 
@@ -126,42 +138,35 @@ export default function AgentsWorkspace({
             key={state.detail.thread.id}
             detail={state.detail}
             projectPath={activeProject.path}
-            trusted={activeProject.trusted}
+            providers={conversationProviders}
             status={state.status}
-            models={state.models}
+            models={
+              state.modelsByProvider[state.detail.thread.providerInstanceId] ?? []
+            }
             commands={state.commands}
             skills={state.skills}
             editorWorkspace={editorWorkspace}
             dirtyPaths={editorDirtyPaths}
             confirmDirtyFiles={confirmDirtyFiles}
             onSaveAllDirty={onSaveAllDirty}
-            onOpenInEditor={onOpenProjectInEditor}
+            onProviderChange={(providerId) =>
+              void store.setThreadProvider(
+                state.detail!.thread.id,
+                providerId,
+              )
+            }
           />
         ) : (
           <section className="agents-empty-conversation">
             <MessagesSquare size={28} />
             <h2>
-              {activeProject
-                ? activeProject.trusted
-                  ? "Start a chat"
-                  : "Trust this project to start"
-                : "Add a project to begin"}
+              {activeProject ? "Start a chat" : "Add a project to begin"}
             </h2>
             <p>
               Chats are stored by Arc in app data. Skills and MCP configuration stay
-              OpenCode-native. Arc does not sandbox the agent.
+              provider-native. Arc does not sandbox the agent.
             </p>
-            {activeProject?.trusted ? (
-              <button
-                type="button"
-                className="action-button action-button--primary action-button--compact"
-                onClick={() =>
-                  void store.createThread(effectiveProviderId || undefined)
-                }
-              >
-                <Plus size={14} /> New chat
-              </button>
-            ) : null}
+
           </section>
         )}
       </div>

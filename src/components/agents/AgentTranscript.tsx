@@ -3,10 +3,12 @@ import type {
   AgentApproval,
   AgentItem,
   AgentQuestion,
+  AgentUiStatus,
 } from "../../lib/agents/types";
 import AgentApprovalCard from "./AgentApprovalCard";
 import AgentMarkdown from "./AgentMarkdown";
 import AgentQuestionCard from "./AgentQuestionCard";
+import AgentStatusDot from "./AgentStatusDot";
 
 function formatValue(value: unknown): string {
   if (value === undefined) return "";
@@ -50,6 +52,7 @@ export default function AgentTranscript({
   onApproval,
   onQuestion,
   onRejectQuestion,
+  activity,
 }: {
   items: AgentItem[];
   approvals: AgentApproval[];
@@ -57,6 +60,7 @@ export default function AgentTranscript({
   onApproval: (approvalId: string, decision: "once" | "always" | "reject") => void;
   onQuestion: (questionId: string, answers: unknown) => void;
   onRejectQuestion: (questionId: string) => void;
+  activity?: { status: AgentUiStatus; elapsed: number; label: string };
 }) {
   const hidden = Math.max(0, items.length - 500);
   const visible = hidden ? items.slice(hidden) : items;
@@ -123,6 +127,14 @@ export default function AgentTranscript({
           onReject={() => onRejectQuestion(question.id)}
         />
       ))}
+      {activity ? (
+        <div className="agents-activity" role="status">
+          <AgentStatusDot status={activity.status} />
+          <span>
+            Working for {activity.elapsed}s · {activity.label}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

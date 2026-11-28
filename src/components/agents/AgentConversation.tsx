@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { FolderOpen } from "lucide-react";
 import { showArcDialog } from "../../lib/dialog";
 import type {
   AgentModel,
   AgentModelRef,
+  AgentProviderInstance,
   AgentThreadDetail,
   ProviderCommand,
   ProviderSkill,
@@ -11,13 +11,12 @@ import type {
 } from "../../lib/agents/types";
 import { store } from "../../lib/agents/store";
 import AgentComposer from "./AgentComposer";
-import AgentStatusDot from "./AgentStatusDot";
 import AgentTranscript from "./AgentTranscript";
 
 export default function AgentConversation({
   detail,
   projectPath,
-  trusted,
+  providers,
   status,
   models,
   commands,
@@ -26,11 +25,11 @@ export default function AgentConversation({
   dirtyPaths,
   confirmDirtyFiles,
   onSaveAllDirty,
-  onOpenInEditor,
+  onProviderChange,
 }: {
   detail: AgentThreadDetail;
   projectPath: string;
-  trusted: boolean;
+  providers: AgentProviderInstance[];
   status: ProviderStatus | null;
   models: AgentModel[];
   commands: ProviderCommand[];
@@ -39,7 +38,7 @@ export default function AgentConversation({
   dirtyPaths: string[];
   confirmDirtyFiles: boolean;
   onSaveAllDirty: () => Promise<boolean>;
-  onOpenInEditor: (path: string) => void;
+  onProviderChange: (providerId: string) => void;
 }) {
   const thread = detail.thread;
   const [modelKey, setModelKey] = useState(
@@ -49,8 +48,35 @@ export default function AgentConversation({
     setModelKey(
       thread.model ? `${thread.model.providerID}/${thread.model.modelID}` : "",
     );
-  }, [thread.id, thread.model]);
-  const busy = thread.uiStatus === "working";
+  }, [thread.id, thread.model, thread.providerInstanceId]);
+  const activeRun = [...detail.runs]
+    .reverse()
+    .find((run) =>
+      ["starting", "running", "waiting"].includes(run.status),
+    );
+  const busy = thread.uiStatus === "working" || Boolean(activeRun);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!busy) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [busy, thread.id]);
+  const elapsed = activeRun
+    ? Math.max(
+        0,
+        Math.floor((now - Date.parse(activeRun.startedAt)) / 1000),
+      )
+    : 0;
+  const lastItem = detail.items[detail.items.length - 1];
+  const activity =
+    lastItem?.kind === "tool" && lastItem.status === "running"
+      ? "Running tool"
+      : elapsed < 6
+        ? "Thinking"
+        : elapsed < 18
+          ? "Planning"
+          : "Building";
   const selectedModel: AgentModelRef | undefined = (() => {
     const model = models.find(
       (entry) => `${entry.providerID}/${entry.modelID}` === modelKey,
@@ -83,48 +109,15 @@ export default function AgentConversation({
 
   return (
     <section className="agents-conversation" aria-label="Conversation">
-      <header className="agents-conversation-header">
-        <div>
-          <AgentStatusDot status={thread.uiStatus} />
-          <strong>{thread.title}</strong>
-          <span className="agents-conversation-provider">
-            {thread.providerInstanceId}
-          </span>
-        </div>
-        <div className="agents-conversation-actions">
-          <select
-            aria-label="Model"
-            className="agents-model-select"
-            value={modelKey}
-            onChange={(event) => setModelKey(event.target.value)}
-            disabled={models.length === 0}
-          >
-            <option value="">
-              {status?.running ? "Default model" : "Provider offline"}
-            </option>
-            {models.map((model) => (
-              <option
-                key={`${model.providerID}/${model.modelID}`}
-                value={`${model.providerID}/${model.modelID}`}
-              >
-                {model.providerName}: {model.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="action-button action-button--secondary action-button--compact"
-            onClick={() => onOpenInEditor(projectPath)}
-            title="Open this project in the editor"
-          >
-            <FolderOpen size={14} />
-          </button>
-        </div>
-      </header>
       <AgentTranscript
         items={detail.items}
         approvals={detail.approvals}
         questions={detail.questions}
+        activity={
+          busy
+            ? { status: thread.uiStatus, elapsed, label: activity }
+            : undefined
+        }
         onApproval={(approvalId, decision) =>
           void store.respondApproval(approvalId, decision)
         }
@@ -137,9 +130,31 @@ export default function AgentConversation({
         onSend={(text) => void send(text)}
         onStop={() => void store.interrupt(thread.id)}
         busy={busy}
-        disabled={!trusted}
         commands={commands}
         skills={skills}
+        providers={providers}
+        providerId={thread.providerInstanceId}
+        onProviderChange={(providerId) => {
+          onProviderChange(providerId);
+          setModelKey("");
+        }}
+        models={models}
+        modelKey={modelKey}
+        onModelChange={(key) => {
+          setModelKey(key);
+          const model = models.find(
+            (entry) => `${entry.providerID}/${entry.modelID}` === key,
+          );
+          void store.setThreadModel(
+            thread.id,
+            model
+              ? { providerID: model.providerID, modelID: model.modelID }
+              : null,
+          );
+        }}
+        providerRunning={Boolean(
+          status?.running && status.instanceId === thread.providerInstanceId,
+        )}
       />
     </section>
   );

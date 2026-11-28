@@ -29,6 +29,7 @@ export type AgentsState = {
   detail: AgentThreadDetail | null;
   status: ProviderStatus | null;
   models: AgentModel[];
+  modelsByProvider: Record<string, AgentModel[]>;
   agentOptions: AgentOption[];
   commands: ProviderCommand[];
   skills: ProviderSkill[];
@@ -46,6 +47,7 @@ const initialState: AgentsState = {
   detail: null,
   status: null,
   models: [],
+  modelsByProvider: {},
   agentOptions: [],
   commands: [],
   skills: [],
@@ -60,11 +62,29 @@ function setState(patch: Partial<AgentsState>) {
   for (const subscriber of subscribers) subscriber();
 }
 
+function setIdle(threadId: string) {
+  setState({
+    threads: state.threads.map((thread) =>
+      thread.id === threadId ? { ...thread, uiStatus: "idle" } : thread,
+    ),
+    detail:
+      state.detail?.thread.id === threadId
+        ? {
+            ...state.detail,
+            thread: { ...state.detail.thread, uiStatus: "idle" },
+          }
+        : state.detail,
+  });
+}
+
 function fail(error: unknown) {
-  setState({ error: error instanceof Error ? error.message : String(error) });
+  const message = error instanceof Error ? error.message : String(error);
+  if (/provider disconnected/i.test(message)) return;
+  setState({ error: message });
 }
 
 function upsertThread(thread: AgentThread) {
+  const existing = state.threads.find((entry) => entry.id === thread.id);
   const summary: AgentThreadSummary = {
     id: thread.id,
     projectId: thread.projectId,
@@ -72,9 +92,13 @@ function upsertThread(thread: AgentThread) {
     title: thread.title,
     model: thread.model,
     uiStatus: thread.uiStatus,
+    worktreePath: thread.worktreePath,
     updatedAt: thread.updatedAt,
     archivedAt: thread.archivedAt,
-    pinnedAt: thread.pinnedAt,
+    hasMessages:
+      existing?.hasMessages ??
+      (state.detail?.thread.id === thread.id &&
+        state.detail.items.some((item) => item.kind === "user")),
   };
   const exists = state.threads.some((entry) => entry.id === thread.id);
   const threads = exists
@@ -98,6 +122,15 @@ function upsertRun(run: AgentRun) {
 
 function upsertItem(item: AgentItem) {
   if (!state.detail) return;
+  if (item.kind === "user") {
+    setState({
+      threads: state.threads.map((thread) =>
+        thread.id === state.detail?.thread.id && !thread.hasMessages
+          ? { ...thread, hasMessages: true }
+          : thread,
+      ),
+    });
+  }
   const exists = state.detail.items.some((entry) => entry.id === item.id);
   const items = exists
     ? state.detail.items.map((entry) => (entry.id === item.id ? item : entry))
@@ -150,11 +183,13 @@ async function startListeners() {
   return listenersStarted;
 }
 
-async function loadCatalog() {
-  const provider =
-    state.providers.find((entry) => entry.id === state.status?.instanceId) ??
-    state.providers[0];
+async function loadCatalog(providerId?: string) {
+  const provider = providerId
+    ? state.providers.find((entry) => entry.id === providerId)
+    : (state.providers.find((entry) => entry.id === state.status?.instanceId) ??
+      state.providers[0]);
   if (!provider || !state.status?.running) return;
+  if (state.status.instanceId !== provider.id) return;
   try {
     const [models, agentOptions, commands, skills] = await Promise.all([
       agentsApi.models(provider.id),
@@ -162,9 +197,21 @@ async function loadCatalog() {
       agentsApi.commands(provider.id),
       agentsApi.skills(provider.id),
     ]);
-    setState({ models, agentOptions, commands, skills });
+    setState({
+      models,
+      modelsByProvider: { ...state.modelsByProvider, [provider.id]: models },
+      agentOptions,
+      commands,
+      skills,
+    });
   } catch {
-    setState({ models: [], agentOptions: [], commands: [], skills: [] });
+    setState({
+      models: [],
+      modelsByProvider: { ...state.modelsByProvider, [provider.id]: [] },
+      agentOptions: [],
+      commands: [],
+      skills: [],
+    });
   }
 }
 
@@ -209,7 +256,7 @@ export const store = {
         if (state.activeThreadId) await store.openThread(state.activeThreadId);
       }
       setState({ loaded: true, loading: false });
-      if (status?.running) void loadCatalog();
+      if (status?.running) void loadCatalog(status.instanceId);
     } catch (error) {
       setState({ loading: false, loaded: true });
       fail(error);
@@ -284,7 +331,8 @@ export const store = {
     const projectId = state.activeProjectId;
     const provider = providerId
       ? state.providers.find((entry) => entry.id === providerId)
-      : state.providers[0];
+      : (state.providers.find((entry) => entry.id === state.status?.instanceId) ??
+        state.providers[0]);
     if (!projectId || !provider) return;
     try {
       const thread = await agentsApi.createThread(projectId, provider.id, model);
@@ -300,10 +348,47 @@ export const store = {
     setState({ activeThreadId: threadId });
     try {
       const detail = await agentsApi.openThread(threadId);
-      setState({ detail, error: "" });
+      setState({
+        detail,
+        error: "",
+        threads: state.threads.map((thread) =>
+          thread.id === threadId
+            ? {
+                ...thread,
+                hasMessages: detail.items.some((item) => item.kind === "user"),
+              }
+            : thread,
+        ),
+      });
     } catch (error) {
       fail(error);
     }
+  },
+  async setThreadModel(threadId: string, model: AgentModelRef | null) {
+    try {
+      const thread = await agentsApi.setThreadModel(threadId, model);
+      upsertThread(thread);
+    } catch (error) {
+      fail(error);
+    }
+  },
+  async setThreadProvider(threadId: string, providerId: string) {
+    try {
+      const thread = await agentsApi.setThreadProvider(threadId, providerId);
+      upsertThread(thread);
+      setState({ models: state.modelsByProvider[providerId] ?? [] });
+    } catch (error) {
+      fail(error);
+      throw error;
+    }
+  },
+  async ensureModels(providerId: string) {
+    if (!providerId || state.modelsByProvider[providerId]) return;
+    if (!state.status?.running || state.status.instanceId !== providerId) {
+      await store.startProvider(providerId);
+      return;
+    }
+    await loadCatalog(providerId);
   },
   async renameThread(threadId: string, title: string) {
     try {
@@ -324,14 +409,6 @@ export const store = {
       fail(error);
     }
   },
-  async pinThread(threadId: string, pinned: boolean) {
-    try {
-      await agentsApi.pinThread(threadId, pinned);
-      await store.refreshThreads();
-    } catch (error) {
-      fail(error);
-    }
-  },
   async deleteThread(threadId: string) {
     try {
       await agentsApi.deleteThread(threadId);
@@ -347,7 +424,7 @@ export const store = {
     try {
       const status = await agentsApi.providerStart(providerId);
       setState({ status, error: "" });
-      await loadCatalog();
+      await loadCatalog(status.instanceId);
     } catch (error) {
       fail(error);
       try {
@@ -368,12 +445,24 @@ export const store = {
     try {
       const status = await agentsApi.providerRestart(providerId);
       setState({ status, error: "" });
-      await loadCatalog();
+      await loadCatalog(status.instanceId);
     } catch (error) {
       fail(error);
     }
   },
   async send(threadId: string, text: string, model?: AgentModelRef) {
+    setState({
+      threads: state.threads.map((thread) =>
+        thread.id === threadId ? { ...thread, uiStatus: "working" } : thread,
+      ),
+      detail:
+        state.detail?.thread.id === threadId
+          ? {
+              ...state.detail,
+              thread: { ...state.detail.thread, uiStatus: "working" },
+            }
+          : state.detail,
+    });
     const providerId = state.threads.find((thread) => thread.id === threadId)
       ?.providerInstanceId;
     if (!state.status?.running || state.status.instanceId !== providerId) {
@@ -389,16 +478,18 @@ export const store = {
           message,
         );
       if (!providerFailure) {
+        setIdle(threadId);
         fail(error);
         throw error;
       }
       try {
         const status = await agentsApi.providerRestart(providerId);
         setState({ status });
-        await loadCatalog();
+        await loadCatalog(status.instanceId);
         await agentsApi.send(threadId, text, model);
         setState({ error: "" });
       } catch (retryError) {
+        setIdle(threadId);
         fail(retryError);
         throw retryError;
       }

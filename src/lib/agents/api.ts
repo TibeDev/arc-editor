@@ -55,10 +55,15 @@ export const agentsApi = {
     invoke<AgentThreadDetail>("agent_thread_open", { threadId }),
   renameThread: (threadId: string, title: string) =>
     invoke<void>("agent_thread_rename", { threadId, title }),
+  setThreadModel: (threadId: string, model: AgentModelRef | null) =>
+    invoke<AgentThread>("agent_thread_set_model", { threadId, model }),
+  setThreadProvider: (threadId: string, providerInstanceId: string) =>
+    invoke<AgentThread>("agent_thread_set_provider", {
+      threadId,
+      providerInstanceId,
+    }),
   archiveThread: (threadId: string, archived: boolean) =>
     invoke<void>("agent_thread_archive", { threadId, archived }),
-  pinThread: (threadId: string, pinned: boolean) =>
-    invoke<void>("agent_thread_pin", { threadId, pinned }),
   deleteThread: (threadId: string) =>
     invoke<void>("agent_thread_delete", { threadId }),
   send: (threadId: string, text: string, model?: AgentModelRef) =>

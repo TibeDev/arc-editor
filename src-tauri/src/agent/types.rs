@@ -45,6 +45,8 @@ pub struct AgentThread {
     pub permission_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
     pub ui_status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -65,9 +67,12 @@ pub struct AgentThreadSummary {
     pub title: String,
     pub model: Option<AgentModelRef>,
     pub ui_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
     pub updated_at: String,
     pub archived_at: Option<String>,
     pub pinned_at: Option<String>,
+    pub has_messages: bool,
 }
 
 impl From<&AgentThread> for AgentThreadSummary {
@@ -79,9 +84,11 @@ impl From<&AgentThread> for AgentThreadSummary {
             title: thread.title.clone(),
             model: thread.model.clone(),
             ui_status: thread.ui_status.clone(),
+            worktree_path: thread.worktree_path.clone(),
             updated_at: thread.updated_at.clone(),
             archived_at: thread.archived_at.clone(),
             pinned_at: thread.pinned_at.clone(),
+            has_messages: false,
         }
     }
 }
