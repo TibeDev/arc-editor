@@ -23,13 +23,15 @@ export type AgentModelRef = {
 
 export type AgentUiStatus = "idle" | "working" | "needs-input" | "done" | "error";
 
+export type AgentPermissionMode = "supervised" | "smart" | "yolo";
+
 export type AgentThread = {
   id: string;
   projectId: string;
   providerInstanceId: string;
   title: string;
   model?: AgentModelRef;
-  permissionMode: "supervised";
+  permissionMode: AgentPermissionMode;
   nativeSessionId?: string;
   worktreePath?: string;
   uiStatus: AgentUiStatus;

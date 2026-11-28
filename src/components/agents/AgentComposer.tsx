@@ -2,10 +2,13 @@ import { useMemo, useRef, useState } from "react";
 import { ArrowUp, Paperclip, Square } from "lucide-react";
 import type {
   AgentModel,
+  AgentPermissionMode,
   AgentProviderInstance,
   ProviderCommand,
   ProviderSkill,
 } from "../../lib/agents/types";
+import AgentBranchPicker from "./AgentBranchPicker";
+import AgentModePicker from "./AgentModePicker";
 import AgentModelPicker from "./AgentModelPicker";
 
 export default function AgentComposer({
@@ -17,9 +20,12 @@ export default function AgentComposer({
   providers,
   providerId,
   onProviderChange,
+  projectPath,
   models,
   modelKey,
   onModelChange,
+  permissionMode,
+  onPermissionModeChange,
   providerRunning,
 }: {
   onSend: (text: string) => void;
@@ -30,9 +36,12 @@ export default function AgentComposer({
   providers: AgentProviderInstance[];
   providerId: string;
   onProviderChange: (providerId: string) => void;
+  projectPath: string;
   models: AgentModel[];
   modelKey: string;
   onModelChange: (key: string) => void;
+  permissionMode: AgentPermissionMode;
+  onPermissionModeChange: (mode: AgentPermissionMode) => void;
   providerRunning: boolean;
 }) {
   const [value, setValue] = useState("");
@@ -129,6 +138,11 @@ export default function AgentComposer({
             <Paperclip size={15} />
           </button>
           <div className="agents-composer-controls">
+            <AgentBranchPicker root={projectPath} />
+            <AgentModePicker
+              mode={permissionMode}
+              onChange={onPermissionModeChange}
+            />
             <AgentModelPicker
               providers={providers}
               providerId={providerId}

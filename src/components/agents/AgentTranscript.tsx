@@ -53,6 +53,7 @@ export default function AgentTranscript({
   onQuestion,
   onRejectQuestion,
   activity,
+  workedFor,
 }: {
   items: AgentItem[];
   approvals: AgentApproval[];
@@ -61,11 +62,12 @@ export default function AgentTranscript({
   onQuestion: (questionId: string, answers: unknown) => void;
   onRejectQuestion: (questionId: string) => void;
   activity?: { status: AgentUiStatus; elapsed: number; label: string };
+  workedFor?: string;
 }) {
   const hidden = Math.max(0, items.length - 500);
   const visible = hidden ? items.slice(hidden) : items;
-  const pendingApprovals = approvals.filter((approval) => !approval.decision);
-  const pendingQuestions = questions.filter((question) => question.status === "pending");
+  const pendingApproval = approvals.find((approval) => !approval.decision);
+  const pendingQuestion = questions.find((question) => question.status === "pending");
   return (
     <div className="agents-transcript" role="log" aria-live="polite">
       {hidden ? (
@@ -112,21 +114,20 @@ export default function AgentTranscript({
           </article>
         );
       })}
-      {pendingApprovals.map((approval) => (
+      {pendingApproval ? (
         <AgentApprovalCard
-          key={approval.id}
-          approval={approval}
-          onRespond={(decision) => onApproval(approval.id, decision)}
+          key={pendingApproval.id}
+          approval={pendingApproval}
+          onRespond={(decision) => onApproval(pendingApproval.id, decision)}
         />
-      ))}
-      {pendingQuestions.map((question) => (
+      ) : pendingQuestion ? (
         <AgentQuestionCard
-          key={question.id}
-          question={question}
-          onRespond={(answers) => onQuestion(question.id, answers)}
-          onReject={() => onRejectQuestion(question.id)}
+          key={pendingQuestion.id}
+          question={pendingQuestion}
+          onRespond={(answers) => onQuestion(pendingQuestion.id, answers)}
+          onReject={() => onRejectQuestion(pendingQuestion.id)}
         />
-      ))}
+      ) : null}
       {activity ? (
         <div className="agents-activity" role="status">
           <AgentStatusDot status={activity.status} />
@@ -134,6 +135,8 @@ export default function AgentTranscript({
             Working for {activity.elapsed}s · {activity.label}
           </span>
         </div>
+      ) : workedFor ? (
+        <p className="agents-worked">{workedFor}</p>
       ) : null}
     </div>
   );

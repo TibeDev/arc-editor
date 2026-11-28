@@ -917,6 +917,24 @@ pub async fn agent_thread_set_model(
 }
 
 #[tauri::command(async)]
+pub async fn agent_thread_set_permission_mode(
+    app: AppHandle,
+    state: State<'_, AgentManager>,
+    thread_id: String,
+    mode: String,
+) -> Result<AgentThread, String> {
+    let mode = permissions::validate_mode(&mode)?.to_string();
+    let mut state = state.lock();
+    let index = thread_index(&state, &thread_id).ok_or_else(|| "Chat not found.".to_string())?;
+    state.threads[index].permission_mode = mode;
+    state.threads[index].updated_at = iso_now();
+    let thread = state.threads[index].clone();
+    save_threads(&state)?;
+    events::emit(&app, events::THREAD_UPDATED, &thread);
+    Ok(thread)
+}
+
+#[tauri::command(async)]
 pub async fn agent_thread_archive(
     app: AppHandle,
     state: State<'_, AgentManager>,
@@ -1296,6 +1314,12 @@ fn handle_codex_request(
         .map(|(_, run)| run.clone())
         .or_else(|| active_run_id(&state, &thread_id))
         .unwrap_or_default();
+    let mode = state
+        .threads
+        .iter()
+        .find(|thread| thread.id == thread_id)
+        .map(|thread| thread.permission_mode.clone())
+        .unwrap_or_else(|| PERMISSION_MODE_SUPERVISED.to_string());
     match method {
         "item/commandExecution/requestApproval" => {
             let command = params
@@ -1304,6 +1328,11 @@ fn handle_codex_request(
                 .unwrap_or("command")
                 .to_string();
             let cwd = params.get("cwd").and_then(Value::as_str).unwrap_or("");
+            if permissions::should_auto_approve(&mode, "command", &command) {
+                let _ = client.reply(&raw_id, json!({ "decision": "accept" }));
+                set_thread_ui(&mut state, &thread_id, "working");
+                return;
+            }
             let approval = AgentApproval {
                 id: new_id("approval"),
                 thread_id: thread_id.clone(),
@@ -1340,6 +1369,11 @@ fn handle_codex_request(
                 .get("reason")
                 .and_then(Value::as_str)
                 .unwrap_or("Codex wants to change files.");
+            if permissions::should_auto_approve(&mode, "fileChange", reason) {
+                let _ = client.reply(&raw_id, json!({ "decision": "accept" }));
+                set_thread_ui(&mut state, &thread_id, "working");
+                return;
+            }
             let approval = AgentApproval {
                 id: new_id("approval"),
                 thread_id: thread_id.clone(),
@@ -2220,6 +2254,31 @@ fn handle_acp_request(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let mode = state
+        .threads
+        .iter()
+        .find(|thread| thread.id == thread_id)
+        .map(|thread| thread.permission_mode.clone())
+        .unwrap_or_else(|| PERMISSION_MODE_SUPERVISED.to_string());
+    if permissions::should_auto_approve(&mode, &detail, &title) {
+        let chosen = options
+            .iter()
+            .find(|option| option.get("kind").and_then(Value::as_str) == Some("allow_once"))
+            .or_else(|| {
+                options.iter().find(|option| {
+                    option.get("kind").and_then(Value::as_str) == Some("allow_always")
+                })
+            })
+            .and_then(|option| option.get("optionId").and_then(Value::as_str));
+        if let Some(option_id) = chosen {
+            let _ = client.reply(
+                &raw_id,
+                json!({ "outcome": { "outcome": "selected", "optionId": option_id } }),
+            );
+            set_thread_ui(&mut state, &thread_id, "working");
+            return;
+        }
+    }
     let approval = AgentApproval {
         id: new_id("approval"),
         thread_id: thread_id.clone(),
@@ -3925,6 +3984,45 @@ fn apply_event(app: &AppHandle, inner: &Arc<Mutex<AgentState>>, event: &Value) {
             } else {
                 resources.join("\n")
             };
+            let mode = state
+                .threads
+                .iter()
+                .find(|thread| thread.id == thread_id)
+                .map(|thread| thread.permission_mode.clone())
+                .unwrap_or_else(|| PERMISSION_MODE_SUPERVISED.to_string());
+            if permissions::should_auto_approve(&mode, &action, &detail) {
+                let thread = state
+                    .threads
+                    .iter()
+                    .find(|thread| thread.id == thread_id)
+                    .cloned();
+                if let Some(thread) = thread {
+                    let session = thread.native_session_id.clone();
+                    let project = thread_working_path(&state, &thread);
+                    let server = state
+                        .server
+                        .as_ref()
+                        .map(|server| (server.port, server.password.clone()));
+                    if let (Some(session), Some(project), Some((port, password))) =
+                        (session, project, server)
+                    {
+                        if opencode::reply_permission(
+                            port,
+                            &password,
+                            &project,
+                            &session,
+                            &request_id,
+                            "once",
+                            None,
+                        )
+                        .is_ok()
+                        {
+                            set_thread_ui(&mut state, &thread_id, "working");
+                            return;
+                        }
+                    }
+                }
+            }
             let approval = AgentApproval {
                 id: new_id("approval"),
                 thread_id: thread_id.clone(),

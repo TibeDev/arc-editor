@@ -5,6 +5,7 @@ import type {
   AgentModel,
   AgentModelRef,
   AgentOption,
+  AgentPermissionMode,
   AgentProject,
   AgentProviderInstance,
   AgentQuestion,
@@ -367,6 +368,14 @@ export const store = {
   async setThreadModel(threadId: string, model: AgentModelRef | null) {
     try {
       const thread = await agentsApi.setThreadModel(threadId, model);
+      upsertThread(thread);
+    } catch (error) {
+      fail(error);
+    }
+  },
+  async setThreadPermissionMode(threadId: string, mode: AgentPermissionMode) {
+    try {
+      const thread = await agentsApi.setThreadPermissionMode(threadId, mode);
       upsertThread(thread);
     } catch (error) {
       fail(error);

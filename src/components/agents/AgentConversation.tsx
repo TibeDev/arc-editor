@@ -13,6 +13,17 @@ import { store } from "../../lib/agents/store";
 import AgentComposer from "./AgentComposer";
 import AgentTranscript from "./AgentTranscript";
 
+
+function formatWorked(startedAt: string, endedAt: string): string {
+  const seconds = Math.max(1, Math.round((Date.parse(endedAt) - Date.parse(startedAt)) / 1000));
+  if (seconds < 60) return `Worked for ${seconds} second${seconds === 1 ? "" : "s"}`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  const minuteText = `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return rest ? `Worked for ${minuteText} ${rest} second${rest === 1 ? "" : "s"}` : `Worked for ${minuteText}`;
+}
+
+
 export default function AgentConversation({
   detail,
   projectPath,
@@ -77,6 +88,12 @@ export default function AgentConversation({
         : elapsed < 18
           ? "Planning"
           : "Building";
+  const lastCompletedRun = [...detail.runs]
+    .reverse()
+    .find((run) => run.status === "completed" && run.endedAt);
+  const workedFor = lastCompletedRun?.endedAt
+    ? formatWorked(lastCompletedRun.startedAt, lastCompletedRun.endedAt)
+    : "";
   const selectedModel: AgentModelRef | undefined = (() => {
     const model = models.find(
       (entry) => `${entry.providerID}/${entry.modelID}` === modelKey,
@@ -118,6 +135,7 @@ export default function AgentConversation({
             ? { status: thread.uiStatus, elapsed, label: activity }
             : undefined
         }
+        workedFor={busy ? "" : workedFor}
         onApproval={(approvalId, decision) =>
           void store.respondApproval(approvalId, decision)
         }
@@ -134,12 +152,17 @@ export default function AgentConversation({
         skills={skills}
         providers={providers}
         providerId={thread.providerInstanceId}
+        projectPath={projectPath}
         onProviderChange={(providerId) => {
           onProviderChange(providerId);
           setModelKey("");
         }}
         models={models}
         modelKey={modelKey}
+        permissionMode={thread.permissionMode}
+        onPermissionModeChange={(mode) =>
+          void store.setThreadPermissionMode(thread.id, mode)
+        }
         onModelChange={(key) => {
           setModelKey(key);
           const model = models.find(

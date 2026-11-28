@@ -3764,6 +3764,7 @@ pub fn run() {
             agent::manager::agent_thread_open,
             agent::manager::agent_thread_rename,
             agent::manager::agent_thread_set_model,
+            agent::manager::agent_thread_set_permission_mode,
             agent::manager::agent_thread_archive,
             agent::manager::agent_thread_set_provider,
             agent::manager::agent_thread_delete,

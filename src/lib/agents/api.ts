@@ -7,6 +7,7 @@ import type {
   AgentModelRef,
   AgentOption,
   AgentProject,
+  AgentPermissionMode,
   AgentProviderInstance,
   AgentQuestion,
   AgentRun,
@@ -57,6 +58,8 @@ export const agentsApi = {
     invoke<void>("agent_thread_rename", { threadId, title }),
   setThreadModel: (threadId: string, model: AgentModelRef | null) =>
     invoke<AgentThread>("agent_thread_set_model", { threadId, model }),
+  setThreadPermissionMode: (threadId: string, mode: AgentPermissionMode) =>
+    invoke<AgentThread>("agent_thread_set_permission_mode", { threadId, mode }),
   setThreadProvider: (threadId: string, providerInstanceId: string) =>
     invoke<AgentThread>("agent_thread_set_provider", {
       threadId,

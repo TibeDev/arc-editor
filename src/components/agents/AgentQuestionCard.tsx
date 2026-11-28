@@ -72,14 +72,14 @@ export default function AgentQuestionCard({
         <div className="agents-card-actions">
           <button
             type="button"
-            className="action-button action-button--primary action-button--compact"
+            className="action-button action-button--primary"
             onClick={() => onRespond(answers)}
           >
             Answer
           </button>
           <button
             type="button"
-            className="action-button action-button--secondary action-button--compact agents-danger"
+            className="action-button action-button--secondary agents-danger"
             onClick={onReject}
           >
             Reject
