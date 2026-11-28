@@ -87,6 +87,7 @@ import {
   Github,
   Globe,
   FolderPlus,
+  MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Puzzle,
@@ -204,6 +205,7 @@ type DeletedEntry = {
 };
 type UndoBatch = { workspace: string; entries: DeletedEntry[] };
 const GITHUB_TAB_KEY = 'internal:github';
+const AGENTS_TAB_KEY = 'internal:agents';
 const PLUGIN_TAB_KEY = 'internal:plugins';
 const PLUGIN_VIEW_PREFIX = 'internal:plugin-view:';
 const BUILDER_TAB_KEY = 'internal:builder';
@@ -1032,6 +1034,7 @@ function EditorPane({
   onConflictKeep,
   pluginPanel,
   builderPanel,
+  agentsPanel,
   pluginViews,
   previews,
   onPreviewChange,
@@ -1063,6 +1066,7 @@ function EditorPane({
   onConflictKeep?: (path: string) => void;
   pluginPanel: ReactNode;
   builderPanel: ReactNode;
+  agentsPanel: ReactNode;
   pluginViews: PluginPanelContribution[];
   previews: PreviewTab[];
   onPreviewChange: (
@@ -1401,6 +1405,7 @@ function EditorPane({
           file: filesByPath.get(key),
           terminal: terminalsByKey.get(key),
           github: key === GITHUB_TAB_KEY,
+          agents: key === AGENTS_TAB_KEY,
           plugins: key === PLUGIN_TAB_KEY,
           builder: key === BUILDER_TAB_KEY,
           pluginView: pluginViewsByKey.get(key),
@@ -1411,6 +1416,7 @@ function EditorPane({
             entry.file ||
             entry.terminal ||
             entry.github ||
+            entry.agents ||
             entry.plugins ||
             entry.builder ||
             entry.pluginView ||
@@ -1486,6 +1492,7 @@ function EditorPane({
             file: tab,
             terminal,
             github,
+            agents,
             plugins,
             builder,
             pluginView,
@@ -1505,6 +1512,8 @@ function EditorPane({
                 <TerminalIcon size={14} className="file-icon" />
               ) : github ? (
                 <Github size={14} className="file-icon" />
+              ) : agents ? (
+                <MessagesSquare size={14} className="file-icon" />
               ) : builder ? (
                 <WandSparkles size={14} className="file-icon" />
               ) : plugins || pluginView ? (
@@ -1521,15 +1530,17 @@ function EditorPane({
                     : 'Terminal'
                   : github
                     ? 'GitHub'
-                    : plugins
-                      ? 'Plugins'
-                      : builder
-                        ? 'Build'
-                        : pluginView
-                          ? pluginView.title
-                          : preview
-                            ? preview.title || preview.url || 'Preview'
-                            : tab!.name}
+                    : agents
+                      ? 'Agents'
+                      : plugins
+                        ? 'Plugins'
+                        : builder
+                          ? 'Build'
+                          : pluginView
+                            ? pluginView.title
+                            : preview
+                              ? preview.title || preview.url || 'Preview'
+                              : tab!.name}
               </span>
               {tab?.dirty ? (
                 <Circle size={8} className="dirty-dot" fill="currentColor" />
@@ -1598,9 +1609,18 @@ function EditorPane({
           {builderPanel}
         </div>
       )}
+      {group.tabs.includes(AGENTS_TAB_KEY) && (
+        <div
+          className={`agents-host ${group.activePath === AGENTS_TAB_KEY ? 'active' : ''}`}
+          aria-hidden={group.activePath !== AGENTS_TAB_KEY}
+        >
+          {agentsPanel}
+        </div>
+      )}
       {!file &&
         !activeTerminal &&
         group.activePath !== GITHUB_TAB_KEY &&
+        group.activePath !== AGENTS_TAB_KEY &&
         group.activePath !== PLUGIN_TAB_KEY &&
         group.activePath !== BUILDER_TAB_KEY &&
         !pluginViewsByKey.has(group.activePath) &&
@@ -1745,7 +1765,6 @@ function App() {
   const [customThemeIds, setCustomThemeIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [themeMakerOpen, setThemeMakerOpen] = useState(false);
-  const [agentsOpen, setAgentsOpen] = useState(settings.agentLastMode === 'agents');
   const [appVersion, setAppVersion] = useState('');
   const [availableUpdate, setAvailableUpdate] = useState<
     (UpdateInfo & { channel: UpdateChannel; manual: boolean }) | null
@@ -2833,6 +2852,26 @@ function App() {
     setMessage('');
   };
 
+  const openAgentsPanel = () => {
+    const targetGroupId = activeGroupId;
+    setGroups((current) =>
+      current.map((group) =>
+        group.id === targetGroupId
+          ? {
+              ...group,
+              activePath: AGENTS_TAB_KEY,
+              tabs: group.tabs.includes(AGENTS_TAB_KEY)
+                ? group.tabs
+                : [...group.tabs, AGENTS_TAB_KEY],
+            }
+          : group,
+      ),
+    );
+    setSettingsOpen(false);
+    setThemeMakerOpen(false);
+    setMessage('');
+  };
+
   const openPluginPanel = () => {
     const targetGroupId = activeGroupId;
     setGroups((current) =>
@@ -3865,6 +3904,7 @@ function App() {
     if (
       terminal ||
       path === GITHUB_TAB_KEY ||
+      path === AGENTS_TAB_KEY ||
       path === PLUGIN_TAB_KEY ||
       path === BUILDER_TAB_KEY ||
       path.startsWith(PREVIEW_PREFIX)
@@ -4350,11 +4390,7 @@ function App() {
     }
     if (modifier && event.shiftKey && key === 'a') {
       event.preventDefault();
-      setAgentsOpen((current) => {
-        const next = !current;
-        updateSettings({ agentLastMode: next ? 'agents' : 'editor' });
-        return next;
-      });
+      openAgentsPanel();
       return;
     }
     if (modifier && event.altKey && key === 'p') {
@@ -5211,6 +5247,7 @@ function App() {
       title: 'Open Settings',
       run: () => setSettingsOpen(true),
     },
+    { id: 'open-agents', title: 'Open Agents', run: openAgentsPanel },
     { id: 'open-plugins', title: 'Open Plugins', run: openPluginPanel },
     { id: 'open-builder', title: 'Create Plugin or Theme', run: openBuilderPanel },
     { id: 'open-github', title: 'Open GitHub', run: openGithubPanel },
@@ -5312,6 +5349,29 @@ function App() {
     }
   };
 
+  const agentsPanel = (
+    <Suspense fallback={<div className="editor-empty" />}>
+      <AgentsWorkspace
+        editorWorkspace={workspace}
+        editorDirtyPaths={openFiles
+          .filter((file) => file.dirty)
+          .map((file) => file.path)}
+        confirmDirtyFiles={settings.agentConfirmDirtyFiles}
+        onOpenProjectInEditor={(path) => void openWorkspaceAtPath(path)}
+        onSaveAllDirty={() => saveDirtyRef.current()}
+        enabledProviderIds={settings.agentEnabledProviderIds}
+        sidebarWidth={settings.agentSidebarWidth}
+        sidebarHidden={settings.agentSidebarHidden}
+        onSidebarWidthChange={(width) =>
+          updateSettings({ agentSidebarWidth: width })
+        }
+        onSidebarHiddenChange={(hidden) =>
+          updateSettings({ agentSidebarHidden: hidden })
+        }
+      />
+    </Suspense>
+  );
+
   const renderEditorGroup = (group: EditorGroup) => (
     <EditorPane
       key={group.id}
@@ -5366,6 +5426,7 @@ function App() {
           />
         </Suspense>
       }
+      agentsPanel={agentsPanel}
       pluginPanel={
         <Suspense fallback={<div className="editor-empty" />}>
           <PluginPanel
@@ -5430,39 +5491,9 @@ function App() {
     </div>
   ) : null;
 
-  const agentsWorkspace = agentsOpen ? (
-    <div className="agents-overlay">
-      <Suspense fallback={null}>
-        <AgentsWorkspace
-          titleBarEnabled={settings.titleBarEnabled}
-          editorWorkspace={workspace}
-          editorDirtyPaths={openFiles
-            .filter((file) => file.dirty)
-            .map((file) => file.path)}
-          confirmDirtyFiles={settings.agentConfirmDirtyFiles}
-          onOpenProjectInEditor={(path) => {
-            void openWorkspaceAtPath(path);
-            setAgentsOpen(false);
-            updateSettings({ agentLastMode: 'editor' });
-          }}
-          onSaveAllDirty={() => saveDirtyRef.current()}
-          enabledProviderIds={settings.agentEnabledProviderIds}
-          sidebarWidth={settings.agentSidebarWidth}
-          sidebarHidden={settings.agentSidebarHidden}
-          onSidebarWidthChange={(width) => updateSettings({ agentSidebarWidth: width })}
-          onSidebarHiddenChange={(hidden) => updateSettings({ agentSidebarHidden: hidden })}
-          onClose={() => {
-            setAgentsOpen(false);
-            updateSettings({ agentLastMode: 'editor' });
-          }}
-        />
-      </Suspense>
-    </div>
-  ) : null;
-
   return (
     <main
-      className={`app-shell app-theme-${settings.appTheme} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${editorBackgroundUrl ? 'has-editor-background' : ''} ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''} ${agentsOpen ? 'agents-mode-active' : ''}`}
+      className={`app-shell app-theme-${settings.appTheme} ${settings.editorGlassEnabled ? 'editor-glass-enabled' : ''} ${editorBackgroundUrl ? 'has-editor-background' : ''}       ${settings.titleBarEnabled ? '' : 'titlebar-off'} ${themeMakerOpen ? 'theme-maker-active' : ''}`}
       style={{
         fontFamily: resolveInterfaceFont(settings),
         '--editor-background-image': editorBackgroundUrl
@@ -5516,7 +5547,9 @@ function App() {
       terminals.length === 0 &&
       !groups.some(
         (group) =>
-          group.tabs.includes(PLUGIN_TAB_KEY) || group.tabs.includes(BUILDER_TAB_KEY),
+          group.tabs.includes(PLUGIN_TAB_KEY) ||
+          group.tabs.includes(BUILDER_TAB_KEY) ||
+          group.tabs.includes(AGENTS_TAB_KEY),
       ) ? (
         <section className="welcome-screen">
           <div className="welcome-tools">
@@ -5906,6 +5939,14 @@ function App() {
               </button>
               <button
                 className="settings-launch"
+                aria-label="Open Agents"
+                title="Open Agents (Ctrl+Shift+A)"
+                onClick={openAgentsPanel}
+              >
+                <MessagesSquare size={15} />
+              </button>
+              <button
+                className="settings-launch"
                 aria-label="Create plugin or theme"
                 title="Create plugin or theme"
                 onClick={openBuilderPanel}
@@ -6190,7 +6231,6 @@ function App() {
         </Suspense>
       )}
       {themeMaker}
-      {agentsWorkspace}
     </main>
   );
 }

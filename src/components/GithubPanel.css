@@ -337,7 +337,8 @@
 .github-commit-section textarea {
   min-height: 55px;
   max-height: 140px;
-  resize: vertical;
+  resize: none;
+  overflow-x: hidden;
   line-height: 1.5;
 }
 .github-commit-button {

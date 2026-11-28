@@ -59,7 +59,7 @@ export default function AgentModePicker({
         className="agents-model-trigger agents-mode-trigger"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={selected.hint}
+        title={`${selected.label}: ${selected.hint}`}
         onClick={() => setOpen((value) => !value)}
       >
         <SelectedIcon size={13} />

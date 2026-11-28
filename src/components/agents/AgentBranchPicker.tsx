@@ -77,7 +77,7 @@ export default function AgentBranchPicker({ root }: { root: string }) {
         className="agents-model-trigger agents-branch-trigger"
         aria-haspopup="menu"
         aria-expanded={open}
-        title="Switch project branch"
+        title={`Switch project branch${status.branch ? ` (${status.branch})` : ""}`}
         onClick={() => {
           if (!open) void load();
           setOpen((value) => !value);

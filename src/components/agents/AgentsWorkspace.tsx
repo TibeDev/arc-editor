@@ -4,8 +4,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { ArrowLeft, MessagesSquare, PanelLeftOpen, X } from "lucide-react";
-import TitleBar from "../TitleBar";
+import { MessagesSquare, PanelLeftOpen, X } from "lucide-react";
 import { store } from "../../lib/agents/store";
 import { useAgentsStore } from "../../lib/agents/useAgentsStore";
 import "../../styles/controls.css";
@@ -17,26 +16,22 @@ const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 520;
 
 export default function AgentsWorkspace({
-  titleBarEnabled,
   editorWorkspace,
   editorDirtyPaths,
   confirmDirtyFiles,
   onOpenProjectInEditor,
   onSaveAllDirty,
-  onClose,
   enabledProviderIds,
   sidebarWidth,
   sidebarHidden,
   onSidebarWidthChange,
   onSidebarHiddenChange,
 }: {
-  titleBarEnabled: boolean;
   editorWorkspace: string;
   editorDirtyPaths: string[];
   confirmDirtyFiles: boolean;
   onOpenProjectInEditor: (path: string) => void;
   onSaveAllDirty: () => Promise<boolean>;
-  onClose: () => void;
   enabledProviderIds: string[];
   sidebarWidth: number;
   sidebarHidden: boolean;
@@ -44,6 +39,9 @@ export default function AgentsWorkspace({
   onSidebarHiddenChange: (hidden: boolean) => void;
 }) {
   const state = useAgentsStore();
+  const pageRef = useRef<HTMLElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  const [narrowSidebarOpen, setNarrowSidebarOpen] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const drag = useRef({
     startX: 0,
@@ -53,6 +51,15 @@ export default function AgentsWorkspace({
   });
   const currentSidebarWidth = dragWidth ?? sidebarWidth;
   const collapsedDuringDrag = dragWidth === 0;
+  const sidebarOpen = narrow ? narrowSidebarOpen : !sidebarHidden;
+  const hideSidebar = () => {
+    if (narrow) setNarrowSidebarOpen(false);
+    else onSidebarHiddenChange(true);
+  };
+  const showSidebar = () => {
+    if (narrow) setNarrowSidebarOpen(true);
+    else onSidebarHiddenChange(false);
+  };
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -97,6 +104,21 @@ export default function AgentsWorkspace({
     onSidebarHiddenChange(false);
     onSidebarWidthChange(Math.min(MAX_SIDEBAR_WIDTH, nextWidth));
   };
+  useEffect(() => {
+    const node = pageRef.current;
+    if (!node) return;
+    let wasNarrow = false;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      const next = width > 0 && width <= 760;
+      if (next === wasNarrow) return;
+      wasNarrow = next;
+      setNarrow(next);
+      if (next) setNarrowSidebarOpen(false);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     void store.ensureLoaded();
   }, []);
@@ -152,21 +174,7 @@ export default function AgentsWorkspace({
   ]);
 
   return (
-    <main className={`agents-workspace-page ${titleBarEnabled ? "" : "titlebar-off"}`}>
-      {titleBarEnabled && <TitleBar />}
-      <header className="agents-workspace-header">
-        <button
-          type="button"
-          className="agents-back-button"
-          onClick={onClose}
-          title="Back to editor"
-        >
-          <ArrowLeft size={15} />
-          Editor
-        </button>
-        <h1>Agents</h1>
-      </header>
-
+    <main ref={pageRef} className="agents-workspace-page agents-workspace-embedded">
       {state.error ? (
         <div className="agents-error" role="alert">
           <span>{state.error}</span>
@@ -182,10 +190,10 @@ export default function AgentsWorkspace({
       ) : null}
 
       <div
-        className="agents-workspace-body"
+        className={`agents-workspace-body ${sidebarOpen ? "" : "agents-workspace-body-sidebar-hidden"}`}
         style={{ "--agents-sidebar-width": `${currentSidebarWidth}px` } as CSSProperties}
       >
-        {!sidebarHidden && !collapsedDuringDrag ? (
+        {sidebarOpen && !collapsedDuringDrag ? (
           <AgentSidebar
             projects={state.projects}
             threads={state.threads}
@@ -204,28 +212,30 @@ export default function AgentsWorkspace({
             onArchiveThread={(threadId, archived) =>
               void store.archiveThread(threadId, archived)
             }
-            onHide={() => onSidebarHiddenChange(true)}
+            onHide={hideSidebar}
           />
         ) : null}
-        <div
-          className={`agents-sidebar-resizer ${sidebarHidden || collapsedDuringDrag ? "collapsed" : ""}`}
-          role="separator"
-          tabIndex={0}
-          aria-orientation="vertical"
-          aria-label="Resize projects and chats panel"
-          aria-valuemin={MIN_SIDEBAR_WIDTH}
-          aria-valuemax={MAX_SIDEBAR_WIDTH}
-          aria-valuenow={currentSidebarWidth}
-          onPointerDown={beginResize}
-          onKeyDown={resizeWithKeyboard}
-        />
-        {sidebarHidden || collapsedDuringDrag ? (
+        {!narrow && (
+          <div
+            className={`agents-sidebar-resizer ${sidebarOpen ? "" : "collapsed"}`}
+            role="separator"
+            tabIndex={0}
+            aria-orientation="vertical"
+            aria-label="Resize projects and chats panel"
+            aria-valuemin={MIN_SIDEBAR_WIDTH}
+            aria-valuemax={MAX_SIDEBAR_WIDTH}
+            aria-valuenow={currentSidebarWidth}
+            onPointerDown={beginResize}
+            onKeyDown={resizeWithKeyboard}
+          />
+        )}
+        {!sidebarOpen || collapsedDuringDrag ? (
           <button
             type="button"
-            className="agents-show-sidebar"
+            className={`agents-show-sidebar ${narrow ? "agents-show-sidebar-overlay" : ""}`}
             title="Show projects and chats"
             aria-label="Show projects and chats"
-            onClick={() => onSidebarHiddenChange(false)}
+            onClick={showSidebar}
           >
             <PanelLeftOpen size={15} />
           </button>

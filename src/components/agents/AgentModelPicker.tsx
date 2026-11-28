@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
 import type { AgentModel, AgentProviderInstance } from "../../lib/agents/types";
 import ProviderIcon from "./ProviderIcon";
@@ -23,6 +23,7 @@ export default function AgentModelPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const [maxHeight, setMaxHeight] = useState<number>();
   const selected = models.find(
     (model) => `${model.providerID}/${model.modelID}` === modelKey,
   );
@@ -33,6 +34,24 @@ export default function AgentModelPicker({
       .toLowerCase()
       .includes(query.trim().toLowerCase()),
   );
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setMaxHeight(undefined);
+      return;
+    }
+    const update = () => {
+      const box = rootRef.current?.closest<HTMLElement>(".agents-composer-box");
+      const page = rootRef.current?.closest<HTMLElement>(".agents-workspace-page");
+      if (!box || !page) return;
+      const available =
+        box.getBoundingClientRect().top - page.getBoundingClientRect().top - 16;
+      setMaxHeight(Math.max(160, Math.round(available)));
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -62,6 +81,7 @@ export default function AgentModelPicker({
         className="agents-model-trigger"
         aria-haspopup="dialog"
         aria-expanded={open}
+        title={selected?.name || fallbackName || "Select model"}
         onClick={() => setOpen((value) => !value)}
       >
         <ProviderIcon driver={provider?.driver ?? "opencode"} />
@@ -69,7 +89,12 @@ export default function AgentModelPicker({
         <ChevronDown size={12} />
       </button>
       {open ? (
-        <div className="agents-model-popover" role="dialog" aria-label="Model">
+        <div
+          className="agents-model-popover"
+          role="dialog"
+          aria-label="Model"
+          style={maxHeight ? { maxHeight } : undefined}
+        >
           <div className="agents-model-popover-main">
             <label className="agents-model-search">
               <Search size={14} />
