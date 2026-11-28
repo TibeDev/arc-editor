@@ -719,25 +719,15 @@
   background: color-mix(in srgb, var(--accent, #5e6ad2) 10%, var(--panel, #1d2227));
 }
 
-.settings-provider-card span:first-child {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
 .settings-provider-title {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .settings-provider-card strong {
   font-size: var(--font-md, 12px);
-}
-
-.settings-provider-card small {
-  color: var(--muted, #8495a8);
-  font-size: var(--font-sm, 10px);
 }
 
 .settings-provider-switch {

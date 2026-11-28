@@ -478,10 +478,7 @@ export default function SettingsPanel({
                         : [...settings.agentEnabledProviderIds, provider.id],
                     })}
                   >
-                    <span>
-                      <span className="settings-provider-title"><ProviderIcon driver={provider.driver} size={14} /><strong>{provider.label}</strong></span>
-                      <small>{provider.driver} · {enabled ? "Enabled" : "Disabled"}</small>
-                    </span>
+                    <span className="settings-provider-title"><ProviderIcon driver={provider.driver} size={14} /><strong>{provider.label}</strong></span>
                     <span className="settings-provider-switch" aria-hidden="true"><i /></span>
                   </button>;
                 })}

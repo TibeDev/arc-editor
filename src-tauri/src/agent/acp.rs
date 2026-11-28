@@ -34,6 +34,7 @@ pub struct SpawnedAcp {
 pub fn spawn(
     binary: &std::path::Path,
     args: &[String],
+    env: &[(String, String)],
     processes: &crate::process::ProcessManager,
 ) -> Result<SpawnedAcp, String> {
     let version =
@@ -41,6 +42,7 @@ pub fn spawn(
     let mut command = crate::external_command(&binary.to_string_lossy());
     command
         .args(args)
+        .envs(env.iter().cloned())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

@@ -265,38 +265,26 @@ impl AgentManager {
             }
         };
 
-        if !providers
-            .iter()
-            .any(|provider| provider.driver == "opencode")
-        {
-            providers.push(AgentProviderInstance {
-                id: "opencode-default".to_string(),
-                driver: "opencode".to_string(),
-                label: "OpenCode".to_string(),
-                binary_path: None,
-                config_dir: None,
-                created_at: iso_now(),
-            });
-        }
-        if !providers.iter().any(|provider| provider.driver == "codex") {
-            providers.push(AgentProviderInstance {
-                id: "codex-default".to_string(),
-                driver: "codex".to_string(),
-                label: "Codex".to_string(),
-                binary_path: None,
-                config_dir: None,
-                created_at: iso_now(),
-            });
-        }
-        if !providers.iter().any(|provider| provider.driver == "claude") {
-            providers.push(AgentProviderInstance {
-                id: "claude-default".to_string(),
-                driver: "claude".to_string(),
-                label: "Claude".to_string(),
-                binary_path: None,
-                config_dir: None,
-                created_at: iso_now(),
-            });
+        for (driver, id, label) in [
+            ("opencode", "opencode-default", "OpenCode"),
+            ("codex", "codex-default", "Codex"),
+            ("claude", "claude-default", "Claude"),
+            ("cursor", "cursor-default", "Cursor"),
+            ("grok", "grok-default", "Grok"),
+            ("antigravity", "antigravity-default", "Antigravity"),
+            ("muse-code", "muse-code-default", "Muse Code"),
+            ("pi", "pi-default", "Pi"),
+        ] {
+            if !providers.iter().any(|provider| provider.driver == driver) {
+                providers.push(AgentProviderInstance {
+                    id: id.to_string(),
+                    driver: driver.to_string(),
+                    label: label.to_string(),
+                    binary_path: None,
+                    config_dir: None,
+                    created_at: iso_now(),
+                });
+            }
         }
 
         let mut state = AgentState {
@@ -1105,10 +1093,17 @@ fn start_provider(
     if provider.driver == "codex" {
         return start_codex_provider(app, manager, processes, &provider);
     }
-    if provider.driver == "claude" {
+    if is_acp_driver(&provider.driver) {
         return start_acp_provider(app, manager, processes, &provider);
     }
     start_opencode_provider(app, manager, processes, &provider)
+}
+
+fn is_acp_driver(driver: &str) -> bool {
+    matches!(
+        driver,
+        "claude" | "cursor" | "grok" | "antigravity" | "muse-code" | "pi"
+    )
 }
 
 fn start_opencode_provider(
@@ -2096,28 +2091,95 @@ fn codex_models(client: &CodexClient) -> Result<Vec<AgentModel>, String> {
         .collect())
 }
 
+fn acp_launch(
+    driver: &str,
+    binary_path: Option<&str>,
+) -> Result<
+    (
+        std::path::PathBuf,
+        Vec<String>,
+        Vec<(String, String)>,
+        String,
+    ),
+    String,
+> {
+    let resolve = |name: &str| provider_process::resolve_binary(name, binary_path);
+    match driver {
+        "cursor" => Ok((
+            resolve("cursor-agent")?,
+            vec!["acp".to_string()],
+            Vec::new(),
+            "cursor-agent".to_string(),
+        )),
+        "grok" => match resolve("grok") {
+            Ok(path) => Ok((
+                path,
+                vec!["agent".to_string(), "stdio".to_string()],
+                Vec::new(),
+                "grok".to_string(),
+            )),
+            Err(_) => {
+                let npx = provider_process::resolve_binary("npx", None)?;
+                Ok((
+                    npx,
+                    vec![
+                        "--yes".to_string(),
+                        "@xai-official/grok".to_string(),
+                        "agent".to_string(),
+                        "stdio".to_string(),
+                    ],
+                    Vec::new(),
+                    "npx @xai-official/grok agent stdio".to_string(),
+                ))
+            }
+        },
+        "antigravity" => Ok((
+            resolve("agy")?,
+            vec!["acp".to_string()],
+            Vec::new(),
+            "agy".to_string(),
+        )),
+        "muse-code" => Ok((
+            resolve("muse")?,
+            vec!["acp".to_string()],
+            vec![("MUSE_EXPERIMENTAL_ACP".to_string(), "on".to_string())],
+            "muse".to_string(),
+        )),
+        "pi" => {
+            let npx = provider_process::resolve_binary("npx", None)?;
+            Ok((
+                npx,
+                vec!["--yes".to_string(), "pi-acp".to_string()],
+                Vec::new(),
+                "npx pi-acp".to_string(),
+            ))
+        }
+        _ => match provider_process::resolve_binary("claude-agent-acp", binary_path) {
+            Ok(path) => Ok((path, Vec::new(), Vec::new(), "claude-agent-acp".to_string())),
+            Err(_) => {
+                let npx = provider_process::resolve_binary("npx", None)?;
+                Ok((
+                    npx,
+                    vec![
+                        "--yes".to_string(),
+                        "@agentclientprotocol/claude-agent-acp".to_string(),
+                    ],
+                    Vec::new(),
+                    "npx @agentclientprotocol/claude-agent-acp".to_string(),
+                ))
+            }
+        },
+    }
+}
+
 fn start_acp_provider(
     app: &AppHandle,
     manager: &AgentManager,
     processes: &ProcessManager,
     provider: &AgentProviderInstance,
 ) -> Result<ProviderStatus, String> {
-    let (binary, args, display) =
-        match provider_process::resolve_binary("claude-agent-acp", provider.binary_path.as_deref())
-        {
-            Ok(path) => (path, Vec::new(), "claude-agent-acp".to_string()),
-            Err(_) => {
-                let npx = provider_process::resolve_binary("npx", None)?;
-                (
-                    npx,
-                    vec![
-                        "--yes".to_string(),
-                        "@agentclientprotocol/claude-agent-acp".to_string(),
-                    ],
-                    "npx @agentclientprotocol/claude-agent-acp".to_string(),
-                )
-            }
-        };
+    let (binary, args, env, display) =
+        acp_launch(&provider.driver, provider.binary_path.as_deref())?;
     let acp::SpawnedAcp {
         client,
         child,
@@ -2125,7 +2187,7 @@ fn start_acp_provider(
         version,
         managed_id,
         started_at,
-    } = acp::spawn(&binary, &args, processes)?;
+    } = acp::spawn(&binary, &args, &env, processes)?;
     let reader_app = app.clone();
     let inner = manager.inner.clone();
     let reader_client = client.clone();
@@ -2140,7 +2202,7 @@ fn start_acp_provider(
         let mut child = child;
         let _ = child.kill();
         let _ = child.wait();
-        return Err(format!("Claude ACP handshake failed: {error}"));
+        return Err(format!("{} ACP handshake failed: {error}", provider.label));
     }
     let mut state = manager.lock();
     state.acp = Some(AcpRuntime {
@@ -2204,7 +2266,7 @@ fn mark_acp_down(app: &AppHandle, inner: &Arc<Mutex<AgentState>>) {
         if let Some(run) = state.runs.get_mut(&run_id) {
             run.status = "failed".to_string();
             run.ended_at = Some(now.clone());
-            run.error = Some("The Claude provider disconnected.".to_string());
+            run.error = Some("The ACP provider disconnected.".to_string());
             let run = run.clone();
             let _ = state
                 .store
@@ -2212,10 +2274,7 @@ fn mark_acp_down(app: &AppHandle, inner: &Arc<Mutex<AgentState>>) {
             events::emit(app, events::RUN_UPDATED, &run);
         }
     }
-    let status = status_payload(
-        &state,
-        Some("The Claude provider disconnected.".to_string()),
-    );
+    let status = status_payload(&state, Some("The ACP provider disconnected.".to_string()));
     events::emit(app, events::PROVIDER_STATUS, &status);
 }
 
@@ -2575,17 +2634,20 @@ fn acp_send(
             .find(|provider| provider.id == thread.provider_instance_id)
             .cloned()
             .ok_or_else(|| "Provider instance not found.".to_string())?;
-        if provider.driver != "claude" {
-            return Err("This chat does not use Claude.".to_string());
+        if !is_acp_driver(&provider.driver) {
+            return Err("This chat does not use an ACP provider.".to_string());
         }
         if state.active_provider.as_deref() != Some(provider.id.as_str()) {
-            return Err("Start the Claude provider before sending.".to_string());
+            return Err(format!(
+                "Start the {} provider before sending.",
+                provider.label
+            ));
         }
         let client = state
             .acp
             .as_ref()
             .map(|runtime| runtime.client.clone())
-            .ok_or_else(|| "Claude is not running. Start it first.".to_string())?;
+            .ok_or_else(|| "The ACP provider is not running. Start it first.".to_string())?;
         let project =
             thread_working_path(&state, &thread).ok_or_else(|| "Project not found.".to_string())?;
         if model.is_some() && model != thread.model {
@@ -2656,7 +2718,7 @@ fn acp_send(
                 .and_then(Value::as_str)
                 .map(str::to_string)
             else {
-                let error = "Claude did not return a session id.".to_string();
+                let error = "The ACP provider did not return a session id.".to_string();
                 fail_run(&app, &manager.inner, &thread_id, &run_id, &error);
                 return Err(error);
             };
@@ -2727,12 +2789,12 @@ fn acp_interrupt(manager: &AgentManager, thread_id: &str) -> Result<(), String> 
             .acp
             .as_ref()
             .map(|runtime| runtime.client.clone())
-            .ok_or_else(|| "Claude is not running.".to_string())?;
+            .ok_or_else(|| "The ACP provider is not running.".to_string())?;
         let session = state
             .acp_sessions
             .get(thread_id)
             .cloned()
-            .ok_or_else(|| "Claude session not found.".to_string())?;
+            .ok_or_else(|| "The ACP session was not found.".to_string())?;
         (client, session)
     };
     client.notify("session/cancel", json!({ "sessionId": session }))
@@ -2964,7 +3026,7 @@ pub async fn agent_thread_send(
     if driver == "codex" {
         return codex_send(&app, &state, thread_id, text, model);
     }
-    if driver == "claude" {
+    if is_acp_driver(&driver) {
         return acp_send(&app, &state, thread_id, text, model);
     }
     let (run_id, thread, project, port, password) = {
@@ -3176,7 +3238,7 @@ pub async fn agent_thread_interrupt(
         if driver.as_deref() == Some("codex") {
             return codex_interrupt(&app, &state, &thread_id);
         }
-        if driver.as_deref() == Some("claude") {
+        if driver.as_deref().is_some_and(is_acp_driver) {
             return acp_interrupt(&state, &thread_id);
         }
     }
@@ -4305,6 +4367,16 @@ mod tests {
         let summary = AgentThreadSummary::from(&thread);
         assert_eq!(summary.id, "thread-1");
         assert_eq!(summary.provider_instance_id, "opencode-default");
+    }
+
+    #[test]
+    fn routes_acp_drivers() {
+        for driver in ["claude", "cursor", "grok", "antigravity", "muse-code", "pi"] {
+            assert!(is_acp_driver(driver), "{driver}");
+        }
+        for driver in ["opencode", "codex"] {
+            assert!(!is_acp_driver(driver), "{driver}");
+        }
     }
 
     #[test]
