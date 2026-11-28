@@ -813,3 +813,7 @@ disposeTool();
 Remote MCP servers use Streamable HTTP when `type: "http"` and a `url` are supplied. Local servers use stdio with the configured executable, arguments, working directory, and environment. Connections, notifications, cancellation, timeouts, tools, resources, prompts, completion, roots, sampling/elicitation handlers, and exposure registration are routed through Arc's plugin lifecycle.
 
 Arc starts a loopback MCP streamable-HTTP endpoint when the first exposure is registered. `api.mcp.getExposure()` returns the exposed definitions plus `serverUrl` and the required `authorization` header value. The endpoint supports `initialize`, `ping`, tools, resources, resource templates, prompts, and the corresponding list/read/call/get methods. It deliberately does not expose every editor command, file, or secret. Resource-update notifications are delivered locally through `notifyResourceChanged`; external HTTP clients must re-read resources because the HTTP bridge is request/response only.
+
+## Publishing a plugin
+
+The community marketplace reads from [github.com/TibeDev/arc-plugins](https://github.com/TibeDev/arc-plugins). Add a folder under `plugins/<id>/` with `plugin.json` and `main.js`, run `node scripts/build-registry.mjs`, and commit the regenerated `registry.json`. Open a pull request; a maintainer reviews the JavaScript because plugins are not sandboxed. To release an update, bump `version` in `plugin.json`, regenerate the registry, and open another pull request.

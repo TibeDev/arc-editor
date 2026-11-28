@@ -30,7 +30,7 @@ src-tauri/               Rust backend (Tauri 2)
   src/agent/             Rust AgentManager, OpenCode adapter, persistence, recovery, permissions
   src/main.rs            Entry: NVIDIA/Wayland workaround + app-data migration
   capabilities/          Tauri permission scopes
-plugins/                 Built-in plugins (live-server, xampp; api-tester is dev-only)
+plugins/                 Built-in plugins (xampp; api-tester is dev-only)
 research/                Design research notes (currently webview-panel.md)
 graphify-out/            Knowledge graph output
 install-appimage.sh      Linux AppImage installer + launcher entry
@@ -44,6 +44,7 @@ dist/                    Build output (gitignored)
 | --- | --- |
 | `App.tsx` | **Monolith (~6100 lines).** App shell, file tree, tabs, nested editor splits (`SplitContainer`, `EditorPane`), image viewer, command palette, context menus, search, workspace/watcher state, keybindings. Most UI work happens here |
 | `lib/pluginRuntime.ts` | Plugin loader + full plugin API (`api.files`, `api.editor`, `api.terminal`, `api.ui`, `api.events`, `api.storage`, `api.process`, `api.mcp`, ...). Plugin ZIP import, built-in plugin inlining via `import.meta.glob`, language/editor contributions |
+| `lib/marketplace.ts` | Plugin marketplace client: fetches and validates the GitHub-hosted registry, verifies SHA-256 checksums, caches the index, compares versions, loads icons |
 | `lib/settings.ts` | `AppSettings` type, `DEFAULT_SETTINGS`, `ThemeColors`/`ThemeDefinition`, `BUILTIN_THEMES`, app themes, theme CSS generation, settings persistence/migration |
 | `lib/terminalOutput.ts` | Global `terminal-output` event buffer (2 MB cap/session) so terminals survive tab switches |
 | `lib/updater.ts` | Shared updater types used by the Rust updater commands |
@@ -51,7 +52,7 @@ dist/                    Build output (gitignored)
 | `lib/agent/kit.ts`, `lib/agent/builders.ts` | Build tab prompts, agent CLI commands, plugin/theme brief generation |
 | `components/SettingsPanel.tsx` | Settings UI for editor, terminal, appearance, AI agent, updates, notifications, plugins |
 | `components/GithubPanel.tsx` | GitHub panel UI (calls `github_*` Tauri commands) |
-| `components/PluginPanel.tsx` | Plugin manager UI (ZIP import, enable/disable, uninstall, API docs) |
+| `components/PluginPanel.tsx` | Plugin manager UI (installed/marketplace tabs, ZIP import, enable/disable, uninstall, API docs) |
 | `components/BuildWizard.tsx` | Plugin/theme brief wizard and AI launch/copy-prompt flow |
 | `components/WebPreview.tsx` | Iframe preview for dev servers and workspace files (calls `preview_*` commands) |
 | `components/ThemeMaker.tsx`, `components/ThemeColorPicker.tsx` | Custom theme editor |

@@ -9,10 +9,9 @@ Arc is a desktop workspace for web development. It puts your project files, code
 - Work across multiple tabs and nested editor splits. Drag tabs between panes or drag a tab to a pane edge to create a split.
 - Open terminal tabs in your project folder.
 - Preview a dev server or workspace files in a web preview tab. Sites that refuse framing open in your browser.
-- Preview a project with Live Server. Arc serves the workspace locally and reloads the page when files change.
 - Use the GitHub panel to create or connect a repository, change branches, stage and commit files, and pull or push changes.
 - Adjust editor, terminal, and interface settings. Choose a built-in theme, create a custom theme, or use transparency and an app background image.
-- Import JavaScript plugins from ZIP archives. Arc includes Live Server and a Linux-only XAMPP plugin.
+- Import JavaScript plugins from ZIP archives or browse the community marketplace at [github.com/TibeDev/arc-plugins](https://github.com/TibeDev/arc-plugins). Arc includes a Linux-only XAMPP plugin.
 - Build a plugin or theme with the Build tab wizard, which can launch a local AI agent or produce a prompt for any chat AI.
 - Chat with OpenCode in the Agents workspace, with project trust, saved transcripts, approvals, and questions.
 - Update from signed GitHub releases, on the Stable or Beta channel.
@@ -34,8 +33,6 @@ Installed AppImages update automatically. Arc checks for signed releases, replac
 Open a folder with `Ctrl+K`, then `Ctrl+O`. Use the file browser to open or manage files. Save with `Ctrl+S`; supported files can be formatted with Prettier on save or with `Alt+Shift+F`.
 
 Open a terminal with `Ctrl+T`. Open a web preview with `Ctrl+Alt+P`, then enter a dev server URL such as `http://localhost:5173` or serve workspace files. Sites that refuse framing must open in your browser.
-
-Start Live Server from the plugin toolbar or file context menu to preview the current project in a browser.
 
 The GitHub panel needs Git and GitHub CLI (`gh`). Open the panel, sign in, then stage and commit changes or sync with a remote.
 

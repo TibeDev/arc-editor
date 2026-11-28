@@ -91,6 +91,68 @@
   border-radius: var(--radius-md);
   background: var(--panel);
 }
+.plugin-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.plugin-tab {
+  padding: 7px 11px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+.plugin-tab:hover {
+  color: var(--text);
+}
+.plugin-tab.active {
+  border-bottom-color: var(--text);
+  color: var(--text);
+}
+.plugin-card-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+}
+.plugin-marketplace-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.plugin-marketplace-meta code {
+  color: var(--muted);
+  font-size: var(--font-xs);
+}
+.plugin-tag {
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text) 8%, var(--panel));
+  color: var(--muted);
+  font-size: var(--font-xs);
+}
+.plugin-marketplace-updated {
+  color: var(--muted);
+  font-size: var(--font-xs);
+  white-space: nowrap;
+}
+.plugin-marketplace-stale {
+  background: color-mix(in srgb, var(--text) 8%, var(--panel));
+  color: var(--muted);
+}
+.plugin-panel .spin {
+  animation: plugin-spin 0.9s linear infinite;
+}
+@keyframes plugin-spin {
+  to { transform: rotate(360deg); }
+}
 .plugin-card-icon {
   width: 34px;
   height: 34px;
@@ -227,6 +289,25 @@
 .plugin-card-list {
   display: grid;
   gap: 7px;
+}
+.plugin-view-grid .plugin-card-list {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.plugin-view-grid .plugin-card {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.plugin-view-grid .plugin-card-details {
+  width: 100%;
+}
+.plugin-view-grid .plugin-card-details > span {
+  white-space: normal;
+}
+.plugin-view-grid .plugin-card-actions {
+  width: 100%;
+  justify-content: flex-end;
+  margin-top: auto;
 }
 .plugin-card-list .plugin-card {
   margin: 0;

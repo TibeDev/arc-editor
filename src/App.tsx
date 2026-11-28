@@ -5429,6 +5429,7 @@ function App() {
             panels={pluginRuntime.panels}
             onInstallPlugin={pluginRuntime.importFromArchive}
             onInstallBuiltin={pluginRuntime.installBuiltin}
+            onInstallMarketplace={pluginRuntime.installFromMarketplace}
             onTogglePlugin={pluginRuntime.setEnabled}
             onUninstallPlugin={pluginRuntime.uninstall}
             onOpenPanel={openPluginView}

@@ -21,6 +21,7 @@ import * as codeMirrorAutocomplete from "@codemirror/autocomplete";
 import * as codeMirrorHighlight from "@lezer/highlight";
 import type { AppSettings, ThemeDefinition } from "./settings";
 import { loadSettings } from "./settings";
+import { compareVersions, fetchPluginFiles, type MarketplaceEntry } from "./marketplace";
 
 const builtinManifestSources: Record<string, string> = import.meta.env.PROD
   ? import.meta.glob<string>(["../../plugins/*/plugin.json", "!../../plugins/api-tester/plugin.json"], { eager: true, query: "?raw", import: "default" })
@@ -2539,6 +2540,78 @@ export function usePluginRuntime(
     return next;
   }, [notify]);
 
+  const installPluginFromFiles = useCallback(async (
+    files: Map<string, Uint8Array>,
+    options: { preserveEnabledState?: boolean } = {},
+  ): Promise<PluginManifest> => {
+    if (files.size === 0) throw new Error("Plugin contains no files.");
+    for (const path of files.keys()) assertSafePluginFile(path);
+    const manifestBytes = files.get("plugin.json");
+    if (!manifestBytes) throw new Error("Plugin is missing plugin.json.");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(manifestBytes));
+    } catch {
+      throw new Error("plugin.json is not valid JSON.");
+    }
+    const manifest = parseManifest(parsed);
+    const sourceBytes = files.get(manifest.main);
+    if (!sourceBytes) throw new Error("Plugin is missing main.js.");
+    const source = new TextDecoder().decode(sourceBytes);
+
+    const root = await join(await appDataDir(), "plugins");
+    await mkdir(root, { recursive: true });
+    const destination = await join(root, manifest.id);
+    const replacing = await exists(destination);
+    const staging = await join(
+      await appDataDir(),
+      `plugin-import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    try {
+      await mkdir(staging, { recursive: true });
+      for (const [path, bytes] of files) {
+        if (path === "plugin.json") continue;
+        const parts = path.split("/");
+        if (parts.length > 1) {
+          await mkdir(await join(staging, ...parts.slice(0, -1)), { recursive: true });
+        }
+        await writeFile(await join(staging, ...parts), bytes);
+      }
+      await writeTextFile(await join(staging, "plugin.json"), JSON.stringify(manifest, null, 2));
+    } catch (error) {
+      await remove(staging, { recursive: true }).catch(() => undefined);
+      throw error;
+    }
+    if (replacing) {
+      const backup = await join(
+        await appDataDir(),
+        `plugin-backup-${manifest.id}-${Date.now()}`,
+      );
+      await renameFile(destination, backup);
+      try {
+        await renameFile(staging, destination);
+      } catch (error) {
+        await renameFile(backup, destination).catch(() => undefined);
+        await remove(staging, { recursive: true }).catch(() => undefined);
+        throw error;
+      }
+      await remove(backup, { recursive: true }).catch(() => undefined);
+    } else {
+      await renameFile(staging, destination);
+    }
+
+    const disabled = readDisabledIds();
+    const enabled = options.preserveEnabledState ? !disabled.has(manifest.id) : true;
+    if (enabled) disabled.delete(manifest.id);
+    else disabled.add(manifest.id);
+    localStorage.setItem(disabledStorageKey, JSON.stringify([...disabled]));
+    setPlugins((current) => [
+      ...current.filter((plugin) => plugin.id !== manifest.id),
+      { ...manifest, enabled, builtin: false, ...(enabled ? { source } : {}) },
+    ]);
+    return manifest;
+  }, []);
+
   const importFromArchive = useCallback(async () => {
     const selected = await open({
       multiple: false,
@@ -2558,51 +2631,44 @@ export function usePluginRuntime(
     if (base.startsWith("/") || /^[a-z]:/i.test(base) || base.split("/").some((part) => part === "..")) {
       throw new Error("Plugin ZIP contains an unsafe path.");
     }
-    const sourceEntry = archive.file(`${base}main.js`);
-    if (!sourceEntry) throw new Error("Plugin ZIP is missing main.js.");
     const manifest = parseManifest(JSON.parse(await manifestEntry.async("string")));
-    const source = await sourceEntry.async("string");
     if (!window.confirm(`Import “${manifest.name}”? Plugin JavaScript runs inside Arc and can call its plugin API.`)) return;
 
-    const root = await join(await appDataDir(), "plugins");
-    await mkdir(root, { recursive: true });
-    const destination = await join(root, manifest.id);
-    const replacing = await exists(destination);
-    if (replacing && !window.confirm(`Replace installed plugin “${manifest.name}”?`)) return;
-    const staging = await join(
-      await appDataDir(),
-      `.plugin-import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    );
-    try {
-      await mkdir(staging, { recursive: true });
-      await writeTextFile(await join(staging, "plugin.json"), JSON.stringify(manifest, null, 2));
-      await writeTextFile(await join(staging, manifest.main), source);
-    } catch (error) {
-      await remove(staging, { recursive: true }).catch(() => undefined);
-      throw error;
+    const files = new Map<string, Uint8Array>();
+    for (const entry of entries) {
+      if (entry.dir || !entry.name.startsWith(base)) continue;
+      const relative = entry.name.slice(base.length);
+      if (!relative) continue;
+      assertSafePluginFile(relative);
+      files.set(relative, await entry.async("uint8array"));
     }
-    if (replacing) {
-      const backup = await join(
-        await appDataDir(),
-        `.plugin-backup-${manifest.id}-${Date.now()}`,
-      );
-      await renameFile(destination, backup);
-      try {
-        await renameFile(staging, destination);
-      } catch (error) {
-        await renameFile(backup, destination).catch(() => undefined);
-        await remove(staging, { recursive: true }).catch(() => undefined);
-        throw error;
+    if (!files.has("plugin.json")) throw new Error("Plugin ZIP is missing plugin.json.");
+    if (!files.has("main.js")) throw new Error("Plugin ZIP is missing main.js.");
+
+    const destination = await join(await appDataDir(), "plugins", manifest.id);
+    if (await exists(destination) && !window.confirm(`Replace installed plugin “${manifest.name}”?`)) return;
+    await installPluginFromFiles(files);
+  }, [installPluginFromFiles]);
+
+  const installFromMarketplace = useCallback(async (entry: MarketplaceEntry) => {
+    const files = await fetchPluginFiles(entry);
+    const manifestBytes = files.get("plugin.json");
+    if (!manifestBytes) throw new Error("Plugin is missing plugin.json.");
+    const manifest = parseManifest(JSON.parse(new TextDecoder().decode(manifestBytes)));
+    if (manifest.version !== entry.version) {
+      throw new Error(`Registry version for ${manifest.name} does not match plugin.json.`);
+    }
+    const installed = pluginsRef.current.find((plugin) => plugin.id === manifest.id);
+    if (installed) {
+      if (compareVersions(installed.version, manifest.version) >= 0) {
+        throw new Error(`${manifest.name} is already installed.`);
       }
-      await remove(backup, { recursive: true }).catch(() => undefined);
-    } else {
-      await renameFile(staging, destination);
+      if (!window.confirm(`Update “${manifest.name}” from ${installed.version} to ${manifest.version}?\n\nPlugin JavaScript runs inside Arc and can read files, run processes, and use the network. Only install plugins you trust.`)) return null;
+    } else if (!window.confirm(`Install “${manifest.name}”${entry.author ? ` by ${entry.author}` : ""}?\n\nPlugin JavaScript runs inside Arc and can read files, run processes, and use the network. Only install plugins you trust.`)) {
+      return null;
     }
-    const disabled = readDisabledIds();
-    disabled.delete(manifest.id);
-    localStorage.setItem(disabledStorageKey, JSON.stringify([...disabled]));
-    setPlugins((current) => [...current.filter((plugin) => plugin.id !== manifest.id), { ...manifest, source, enabled: true, builtin: false }]);
-  }, []);
+    return installPluginFromFiles(files, { preserveEnabledState: true });
+  }, [installPluginFromFiles]);
 
   const installBuiltin = useCallback(async (id: string) => {
     const builtin = builtinPackages.find((plugin) => plugin.manifest.id === id);
@@ -2693,6 +2759,7 @@ export function usePluginRuntime(
     pluginDirectory,
     availableBuiltins,
     importFromArchive,
+    installFromMarketplace,
     installBuiltin,
     setEnabled,
     uninstall,
@@ -2722,6 +2789,19 @@ async function writePluginFiles(folder: string, manifest: PluginManifest, source
   await mkdir(folder, { recursive: true });
   await writeTextFile(await join(folder, "plugin.json"), JSON.stringify(manifest, null, 2));
   await writeTextFile(await join(folder, manifest.main), source);
+}
+
+function assertSafePluginFile(path: string) {
+  if (
+    !path ||
+    path.startsWith("/") ||
+    path.startsWith("\\") ||
+    path.includes("\\") ||
+    /^[a-z]:/i.test(path) ||
+    path.split("/").some((part) => !part || part === "." || part === "..")
+  ) {
+    throw new Error("Plugin files must use safe relative paths.");
+  }
 }
 
 const SUPPORTED_CAPABILITIES = new Set([
