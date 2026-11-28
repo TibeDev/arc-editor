@@ -1,5 +1,10 @@
-import { useEffect } from "react";
-import { ArrowLeft, MessagesSquare, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
+import { ArrowLeft, MessagesSquare, PanelLeftOpen, X } from "lucide-react";
 import TitleBar from "../TitleBar";
 import { store } from "../../lib/agents/store";
 import { useAgentsStore } from "../../lib/agents/useAgentsStore";
@@ -7,6 +12,9 @@ import "../../styles/controls.css";
 import AgentConversation from "./AgentConversation";
 import AgentSidebar from "./AgentSidebar";
 import "./AgentsWorkspace.css";
+
+const MIN_SIDEBAR_WIDTH = 200;
+const MAX_SIDEBAR_WIDTH = 520;
 
 export default function AgentsWorkspace({
   titleBarEnabled,
@@ -17,6 +25,10 @@ export default function AgentsWorkspace({
   onSaveAllDirty,
   onClose,
   enabledProviderIds,
+  sidebarWidth,
+  sidebarHidden,
+  onSidebarWidthChange,
+  onSidebarHiddenChange,
 }: {
   titleBarEnabled: boolean;
   editorWorkspace: string;
@@ -26,8 +38,65 @@ export default function AgentsWorkspace({
   onSaveAllDirty: () => Promise<boolean>;
   onClose: () => void;
   enabledProviderIds: string[];
+  sidebarWidth: number;
+  sidebarHidden: boolean;
+  onSidebarWidthChange: (width: number) => void;
+  onSidebarHiddenChange: (hidden: boolean) => void;
 }) {
   const state = useAgentsStore();
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const drag = useRef({
+    startX: 0,
+    startWidth: 0,
+    pending: 0,
+    collapsed: false,
+  });
+  const currentSidebarWidth = dragWidth ?? sidebarWidth;
+  const collapsedDuringDrag = dragWidth === 0;
+  const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarHidden ? MIN_SIDEBAR_WIDTH : currentSidebarWidth;
+    drag.current = { startX, startWidth, pending: startWidth, collapsed: false };
+    const onMove = (moveEvent: PointerEvent) => {
+      const width = startWidth + moveEvent.clientX - startX;
+      drag.current.collapsed = width < MIN_SIDEBAR_WIDTH;
+      drag.current.pending = Math.min(
+        MAX_SIDEBAR_WIDTH,
+        Math.max(MIN_SIDEBAR_WIDTH, width),
+      );
+      setDragWidth(drag.current.collapsed ? 0 : drag.current.pending);
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      const { collapsed, pending } = drag.current;
+      setDragWidth(null);
+      if (collapsed) {
+        onSidebarHiddenChange(true);
+      } else {
+        onSidebarHiddenChange(false);
+        onSidebarWidthChange(pending);
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  };
+  const resizeWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const nextWidth =
+      (sidebarHidden ? MIN_SIDEBAR_WIDTH : currentSidebarWidth) +
+      (event.key === "ArrowRight" ? 10 : -10);
+    if (nextWidth < MIN_SIDEBAR_WIDTH) {
+      onSidebarHiddenChange(true);
+      return;
+    }
+    onSidebarHiddenChange(false);
+    onSidebarWidthChange(Math.min(MAX_SIDEBAR_WIDTH, nextWidth));
+  };
   useEffect(() => {
     void store.ensureLoaded();
   }, []);
@@ -112,26 +181,55 @@ export default function AgentsWorkspace({
         </div>
       ) : null}
 
-      <div className="agents-workspace-body">
-        <AgentSidebar
-          projects={state.projects}
-          threads={state.threads}
-          activeProjectId={state.activeProjectId}
-          activeThreadId={state.activeThreadId}
-          onAddProject={() => void store.addProject()}
-          onSelectProject={(projectId) => void store.selectProject(projectId)}
-          onRemoveProject={(projectId) => void store.removeProject(projectId)}
-          onOpenProjectInEditor={onOpenProjectInEditor}
-          onNewThread={() => void store.createThread(defaultProviderId)}
-          onOpenThread={(threadId) => void store.openThread(threadId)}
-          onDeleteThread={(threadId) => void store.deleteThread(threadId)}
-          onRenameThread={(threadId, title) =>
-            void store.renameThread(threadId, title)
-          }
-          onArchiveThread={(threadId, archived) =>
-            void store.archiveThread(threadId, archived)
-          }
+      <div
+        className="agents-workspace-body"
+        style={{ "--agents-sidebar-width": `${currentSidebarWidth}px` } as CSSProperties}
+      >
+        {!sidebarHidden && !collapsedDuringDrag ? (
+          <AgentSidebar
+            projects={state.projects}
+            threads={state.threads}
+            activeProjectId={state.activeProjectId}
+            activeThreadId={state.activeThreadId}
+            onAddProject={() => void store.addProject()}
+            onSelectProject={(projectId) => void store.selectProject(projectId)}
+            onRemoveProject={(projectId) => void store.removeProject(projectId)}
+            onOpenProjectInEditor={onOpenProjectInEditor}
+            onNewThread={() => void store.createThread(defaultProviderId)}
+            onOpenThread={(threadId) => void store.openThread(threadId)}
+            onDeleteThread={(threadId) => void store.deleteThread(threadId)}
+            onRenameThread={(threadId, title) =>
+              void store.renameThread(threadId, title)
+            }
+            onArchiveThread={(threadId, archived) =>
+              void store.archiveThread(threadId, archived)
+            }
+            onHide={() => onSidebarHiddenChange(true)}
+          />
+        ) : null}
+        <div
+          className={`agents-sidebar-resizer ${sidebarHidden || collapsedDuringDrag ? "collapsed" : ""}`}
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label="Resize projects and chats panel"
+          aria-valuemin={MIN_SIDEBAR_WIDTH}
+          aria-valuemax={MAX_SIDEBAR_WIDTH}
+          aria-valuenow={currentSidebarWidth}
+          onPointerDown={beginResize}
+          onKeyDown={resizeWithKeyboard}
         />
+        {sidebarHidden || collapsedDuringDrag ? (
+          <button
+            type="button"
+            className="agents-show-sidebar"
+            title="Show projects and chats"
+            aria-label="Show projects and chats"
+            onClick={() => onSidebarHiddenChange(false)}
+          >
+            <PanelLeftOpen size={15} />
+          </button>
+        ) : null}
 
         {state.detail && activeThread && activeProject ? (
           <AgentConversation

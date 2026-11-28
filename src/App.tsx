@@ -5447,6 +5447,10 @@ function App() {
           }}
           onSaveAllDirty={() => saveDirtyRef.current()}
           enabledProviderIds={settings.agentEnabledProviderIds}
+          sidebarWidth={settings.agentSidebarWidth}
+          sidebarHidden={settings.agentSidebarHidden}
+          onSidebarWidthChange={(width) => updateSettings({ agentSidebarWidth: width })}
+          onSidebarHiddenChange={(hidden) => updateSettings({ agentSidebarHidden: hidden })}
           onClose={() => {
             setAgentsOpen(false);
             updateSettings({ agentLastMode: 'editor' });

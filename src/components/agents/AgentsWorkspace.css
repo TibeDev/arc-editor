@@ -78,7 +78,7 @@
 }
 
 .agents-sidebar {
-  flex: 0 0 258px;
+  flex: 0 0 var(--agents-sidebar-width, 258px);
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -87,6 +87,55 @@
   overflow-y: auto;
   border-right: 1px solid var(--app-border, #2a2d31);
   background: var(--app-surface, #151719);
+}
+
+.agents-sidebar-heading {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px -4px 0 0;
+}
+
+.agents-sidebar-resizer {
+  flex: 0 0 5px;
+  margin-left: -3px;
+  position: relative;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.agents-sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.agents-sidebar-resizer:hover::after,
+.agents-sidebar-resizer:active::after {
+  background: var(--app-accent, #5e6ad2);
+}
+
+.agents-sidebar-resizer.collapsed::after {
+  background: transparent;
+}
+
+.agents-show-sidebar {
+  order: -1;
+  width: 30px;
+  flex: 0 0 30px;
+  align-self: stretch;
+  display: grid;
+  place-items: start center;
+  padding-top: 8px;
+  border-right: 1px solid var(--app-border, #2a2d31);
+  background: var(--app-surface, #151719);
+  color: var(--app-muted, #747980);
+}
+
+.agents-show-sidebar:hover {
+  color: var(--app-text, #d5d9e0);
 }
 
 .agents-sidebar-section header {

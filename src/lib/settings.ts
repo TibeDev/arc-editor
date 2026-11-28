@@ -91,12 +91,14 @@ export type AppSettings = {
   agentCommand: string;
   agentLastMode: "editor" | "agents";
   agentEnabledProviderIds: string[];
+  agentSidebarWidth: number;
+  agentSidebarHidden: boolean;
   agentDefaultPermissionMode: "supervised";
   agentConfirmDirtyFiles: boolean;
   agentNotifications: boolean;
 };
 
-export const APP_SETTINGS_VERSION = 8;
+export const APP_SETTINGS_VERSION = 9;
 
 export const GLASS_BLUR = 18;
 
@@ -190,6 +192,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   agentCommand: "",
   agentLastMode: "editor",
   agentEnabledProviderIds: ["opencode-default"],
+  agentSidebarWidth: 258,
+  agentSidebarHidden: false,
   agentDefaultPermissionMode: "supervised",
   agentConfirmDirtyFiles: true,
   agentNotifications: true,
@@ -374,6 +378,13 @@ export function loadSettings(): AppSettings {
       settings.agentEnabledProviderIds = settings.agentEnabledProviderIds.filter(
         (id) => typeof id === "string" && id,
       );
+    }
+    if (!Number.isFinite(settings.agentSidebarWidth)) {
+      settings.agentSidebarWidth = DEFAULT_SETTINGS.agentSidebarWidth;
+    }
+    settings.agentSidebarWidth = Math.min(520, Math.max(200, settings.agentSidebarWidth));
+    if (typeof settings.agentSidebarHidden !== "boolean") {
+      settings.agentSidebarHidden = DEFAULT_SETTINGS.agentSidebarHidden;
     }
     if (settings.agentDefaultPermissionMode !== "supervised") {
       settings.agentDefaultPermissionMode = DEFAULT_SETTINGS.agentDefaultPermissionMode;

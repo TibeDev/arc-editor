@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Code2,
   GitBranch,
+  PanelLeftClose,
   Pencil,
   Plus,
   Trash2,
@@ -29,6 +30,7 @@ export default function AgentSidebar({
   onDeleteThread,
   onRenameThread,
   onArchiveThread,
+  onHide,
 }: {
   projects: AgentProject[];
   threads: AgentThreadSummary[];
@@ -43,6 +45,7 @@ export default function AgentSidebar({
   onDeleteThread: (threadId: string) => void;
   onRenameThread: (threadId: string, title: string) => void;
   onArchiveThread: (threadId: string, archived: boolean) => void;
+  onHide: () => void;
 }) {
   const [showArchived, setShowArchived] = useState(false);
   const [renamingId, setRenamingId] = useState("");
@@ -157,6 +160,17 @@ export default function AgentSidebar({
 
   return (
     <aside className="agents-sidebar" aria-label="Agent projects and chats">
+      <div className="agents-sidebar-heading">
+        <button
+          type="button"
+          className="agents-icon-button"
+          title="Hide projects and chats"
+          aria-label="Hide projects and chats"
+          onClick={onHide}
+        >
+          <PanelLeftClose size={15} />
+        </button>
+      </div>
       <section className="agents-sidebar-section">
         <header>
           <h2>Projects</h2>
